@@ -1,4 +1,5 @@
 #import "SPDFMacSidebarChapters.h"
+#import "SPDFMacMarkdownDelegatePrivate.h"
 
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarOutline.h"
@@ -66,12 +67,7 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
 // the reader is in its results -- rebuilds the chapters flat and takes the
 // expand/collapse button away with them.
 - (void)syncSidebarModeControlSegmentsForSearchAvailability:(BOOL)hasSearch {
-    // Chapters as the fallback: Search is the segment that just went away, and
-    // both builders re-point Chapters at Comments for a document that has none.
-    spdf_sidebar_mode_control_set_segment_count(_sidebarModeControl, hasSearch ? 3 : 2, SPDFSidebarModeChapters);
-    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
-    if (hasSearch) [_sidebarModeControl setLabel:@"Search" forSegment:SPDFSidebarModeSearch];
+    spdf_sidebar_mode_control_configure(_sidebarModeControl, ![self isMarkdownActive], hasSearch);
     [self normalizeSidebarModeControlWidths];
 }
 
@@ -79,7 +75,7 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
 
 // The chapter rows' levels, or nil when this is not a nestable chapter list.
 - (NSArray<NSNumber*>*)chapterLevelsForCurrentSidebar {
-    if (_sidebarModeControl.selectedSegment != SPDFSidebarModeChapters) return nil;
+    if (_sidebarModeControl.spdf_selectedSidebarMode != SPDFSidebarModeChapters) return nil;
     // A filter already answers "show me these": nesting a filtered list would
     // hide matches under parents that did not match.
     if (_sidebarFilterField.stringValue.length) return nil;

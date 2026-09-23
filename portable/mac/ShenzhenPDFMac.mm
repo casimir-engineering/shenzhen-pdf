@@ -2863,10 +2863,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _sidebarContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 240, 600)];
     _sidebarContainer.translatesAutoresizingMaskIntoConstraints = NO;
     _sidebarModeControl = [[NSSegmentedControl alloc] init];
-    _sidebarModeControl.segmentCount = 2;
-    [_sidebarModeControl setLabel:@"Chapters" forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setLabel:@"Comments" forSegment:SPDFSidebarModeComments];
-    _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+    spdf_sidebar_mode_control_configure(_sidebarModeControl, YES, NO);
     _sidebarModeControl.target = self;
     _sidebarModeControl.action = @selector(sidebarModeChanged:);
     _sidebarModeControl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -9208,7 +9205,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (notification.object != _splitView || !_sidebarVisible) return;
     [self normalizeSidebarModeControlWidths];
     [self syncSidebarTableColumnWidth];
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && _sidebarItems.count > 0)
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && _sidebarItems.count > 0)
         [_sidebarTable
             noteHeightOfRowsWithIndexesChanged:[NSIndexSet
                                                    indexSetWithIndexesInRange:NSMakeRange(0, _sidebarItems.count)]];
@@ -9226,15 +9223,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (NSString*)sidebarFilterTextForCurrentMode {
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch) return @"";
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments) return _commentFilterText ?: @"";
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch) return @"";
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments) return _commentFilterText ?: @"";
     return _chapterFilterText ?: @"";
 }
 
 - (void)setSidebarFilterTextForCurrentMode:(NSString*)filter {
     filter = filter ?: @"";
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch) return;
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments)
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch) return;
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments)
         _commentFilterText = [filter copy];
     else
         _chapterFilterText = [filter copy];
@@ -9242,8 +9239,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)syncSidebarFilterField {
     if (!_sidebarFilterField) return;
-    BOOL comments = _sidebarModeControl.selectedSegment == SPDFSidebarModeComments;
-    BOOL search = _sidebarModeControl.selectedSegment == SPDFSidebarModeSearch;
+    BOOL comments = _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments;
+    BOOL search = _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch;
     _sidebarFilterField.hidden = search;
     _sidebarFilterTopConstraint.active = !search;
     _sidebarScrollBelowFilterConstraint.active = !search;
@@ -9428,34 +9425,34 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL hasSidebar = _doc && (hasChapters || hasComments || hasSearch);
 
     [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && !hasSearch)
-        _sidebarModeControl.selectedSegment =
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)
+        _sidebarModeControl.spdf_selectedSidebarMode =
             hasChapters ? SPDFSidebarModeChapters : (hasComments ? SPDFSidebarModeComments : SPDFSidebarModeChapters);
-    else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && !hasComments)
-        _sidebarModeControl.selectedSegment =
+    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments && !hasComments)
+        _sidebarModeControl.spdf_selectedSidebarMode =
             hasChapters ? SPDFSidebarModeChapters : (hasSearch ? SPDFSidebarModeSearch : SPDFSidebarModeChapters);
-    else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeChapters && !hasChapters)
-        _sidebarModeControl.selectedSegment =
+    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters && !hasChapters)
+        _sidebarModeControl.spdf_selectedSidebarMode =
             hasComments ? SPDFSidebarModeComments : (hasSearch ? SPDFSidebarModeSearch : SPDFSidebarModeChapters);
     else if (hasChapters && !hasComments && !hasSearch)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
     else if (!hasChapters && hasComments && !hasSearch)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeComments;
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeComments;
     else if (!hasChapters && !hasComments && hasSearch)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeSearch;
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
     else if (!hasChapters && !hasComments && !hasSearch)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
 
-    [_sidebarModeControl setEnabled:hasChapters forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setEnabled:hasComments forSegment:SPDFSidebarModeComments];
-    if (hasSearch) [_sidebarModeControl setEnabled:YES forSegment:SPDFSidebarModeSearch];
+    [_sidebarModeControl spdf_setEnabled:hasChapters forSidebarMode:SPDFSidebarModeChapters];
+    [_sidebarModeControl spdf_setEnabled:hasComments forSidebarMode:SPDFSidebarModeComments];
+    if (hasSearch) [_sidebarModeControl spdf_setEnabled:YES forSidebarMode:SPDFSidebarModeSearch];
 
     [self syncSidebarFilterField];
     NSString* filter = [self sidebarFilterTextForCurrentMode];
     if (hasSidebar) {
-        if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && hasSearch) {
+        if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && hasSearch) {
             [self rebuildSearchSidebarItems];
-        } else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments && hasComments) {
+        } else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments && hasComments) {
             for (int i = 0; i < _comments.count; ++i) {
                 spdf_comment_item item = _comments.items[i];
                 NSString* type = item.type && *item.type ? [NSString stringWithUTF8String:item.type] : @"Comment";
@@ -9495,7 +9492,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             }
         }
     }
-    BOOL showingSearchSidebar = hasSidebar && _sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && hasSearch;
+    BOOL showingSearchSidebar = hasSidebar && _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && hasSearch;
     [self syncSidebarTableColumnWidth];
     [self applyChapterNestingAndReload];
     if (_sidebarItems.count > 0)
@@ -9532,7 +9529,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)showSearchSidebarForFind {
     if (![self hasActiveDocument] || ![self hasSearchSidebar]) return;
     [self syncSidebarModeControlSegmentsForSearchAvailability:YES];
-    _sidebarModeControl.selectedSegment = SPDFSidebarModeSearch;
+    _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
     _sidebarPreferredVisible = YES;
     [self rebuildSidebar];
 }
@@ -10201,7 +10198,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     if (![self hasActiveDocument] || _updatingSelection) return;
     _updatingSelection = YES;
     NSInteger match = -1;
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && _findMatchIndex >= 0) {
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && _findMatchIndex >= 0) {
         for (NSInteger i = 0; i < _sidebarItems.count; ++i) {
             NSDictionary* item = _sidebarItems[(NSUInteger)i];
             if (![item[@"kind"] isEqualToString:@"findResult"]) continue;
@@ -12896,9 +12893,9 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
                        : (mode == SPDFSidebarModeComments ? _comments.count > 0 : [self hasSearchSidebar]);
     }
     if (!hasItems) return;
-    BOOL sameVisibleMode = _sidebarVisible && _sidebarModeControl.selectedSegment == mode;
+    BOOL sameVisibleMode = _sidebarVisible && _sidebarModeControl.spdf_selectedSidebarMode == mode;
     _sidebarPreferredVisible = !sameVisibleMode;
-    if (_sidebarPreferredVisible) _sidebarModeControl.selectedSegment = mode;
+    if (_sidebarPreferredVisible) _sidebarModeControl.spdf_selectedSidebarMode = mode;
     [self rebuildSidebar];
     [self persistActiveState];
 }
@@ -15980,7 +15977,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         BOOL hasItems = chapters ? (markdown ? [self markdownHasChapters] : _outline.count > 0)
                                  : (!markdown && _comments.count > 0);
         NSString* panelName = chapters ? @"Chapters Panel" : @"Comments Panel";
-        BOOL selectedVisible = _sidebarVisible && _sidebarModeControl.selectedSegment ==
+        BOOL selectedVisible = _sidebarVisible && _sidebarModeControl.spdf_selectedSidebarMode ==
                                                       (chapters ? SPDFSidebarModeChapters : SPDFSidebarModeComments);
         menuItem.title = [NSString stringWithFormat:@"%@ %@", selectedVisible ? @"Hide" : @"Show", panelName];
         menuItem.state = selectedVisible ? NSControlStateValueOn : NSControlStateValueOff;
@@ -16017,9 +16014,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(copySelection:))
         return [self trimmedSelectedTextForCommand].length > 0 ||
                (markdown && [self.activeMarkdownSession selectionContainsImage]);
-    if (action == @selector(addComment:)) return hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
-    if (action == @selector(editComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
-    if (action == @selector(deleteComment:)) return hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
+    if (action == @selector(addComment:)) return !markdown && hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
+    if (action == @selector(editComment:)) return !markdown && hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
+    if (action == @selector(deleteComment:)) return !markdown && hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(rotateClockwise:) || action == @selector(rotateAnticlockwise:))
         return [self canRotateActivePage];
     if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))

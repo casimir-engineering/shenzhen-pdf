@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import "SPDFMacSidebarModeControl.h"
 
 #include "shenzhen_pdf_core.h"
 
@@ -11,12 +12,6 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
     SPDFFitModeWidth,
     SPDFFitModeHeight,
     SPDFFitModePage
-};
-
-typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
-    SPDFSidebarModeChapters = 0,
-    SPDFSidebarModeComments = 1,
-    SPDFSidebarModeSearch = 2
 };
 
 @interface SPDFRenderedPage : NSObject

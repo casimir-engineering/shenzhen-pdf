@@ -400,21 +400,20 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     BOOL hasSidebar = loading || (model && (hasChapters || hasSearch));
 
     [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
-    if (_sidebarModeControl.selectedSegment == SPDFSidebarModeSearch && !hasSearch)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeChapters;
-    else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeComments)
-        _sidebarModeControl.selectedSegment = hasChapters ? SPDFSidebarModeChapters : SPDFSidebarModeSearch;
-    else if (_sidebarModeControl.selectedSegment == SPDFSidebarModeChapters && !hasChapters && hasSearch)
-        _sidebarModeControl.selectedSegment = SPDFSidebarModeSearch;
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
+    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments)
+        _sidebarModeControl.spdf_selectedSidebarMode = hasChapters ? SPDFSidebarModeChapters : SPDFSidebarModeSearch;
+    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters && !hasChapters && hasSearch)
+        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
 
-    [_sidebarModeControl setEnabled:hasChapters forSegment:SPDFSidebarModeChapters];
-    [_sidebarModeControl setEnabled:NO forSegment:SPDFSidebarModeComments];
-    if (hasSearch) [_sidebarModeControl setEnabled:YES forSegment:SPDFSidebarModeSearch];
+    [_sidebarModeControl spdf_setEnabled:hasChapters forSidebarMode:SPDFSidebarModeChapters];
+    if (hasSearch) [_sidebarModeControl spdf_setEnabled:YES forSidebarMode:SPDFSidebarModeSearch];
     [self syncSidebarFilterField];
 
     if (loading) {
         [_sidebarItems addObject:@{@"kind" : @"findStatus", @"title" : @"Loading chapters...", @"page" : @(-1)}];
-    } else if (hasSidebar && _sidebarModeControl.selectedSegment == SPDFSidebarModeSearch) {
+    } else if (hasSidebar && _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch) {
         [_sidebarItems addObjectsFromArray:[model searchSidebarItemsForMatches:session.searchMatches
                                                                          query:_searchField.stringValue ?: @""
                                                                      searching:_findSearchInProgress]];

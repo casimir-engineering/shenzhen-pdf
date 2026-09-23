@@ -185,3 +185,11 @@ Both critics leave only minor follow-ups: start search snippets at word boundari
 The final native app build completed with exit 0. Its bundle reports version 26.9.23, build 1, and passes local ad-hoc code-signature verification; this is a local validation build, not a notarized distribution artifact. The journal was opened and visually checked on page 1 in that build with its chapters, screenshots and minimap visible. The app remains open for inspection, using the isolated validation state.
 
 ![Journal open in the final 26.9.23-1 reader, with persistent groups and uniform tab-title color](assets/final-journal-open.png)
+
+### Requested corrections after preparation
+
+Removed the unsolicited 30-point margin overrides from this journal and the proposal. Native inspection confirms both again use the existing 61.2-point Markdown margins.
+
+Markdown now omits the Comments sidebar tab entirely. Sidebar modes have stable tags so Search keeps its identity when moving between the compact Markdown control and the PDF control. Comment actions remain gray through AppKit menu validation, which previously could re-enable Add Comment. Focused sidebar tests cover switching document types, search activation/clearing and PDF Comments restoration. These follow-up checks are separate from the earlier 53-target release sweep and critic scores.
+
+The sidebar, tab-state and file-size checks passed, as did the rebuilt native app. The build is available in `dist/ShenzhenPDF.app`; the running reader was not restarted.
