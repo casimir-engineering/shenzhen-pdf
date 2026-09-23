@@ -18,7 +18,7 @@ class MCPTests(unittest.TestCase):
             initialized = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "initialize"}, "/reader")
             self.assertEqual(initialized["result"]["protocolVersion"], "2025-11-25")
             tools = mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, "/reader")
-            self.assertEqual(len(tools["result"]["tools"]), 2)
+            self.assertEqual(len(tools["result"]["tools"]), 8)
             self.assertIsNone(mcp.dispatch({"jsonrpc": "2.0", "method": "notifications/initialized"}, "/reader"))
             run.assert_not_called()
 
@@ -51,6 +51,32 @@ class MCPTests(unittest.TestCase):
         with patch.object(mcp.subprocess, "run") as run:
             for arguments in cases:
                 self.assertTrue(mcp.call_tool("/reader", {"name": "open_document", "arguments": arguments})["isError"])
+            run.assert_not_called()
+
+    def test_group_tools_use_native_actions_and_preserve_ids(self):
+        calls = [("list_tab_groups", {}),
+                 ("create_tab_group", {"paths": ["/a.pdf", "/b.md"], "name": "Research", "color": "Blue"}),
+                 ("update_tab_group", {"groupID": "stable-id", "collapsed": False, "name": ""}),
+                 ("move_tab_to_group", {"path": "/a.pdf", "groupID": "general", "beforePath": "/b.md"}),
+                 ("move_tab_group", {"groupID": "stable-id", "beforeGroupID": "general"}),
+                 ("ungroup_tabs", {"groupID": "stable-id", "windowSessionID": "window-id"})]
+        completed = subprocess.CompletedProcess([], 0, b'{"groups":[],"tabs":[]}', b'')
+        for name, arguments in calls:
+            with self.subTest(name=name), patch.object(mcp.subprocess, "run", return_value=completed) as run:
+                self.assertFalse(mcp.call_tool("/reader", {"name": name, "arguments": arguments})["isError"])
+                self.assertEqual(json.loads(run.call_args.args[0][2]), {"action": mcp.GROUP_ACTIONS[name], **arguments})
+
+    def test_invalid_group_arguments_do_not_spawn_reader(self):
+        calls = [("list_tab_groups", {"path": "/a.pdf"}), ("create_tab_group", {"paths": []}),
+                 ("create_tab_group", {"paths": ["relative.md"]}),
+                 ("create_tab_group", {"paths": ["/a.pdf", "/a.pdf"]}),
+                 ("create_tab_group", {"paths": ["/a.pdf", {}]}),
+                 ("update_tab_group", {"groupID": "id"}),
+                 ("update_tab_group", {"groupID": "id", "collapsed": 1}),
+                 ("move_tab_to_group", {"path": "/a.pdf"}), ("ungroup_tabs", {"groupID": ""})]
+        with patch.object(mcp.subprocess, "run") as run:
+            for name, arguments in calls:
+                self.assertTrue(mcp.call_tool("/reader", {"name": name, "arguments": arguments})["isError"])
             run.assert_not_called()
 
     def test_errors_and_timeouts_are_tool_errors(self):

@@ -99,6 +99,70 @@ passages return errors. Password-protected PDFs still require the normal
 reader authentication flow. Document changes during navigation cancel the
 request instead of highlighting an unrelated document.
 
+## Tab groups and persisted sessions
+
+Group commands act on tabs already open in the receiving reader window. They
+use the same group operations and session serializer as the tab strip. No
+separate agent configuration is created. Names, colors, membership, positions
+and collapsed states therefore survive ordinary app restarts.
+
+Start by listing the window's state:
+
+```json
+{"action":"list-groups"}
+```
+
+The response includes `windowSessionID`, ordered `groups`, ordered `tabs`, and
+supported `colors`. Each group includes its persisted `id`, custom `name`,
+`displayName`, `color`, `collapsed`, `general`, `lastUsedPath`, one-based
+`position`, and ordered document `paths`. Each tab includes its one-based
+`index`, `path`, `title`, `groupID`, `selected`, `readOnly`, and `missingFile`.
+Ungrouped tabs have `groupID: null`; the General group's stable ID is `general`.
+Listing does not modify the session or create groups.
+
+Use returned IDs rather than names, which need not be unique. Include
+`windowSessionID` on later group commands to reject accidental routing to a
+different reader window. The guard does not redirect requests between windows;
+activate the intended reader window before working with its groups.
+
+| Native action | Required fields | Optional fields |
+|---|---|---|
+| `list-groups` | None | `windowSessionID` |
+| `create-group` | `paths` | `name`, `color`, `beforeGroupID`, `windowSessionID` |
+| `update-group` | `groupID`, at least one setting | `name`, `color`, `collapsed`, `windowSessionID` |
+| `move-tab` | `path`, `groupID` | `beforePath`, `windowSessionID` |
+| `move-group` | `groupID` | `beforeGroupID`, `windowSessionID` |
+| `ungroup` | `groupID` | `windowSessionID` |
+
+```json
+{"action":"create-group","paths":["/absolute/manual.pdf","/absolute/notes.md"],"name":"Research","color":"Blue"}
+```
+
+Creation requires 1–256 distinct already-open paths and preserves their supplied
+order. It returns `groupID` along with the updated state. Remaining ungrouped
+tabs become General. The group is appended unless `beforeGroupID` identifies an
+existing group that will retain at least one member.
+
+```json
+{"action":"update-group","groupID":"returned-group-id","name":"Sources","collapsed":false}
+{"action":"move-tab","path":"/absolute/notes.md","groupID":"returned-group-id","beforePath":"/absolute/manual.pdf"}
+{"action":"move-group","groupID":"returned-group-id","beforeGroupID":"general"}
+```
+
+An empty `name` restores the default color name. `collapsed` must be a JSON
+Boolean. Use a color from the returned palette; General stays gray. Omitting
+`beforePath` appends a tab; omitting `beforeGroupID` appends a group. Moving tabs
+within a group also reorders them. `ungroup` keeps every document open and
+returns custom-group members to General; when no custom groups remain the
+reader returns to its ordinary ungrouped tab strip. General cannot be ungrouped.
+
+Creation and tab moves select the affected tab, following normal reader
+behavior. Group order/name/color changes do not open documents. Expand/collapse
+uses the reader's normal group behavior. Missing paths or group IDs, invalid
+colors, and destinations outside the requested group fail before mutation.
+Group commands share the live navigation busy/cancellation gate, so an ongoing
+agent navigation cannot interleave with a group mutation.
+
 ## MCP setup
 
 Python 3 with its standard library is sufficient. Configure your MCP client to
@@ -120,7 +184,10 @@ start this command, substituting absolute paths for your checkout and app:
 
 The adapter implements the MCP 2025-11-25 stdio protocol with
 `initialize`, `ping`, `tools/list`, and `tools/call`. Its tools are
-`inspect_document` and `open_document`. Discovery does not launch the reader.
+`inspect_document`, `open_document`, `list_tab_groups`, `create_tab_group`,
+`update_tab_group`, `move_tab_to_group`, `move_tab_group`, and `ungroup_tabs`.
+The group tools use the fields documented above, without the native `action`
+field. Discovery does not launch the reader.
 Each call invokes the native command with argument arrays, never a shell.
 The protocol schema is defined by the
 [official MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2025-11-25/schema.ts).
@@ -132,8 +199,9 @@ Commands are limited to 64 KiB and reports to 32 MiB. Tool failures use MCP
 
 ## Verification
 
-`make -C portable mac-agent-tests mac-agent-pdf-inspection-tests` checks validation, passage disambiguation,
+`make -C portable mac-agent-tests mac-agent-group-tests mac-agent-pdf-inspection-tests` checks validation, passage disambiguation,
 request serialization, cached-tab restoration ordering, delayed readiness,
 concurrency/cancellation, malformed protocol records, subprocess errors,
-and lazy discovery/startup. The normal Markdown suites check geometry and
+lazy discovery/startup, group mutation, membership order, stale-window guards,
+and group session-codec restoration. The normal Markdown suites check geometry and
 screen/export agreement. No installed app is launched by these tests.

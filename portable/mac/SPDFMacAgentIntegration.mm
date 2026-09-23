@@ -1,5 +1,6 @@
 #import "SPDFMacAgentIntegration.h"
 #import "SPDFMacAgentCommand.h"
+#import "SPDFMacAgentGroups.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "markdown/SPDFMarkdownModel.h"
 #import <objc/runtime.h>
@@ -40,7 +41,7 @@ static void respond(NSString* path, NSDictionary* result) {
     if (!valid || count != (ssize_t)data.length) return;
     NSError* error = nil;
     NSDictionary* command = SPDFMacValidateAgentCommand(data, &error);
-    if (!command || ![command[@"action"] isEqual:@"open"]) { respond(path, @{@"error":error.localizedDescription ?: @"Only open is accepted by the reader."}); return; }
+    if (!command || [command[@"action"] isEqual:@"inspect"]) { respond(path, @{@"error":error.localizedDescription ?: @"Inspection runs headlessly through the CLI."}); return; }
     if (objc_getAssociatedObject(self, &activeRequestKey)) { respond(path, @{@"error":@"Another agent navigation is in progress."}); return; }
     NSMutableDictionary* state = [@{@"path":path, @"command":command, @"deadline":[NSDate dateWithTimeIntervalSinceNow:25], @"stage":@0} mutableCopy];
     objc_setAssociatedObject(self, &activeRequestKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -59,6 +60,9 @@ static void respond(NSString* path, NSDictionary* result) {
     }
     NSDictionary* command = state[@"command"];
     NSInteger stage = [state[@"stage"] integerValue];
+    if (_uiReady && stage == 0 && ![command[@"action"] isEqual:@"open"]) {
+        [self finishAgentNavigation:state result:[self performAgentGroupCommand:command]]; return;
+    }
     if (_uiReady && stage == 0) {
         BOOL directory = NO;
         if (![NSFileManager.defaultManager fileExistsAtPath:command[@"path"] isDirectory:&directory] || directory) {

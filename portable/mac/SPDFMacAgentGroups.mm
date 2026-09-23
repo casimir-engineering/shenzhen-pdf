@@ -1,0 +1,100 @@
+#import "SPDFMacAgentGroups.h"
+#import "SPDFMacTabGroupIntegration.h"
+
+static NSDictionary* GroupError(NSString* message) { return @{@"error":message}; }
+@implementation ShenzhenMacDelegate (SPDFMacAgentGroups)
+- (SPDFTabGroup*)agentGroupWithID:(NSString*)identifier {
+    for (SPDFDocumentTab* tab in _tabs) if ([tab.group.identifier isEqual:identifier]) return tab.group;
+    return nil;
+}
+- (SPDFDocumentTab*)agentTabWithPath:(NSString*)path {
+    for (SPDFDocumentTab* tab in _tabs)
+        if ([tab.path.stringByStandardizingPath isEqual:path]) return tab;
+    return nil;
+}
+- (NSDictionary*)agentGroupSnapshot {
+    NSMutableArray* groups=[NSMutableArray array]; NSMutableArray* tabs=[NSMutableArray array];
+    NSMutableDictionary* byID=[NSMutableDictionary dictionary];
+    for (NSUInteger i=0;i<_tabs.count;i++) {
+        SPDFDocumentTab* tab=_tabs[i]; SPDFTabGroup* group=tab.group;
+        NSDictionary* item=@{@"path":tab.path ?: @"",@"title":tab.title ?: @"",@"index":@(i+1),
+            @"groupID":group.identifier ?: (id)NSNull.null,@"selected":@(i==(NSUInteger)_selectedTabIndex),
+            @"readOnly":@(tab.readOnly),@"missingFile":@(tab.missingFile)};
+        [tabs addObject:item];
+        if (!group) continue;
+        NSMutableDictionary* row=byID[group.identifier];
+        if (!row) {
+            row=[group.dictionary mutableCopy]; row[@"displayName"]=group.displayName;
+            row[@"general"]=@(group.general); row[@"paths"]=[NSMutableArray array];
+            row[@"position"]=@(groups.count+1); byID[group.identifier]=row; [groups addObject:row];
+        }
+        [row[@"paths"] addObject:tab.path ?: @""];
+    }
+    return @{@"windowSessionID":_windowSessionID ?: @"",@"groups":groups,@"tabs":tabs,
+             @"colors":spdf_tab_group_colors()};
+}
+- (NSDictionary*)performAgentGroupCommand:(NSDictionary*)command {
+    if ([command[@"windowSessionID"] length] && ![command[@"windowSessionID"] isEqual:_windowSessionID])
+        return GroupError(@"The command reached a different reader window. List groups in the intended window first.");
+    NSString* action=command[@"action"];
+    if ([action isEqual:@"list-groups"]) return [self agentGroupSnapshot];
+    SPDFTabGroup* group=[self agentGroupWithID:command[@"groupID"]];
+    SPDFTabGroup* before=[self agentGroupWithID:command[@"beforeGroupID"]];
+    if (command[@"groupID"] && !group) return GroupError(@"Group no longer exists. List groups again.");
+    if (command[@"beforeGroupID"] && !before) return GroupError(@"Destination group no longer exists. List groups again.");
+    if (command[@"color"] && (![spdf_tab_group_colors() containsObject:command[@"color"]] || group.general))
+        return GroupError(@"Use a color returned by list-groups. General keeps its fixed gray color.");
+    NSString* affected=nil;
+    if ([action isEqual:@"create-group"]) {
+        NSMutableArray<SPDFDocumentTab*>* members=[NSMutableArray array];
+        for (NSString* path in command[@"paths"]) {
+            SPDFDocumentTab* tab=[self agentTabWithPath:path];
+            if (!tab) return GroupError(@"Every requested document must already be open in this reader window.");
+            [members addObject:tab];
+        }
+        if (before) {
+            BOOL survives=NO;
+            for (SPDFDocumentTab* tab in _tabs) if (tab.group==before && ![members containsObject:tab]) survives=YES;
+            if (!survives) return GroupError(@"The destination group would be emptied by this creation. Choose another destination.");
+        }
+        SPDFDocumentTab* first=members.firstObject;
+        [self createGroupForTabAtIndex:[_tabs indexOfObjectIdenticalTo:first] withTabAtIndex:-1 color:command[@"color"]];
+        group=first.group;
+        for (SPDFDocumentTab* tab in members) {
+            if (tab==first) continue;
+            NSArray* existing=spdf_tab_group_members(_tabs,group);
+            NSInteger destination=[_tabs indexOfObjectIdenticalTo:existing.lastObject]+1;
+            [self moveTabAtIndex:[_tabs indexOfObjectIdenticalTo:tab] toGroup:group atIndex:destination];
+        }
+        if (command[@"name"]) [self renameTabGroup:group name:command[@"name"]];
+        NSInteger position=before ? [_tabs indexOfObjectIdenticalTo:spdf_tab_group_members(_tabs,before).firstObject] : _tabs.count;
+        [self moveTabGroup:group toIndex:position]; affected=group.identifier;
+    } else if ([action isEqual:@"update-group"]) {
+        if (command[@"name"]) [self renameTabGroup:group name:command[@"name"]];
+        if (command[@"color"]) [self recolorTabGroup:group color:command[@"color"]];
+        if (command[@"collapsed"] && group.collapsed != [command[@"collapsed"] boolValue]) [self toggleTabGroup:group];
+        affected=group.identifier;
+    } else if ([action isEqual:@"move-tab"]) {
+        SPDFDocumentTab* tab=[self agentTabWithPath:command[@"path"]];
+        SPDFDocumentTab* beforeTab=[self agentTabWithPath:command[@"beforePath"]];
+        if (!tab) return GroupError(@"Document is not open in this reader window.");
+        if (command[@"beforePath"] && (!beforeTab || beforeTab.group!=group))
+            return GroupError(@"beforePath must identify an open tab in the destination group.");
+        NSArray* members=spdf_tab_group_members(_tabs,group);
+        NSInteger destination=beforeTab ? [_tabs indexOfObjectIdenticalTo:beforeTab] :
+            [_tabs indexOfObjectIdenticalTo:members.lastObject]+1;
+        [self moveTabAtIndex:[_tabs indexOfObjectIdenticalTo:tab] toGroup:group atIndex:destination];
+        affected=group.identifier;
+    } else if ([action isEqual:@"move-group"]) {
+        if (before!=group) [self moveTabGroup:group toIndex:before ?
+            [_tabs indexOfObjectIdenticalTo:spdf_tab_group_members(_tabs,before).firstObject] : _tabs.count];
+        affected=group.identifier;
+    } else if ([action isEqual:@"ungroup"]) {
+        if (group.general) return GroupError(@"General cannot be ungrouped.");
+        [self ungroupTabs:group];
+    } else return GroupError(@"Unsupported group action.");
+    NSMutableDictionary* result=[[self agentGroupSnapshot] mutableCopy];
+    if (affected) result[@"groupID"]=affected;
+    return result;
+}
+@end
