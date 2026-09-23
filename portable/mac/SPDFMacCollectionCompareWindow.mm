@@ -246,7 +246,6 @@ static NSDictionary* preparePresentation(SPDFCollectionComparison* result) {
     SPDFCollectionComparePane* target = source == _oldPane ? _newPane : _oldPane;
     if (!source.reader.document || !target.reader.document) return;
     _synchronizing = YES;
-    if (zoom) target.reader.scaleFactor = source.reader.scaleFactor;
     PDFDestination* current = source.navigationDestination;
     NSUInteger slot = [source.reader.document indexForPage:current.page];
     if (slot < target.reader.document.pageCount) {
@@ -255,7 +254,8 @@ static NSDictionary* preparePresentation(SPDFCollectionComparison* result) {
         NSRect to = [counterpart boundsForBox:kPDFDisplayBoxMediaBox];
         NSPoint point = NSMakePoint(to.origin.x+(current.point.x-from.origin.x)/MAX(1,from.size.width)*to.size.width,
                                    to.origin.y+(current.point.y-from.origin.y)/MAX(1,from.size.height)*to.size.height);
-        [target goToDestination:[[PDFDestination alloc] initWithPage:counterpart atPoint:point]];
+        [target applyLinkedDestination:[[PDFDestination alloc] initWithPage:counterpart atPoint:point]
+                           scaleFactor:zoom ? source.reader.scaleFactor : 0];
     }
     _synchronizing = NO;
 }
