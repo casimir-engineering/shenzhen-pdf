@@ -13,6 +13,12 @@ static int failures;
 static std::atomic<unsigned> serializations(0);
 static std::atomic<bool> serializedOnMain(false);
 static IMP originalSerialization;
+static IMP originalDestinationJump;
+static NSUInteger destinationJumps;
+static void CountDestinationJump(id reader, SEL selector, PDFDestination* destination) {
+    destinationJumps++;
+    ((void (*)(id,SEL,PDFDestination*))originalDestinationJump)(reader,selector,destination);
+}
 static NSData* CountSerialization(id document, SEL selector) {
     serializations++;
     if (NSThread.isMainThread) serializedOnMain = true;
@@ -101,6 +107,69 @@ static void CheckNavigation(SPDFCollectionCompareController* controller, NSArray
     Expect(@"scroll observation refreshes counters without page notifications",
         ShowsPage(updated,@"3",@"/ 3 · source 3"));
 }
+static void CheckLinkedScrolling(SPDFCollectionCompareController* controller, NSArray<SPDFCollectionComparePane*>* panes) {
+    SPDFCollectionComparePane* old = panes.firstObject, *updated = panes.lastObject;
+    NSButton* linked = (id)FindControl(controller.window.contentView,@"Link scrolling and zoom",YES);
+    if (linked.state != NSControlStateValueOn) [linked performClick:nil];
+    [old goToSlot:0]; old.reader.scaleFactor = 1.35; DrainNavigation();
+    void (^oldCallback)(SPDFCollectionComparePane*) = old.navigationChanged;
+    void (^newCallback)(SPDFCollectionComparePane*) = updated.navigationChanged;
+    __block NSUInteger oldUpdates = 0, newUpdates = 0;
+    old.navigationChanged = ^(SPDFCollectionComparePane* pane) { oldUpdates++; if (oldCallback) oldCallback(pane); };
+    updated.navigationChanged = ^(SPDFCollectionComparePane* pane) { newUpdates++; if (newCallback) newCallback(pane); };
+    Method jump = class_getInstanceMethod(PDFView.class,@selector(goToDestination:));
+    originalDestinationJump = method_setImplementation(jump,(IMP)CountDestinationJump);
+    destinationJumps = 0;
+    for (NSUInteger direction = 0; direction < 2; direction++) {
+        SPDFCollectionComparePane* source = direction ? updated : old;
+        SPDFCollectionComparePane* target = direction ? old : updated;
+        [source beginUserNavigation];
+        NSScrollView* sourceScroll = source.reader.documentView.enclosingScrollView;
+        NSClipView* sourceClip = sourceScroll.contentView;
+        NSClipView* targetClip = target.reader.documentView.enclosingScrollView.contentView;
+        CGFloat initialY = sourceClip.bounds.origin.y;
+        NSUInteger initialSlot = source.currentSlot;
+        BOOL crossedPage = NO;
+        NSUInteger initialSourceCount = direction ? newUpdates : oldUpdates;
+        NSUInteger initialTargetCount = direction ? oldUpdates : newUpdates;
+        for (NSUInteger step = 0; step < 80; step++) {
+            NSPoint point = sourceClip.bounds.origin;
+            CGFloat delta = direction ? -9.375 : 16.125;
+            point.y += source.reader.documentView.isFlipped ? delta : -delta;
+            NSRect proposed = sourceClip.bounds; proposed.origin = point;
+            point = [sourceClip constrainBoundsRect:proposed].origin;
+            [sourceClip scrollToPoint:point]; [sourceScroll reflectScrolledClipView:sourceClip];
+            NSPoint expectedSource = sourceClip.bounds.origin;
+            // A wheel update can post several bounds and page notifications.
+            // They must collapse to one publication, not two opposing jumps.
+            for (NSUInteger burst = 0; burst < 3; burst++) {
+                [NSNotificationCenter.defaultCenter postNotificationName:NSViewBoundsDidChangeNotification object:sourceClip];
+                [NSNotificationCenter.defaultCenter postNotificationName:PDFViewPageChangedNotification object:source.reader];
+            }
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.002]];
+            [NSNotificationCenter.defaultCenter postNotificationName:NSViewBoundsDidChangeNotification object:targetClip];
+            [NSNotificationCenter.defaultCenter postNotificationName:PDFViewPageChangedNotification object:target.reader];
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.002]];
+            PDFDestination* anchor = source.navigationDestination;
+            NSPoint viewportPoint = [source.reader convertPoint:anchor.point fromPage:anchor.page];
+            PDFPage* anchorPage = [source.reader pageForPoint:viewportPoint nearest:YES];
+            crossedPage |= [source.reader.document indexForPage:anchorPage] != initialSlot;
+            Expect(@"linked fractional scrolling never pushes the driving viewport backward",
+                fabs(sourceClip.bounds.origin.y-expectedSource.y) < .01);
+            Expect(@"linked fractional scrolling keeps peer viewport aligned",
+                fabs(sourceClip.bounds.origin.y-targetClip.bounds.origin.y) < 1);
+        }
+        Expect(@"fractional scroll test moves through real document content",fabs(sourceClip.bounds.origin.y-initialY) > 250);
+        if (!direction) Expect(@"fractional scrolling crosses an aligned page boundary",crossedPage);
+        NSUInteger sourceUpdates = (direction ? newUpdates : oldUpdates)-initialSourceCount;
+        NSUInteger targetUpdates = (direction ? oldUpdates : newUpdates)-initialTargetCount;
+        Expect(@"each notification burst produces one driver publication",sourceUpdates == 80);
+        Expect(@"late peer notifications never echo back into the driver",targetUpdates == 0);
+    }
+    Expect(@"following scroll uses direct clip movement without PDFKit navigation jumps",destinationJumps == 0);
+    method_setImplementation(jump,originalDestinationJump);
+    old.navigationChanged = oldCallback; updated.navigationChanged = newCallback;
+}
 static void WalkAccessibility(id element, NSHashTable* visited, NSUInteger* pages, NSUInteger* textNodes) {
     if (!element || [visited containsObject:element]) return;
     [visited addObject:element];
@@ -172,6 +241,7 @@ int main(void) {
             Expect(@"native tagged PDF accessibility retains text children",textNodes >= (side ? 3 : 2));
         }
         CheckNavigation(controller,panes);
+        CheckLinkedScrolling(controller,panes);
         Expect(@"added page receives an explicit empty counterpart",[panes.firstObject.sourcePages isEqual:@[@0,@-1,@1]]);
         Expect(@"comparison never shows a headless window",!controller.window.visible);
         Expect(@"comparison leaves source PDFs unchanged",[oldBytes isEqual:[NSData dataWithContentsOfURL:oldURL]] &&
