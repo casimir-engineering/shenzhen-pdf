@@ -40,6 +40,20 @@
     NSMutableDictionary* state=[self captureUserOpenStateForPath:path];
     if ([state[@"count"] unsignedIntegerValue]) { state[@"count"]=@0; state[@"recorded"]=@YES; }
 }
+- (void)recordUncapturedUserOpenForPath:(NSString*)path {
+    if (![self captureUserOpenCountForPath:path]) return;
+    NSString* identifier=[self documentForPath:path][@"id"];
+    if (!identifier.length) return;
+    // Successful reading still counts when capture is excluded, cancelled by an
+    // edit epoch or fails. Finish before the next worker can enforce its cap;
+    // a main-thread completion may be delayed while the user is interacting.
+    BOOL recorded=[self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
+        (void)failure; NSMutableDictionary* document=manifest[@"documents"][identifier];
+        if (!document) return NO;
+        [self recordCaptureUserOpenInDocument:document path:path]; return YES;
+    } error:nil];
+    if (recorded) [self markCaptureUserOpenRecordedForPath:path];
+}
 - (void)capturePath:(NSString*)path reason:(NSString*)reason completion:(void (^)(NSDictionary*,NSError*))completion {
     [self capturePath:path reason:reason continuingDocumentID:nil completion:completion];
 }
@@ -75,7 +89,10 @@
         NSString* contextKey = [NSString stringWithFormat:@"SPDFCollectionCapture.%p", self];
         NSThread.currentThread.threadDictionary[contextKey] = @{@"path":SPDFCollectionPath(path), @"generation":generation, @"epoch":epoch, @"userOpenState":state};
         NSError* error=nil; NSDictionary* row;
-        @try { row=[self capturePath:path reason:reason continuingDocumentID:documentID error:&error]; }
+        @try {
+            row=[self capturePath:path reason:reason continuingDocumentID:documentID error:&error];
+            if (!row) [self recordUncapturedUserOpenForPath:path];
+        }
         @finally { [NSThread.currentThread.threadDictionary removeObjectForKey:contextKey]; }
         BOOL transient=([error.domain isEqual:@"SPDFCollection"] &&
                         (error.code==5 || error.code==EAGAIN || error.code==EINTR || error.code==EBUSY)) ||

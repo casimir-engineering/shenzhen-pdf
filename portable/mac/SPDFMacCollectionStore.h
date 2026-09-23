@@ -34,7 +34,8 @@ NS_ASSUME_NONNULL_BEGIN
         completion:(nullable void (^)(NSDictionary* _Nullable, NSError* _Nullable))completion;
 // Counts explicit opens atomically before cap cleanup. The completion flag remains
 // YES if the count committed but a later source change caused retries/failure.
-// When NO, callers may record successful reading against an existing history.
+// Excluded/failed captures record existing-history usage on the worker before
+// other queued captures run. When NO, callers may retry recording usage.
 - (void)capturePath:(NSString*)path reason:(NSString*)reason
         continuingDocumentID:(nullable NSString*)documentID userOpenCount:(NSUInteger)count
         completion:(nullable void (^)(NSDictionary* _Nullable, NSError* _Nullable, BOOL userOpenCountRecorded))completion;
