@@ -338,6 +338,35 @@ int main(void) {
         } @catch (NSException* exception) {
             fprintf(stderr,"FAIL: comparison constructor/layout raised %s\n",exception.description.UTF8String); failures++;
         }
+        // Opening Collection must survive real entries without saved versions.
+        NSString* excludedPath = [root.path stringByAppendingString:@"-Excluded.md"];
+        NSString* failedPath = [root.path stringByAppendingString:@"-Missing.md"];
+        [store setExcluded:YES path:excludedPath error:nil];
+        NSError* captureError = nil;
+        [store capturePath:failedPath reason:@"Opened" error:&captureError];
+        Expect(@"failed initial capture creates an uncaptured document fixture",captureError &&
+            [store documentForPath:failedPath] && ![[store documentForPath:failedPath][@"versions"] count]);
+        manager.search.stringValue = @""; [manager.viewPicker selectItemWithTag:0];
+        [manager showDestination:@"Documents"];
+        for (NSInteger sort=0;sort<3;sort++) {
+            [manager.sortPicker selectItemAtIndex:sort];
+            NSArray* previous = manager.rows; [manager reload:nil];
+            NSDate* finish = [NSDate dateWithTimeIntervalSinceNow:3];
+            while (manager.rows == previous && finish.timeIntervalSinceNow>0)
+                [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+            Expect(@"all sort modes load saved and uncaptured documents",manager.rows != previous &&
+                manager.rows.count == store.documents.count && manager.rows.count > 2);
+            if (sort<2) {
+                BOOL reachedUndated = NO;
+                for (NSDictionary* row in manager.rows) {
+                    BOOL dated = row[@"version"][@"capturedAt"] != nil;
+                    Expect(@"uncaptured rows remain after dated rows in both date orders",!reachedUndated || !dated);
+                    if (!dated) reachedUndated = YES;
+                }
+                Expect(@"uncaptured entries remain visible",reachedUndated);
+            }
+        }
+        dispatch_sync(manager.preferenceQueue,^{});
         [manager.window close]; [historyHost close]; [comparison.window close];
         NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:.15];
         while ([deadline timeIntervalSinceNow] > 0)

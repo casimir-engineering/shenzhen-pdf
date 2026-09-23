@@ -81,7 +81,13 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         }
         [rows sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) {
             if (sort == 2) return [a[@"document"][@"title"] localizedStandardCompare:b[@"document"][@"title"]];
-            NSComparisonResult result = [a[@"version"][@"capturedAt"] compare:b[@"version"][@"capturedAt"]];
+            NSNumber* left = a[@"version"][@"capturedAt"], *right = b[@"version"][@"capturedAt"];
+            BOOL leftDated = [left isKindOfClass:NSNumber.class], rightDated = [right isKindOfClass:NSNumber.class];
+            // Excluded documents and failed first captures legitimately have
+            // no saved version. Keep them last in either date order.
+            if (leftDated != rightDated) return leftDated ? NSOrderedAscending : NSOrderedDescending;
+            if (!leftDated) return [a[@"document"][@"id"] compare:b[@"document"][@"id"]];
+            NSComparisonResult result = [left compare:right];
             return sort == 0 ? (NSComparisonResult)-result : result;
         }];
         unsigned long long used = [self.store storageUsedBytes];

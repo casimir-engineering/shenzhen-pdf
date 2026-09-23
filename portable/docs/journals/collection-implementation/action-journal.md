@@ -385,3 +385,13 @@ Collapsed labels now use centered paragraph alignment and measured font height i
 Five targeted suites passed: group model, group integration, group interaction, strip interaction and strip style. Updated interaction checks cover name clicks, arrow clicks, General, explicit menu rename and group dragging; an integration check verifies expanding a group opens its last-used document without losing its page position. The image above is a production-view render from the headless test, not a screenshot of a running reader. Source-size and whitespace checks pass.
 
 The native candidate at `portable/build/tab-group-click-candidate/ShenzhenPDF.app` built successfully and passed strict signature verification. Running application bundles were left untouched.
+
+### Collection opening crash: uncaptured documents
+
+The user's crash report shows a background sorting exception in `NSNumber compare:` while the Collection manager opens. The manager compared each latest version's capture date directly, but excluded documents and failed initial captures legitimately have no saved version or date. A numeric date compared with a missing date raises an exception and terminates the application.
+
+The sorter now checks for numeric dates before comparing them. Undated entries remain visible after dated entries in both newest-first and oldest-first order, with stable identity ordering between undated rows. No Collection files, versions or preferences are migrated or removed by this fix.
+
+The regression uses the real store APIs to create an excluded document and a failed initial capture alongside saved documents, then asynchronously reloads the actual manager under all three sort modes. It verifies loading completes, all documents remain present, and undated entries follow saved versions in both date orders. All **24 native Markdown/UI integration suites** passed, as did the native build, source-size ratchet and whitespace check.
+
+The signed candidate in `portable/build/collection-sort-fix/ShenzhenPDF.app` was copied into **`dist/ShenzhenPDF.app`**. Strict signature checks and an executable hash comparison verified the replacement. The previous bundle was preserved under `portable/build`; no app was launched or quit.
