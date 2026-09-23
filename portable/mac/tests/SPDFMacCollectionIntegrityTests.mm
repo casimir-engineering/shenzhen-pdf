@@ -58,6 +58,12 @@ int main(void) {
         Expect(@"encrypted source has no plaintext index",[version[@"encrypted"] boolValue] && [version[@"textPages"] count]==0);
         NSURL* preview=[store materializeVersionID:version[@"id"] documentID:doc[@"id"] error:nil];
         Expect(@"archive preserves exact encrypted bytes",[[NSData dataWithContentsOfFile:path] isEqual:[NSData dataWithContentsOfURL:preview]]);
+        NSDictionary* beforePreview = [fm attributesOfItemAtPath:preview.path error:nil];
+        NSURL* repeatedPreview = [store materializeVersionID:version[@"id"] documentID:doc[@"id"] error:nil];
+        NSDictionary* afterPreview = [fm attributesOfItemAtPath:repeatedPreview.path error:nil];
+        Expect(@"unchanged materialized preview preserves credential-bound file identity",
+               [beforePreview[NSFileSystemFileNumber] isEqual:afterPreview[NSFileSystemFileNumber]] &&
+               [beforePreview[NSFileModificationDate] isEqual:afterPreview[NSFileModificationDate]]);
         PDFDocument* restored=[[PDFDocument alloc] initWithURL:preview];
         Expect(@"restored encryption remains locked",restored.isEncrypted && restored.isLocked);
         Expect(@"original password still works",[restored unlockWithPassword:@"reader-secret"]);

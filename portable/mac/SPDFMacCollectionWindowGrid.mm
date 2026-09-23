@@ -2,7 +2,8 @@
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacMarkdownPrinting.h"
 #import "markdown/SPDFMarkdownDocument.h"
-#import <PDFKit/PDFKit.h>
+#import "SPDFMacCollectionThumbnail.h"
+#import "SPDFMacPassword.h"
 
 @interface SPDFCollectionThumbnailItem : NSCollectionViewItem
 @property(nonatomic) NSButton* historyButton;
@@ -153,8 +154,8 @@
     itemView.caption = caption;
     itemView.accessibilityHelp = doc[@"path"];
     item.imageView.image = [self.thumbnailCache objectForKey:key] ?: [NSImage imageWithSystemSymbolName:
-        [version[@"encrypted"] boolValue] ? @"lock.doc" : @"doc" accessibilityDescription:@"Document preview"];
-    if (self.layoutPicker.indexOfSelectedItem == 1 && version[@"id"] && ![version[@"encrypted"] boolValue]) [self requestThumbnail:row key:key];
+        @"doc" accessibilityDescription:@"Document preview"];
+    if (self.layoutPicker.indexOfSelectedItem == 1 && version[@"id"]) [self requestThumbnail:row key:key];
     return item;
 }
 - (void)requestThumbnail:(NSDictionary*)row key:(NSString*)key {
@@ -176,8 +177,17 @@
                     attributedString:markdown.renderedDocument.attributedString scale:MIN(300/config.paperSize.width,300/config.paperSize.height)];
                 if (bitmap) { image = [[NSImage alloc] initWithSize:bitmap.size]; [image addRepresentation:bitmap]; }
             } else if (URL) {
-                PDFDocument* pdf = [[PDFDocument alloc] initWithURL:URL];
-                image = [[pdf pageAtIndex:MIN(MAX(0,[row[@"selectedPage"] integerValue]-1),(NSInteger)pdf.pageCount-1)] thumbnailOfSize:NSMakeSize(260,300) forBox:kPDFDisplayBoxMediaBox];
+                image = SPDFCollectionPDFThumbnail(URL,[row[@"selectedPage"] integerValue],^(PDFDocument* pdf) {
+                    // Resolve lazily: standalone Collection UI tests need no core/password runtime.
+                    SPDFPasswordCredentialStore* credentials = [NSClassFromString(@"SPDFPasswordCredentialStore") sharedStore];
+                    for (NSString* path in @[URL.path,row[@"document"][@"path"] ?: @""]) {
+                        SPDFPasswordCredential* credential = [credentials credentialForSourcePath:path];
+                        [credential withUTF8Password:^(const char* password) {
+                            [pdf unlockWithPassword:[NSString stringWithUTF8String:password]];
+                        }];
+                        if (!pdf.isLocked) break;
+                    }
+                },&error);
             }
             dispatch_async(dispatch_get_main_queue(), ^{
                 SPDFMacCollectionWindow* owner = weakSelf;
@@ -188,6 +198,7 @@
                     NSView* cell = [owner.table viewAtColumn:0 row:index makeIfNecessary:NO];
                     for (NSView* child in cell.subviews) if ([child isKindOfClass:NSImageView.class] && [child.identifier isEqual:key]) {
                         if (image) ((NSImageView*)child).image = image;
+                        else child.toolTip = error.localizedDescription ?: @"Preview unavailable; open the saved copy.";
                     }
                 }
                 for (NSCollectionViewItem* item in owner.grid.visibleItems) if ([item.representedObject isEqual:key]) {

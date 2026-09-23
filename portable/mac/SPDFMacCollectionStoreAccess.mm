@@ -84,7 +84,14 @@
             if (!SPDFCollectionMakeDirectory(destination.URLByDeletingLastPathComponent,e)) return NO;
             // A copy (never a hard link) prevents another process from mutating the content-addressed object.
             NSData* bytes=[NSData dataWithContentsOfURL:source options:0 error:e];
-            if (!bytes || !SPDFCollectionAtomicData(bytes,destination,0400,e)) return NO;
+            if (!bytes) return NO;
+            struct stat existing;
+            BOOL reusable = lstat(destination.fileSystemRepresentation,&existing)==0 &&
+                S_ISREG(existing.st_mode) && (existing.st_mode & 0777)==0400 &&
+                [bytes isEqualToData:[NSData dataWithContentsOfURL:destination]];
+            // Preserve the identity of a verified read-only preview: session passwords
+            // are bound to that identity, and thumbnails must not invalidate them.
+            if (!reusable && !SPDFCollectionAtomicData(bytes,destination,0400,e)) return NO;
         }
         result=[directory URLByAppendingPathComponent:entries.firstObject[@"relativePath"]]; return YES;
     } error:error];
