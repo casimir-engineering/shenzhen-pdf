@@ -29,6 +29,8 @@
 
 @implementation SPDFGroupFakeReader
 - (void)toggleTabGroup:(SPDFTabGroup*)group { self.toggles++; group.collapsed = !group.collapsed; }
+- (void)setTabGroup:(SPDFTabGroup*)group hidden:(BOOL)hidden { group.hidden=hidden; }
+- (void)jumpTabGroup:(SPDFTabGroup*)group { group.hidden=NO; }
 - (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color {
     (void)index, (void)other;
     self.createdGroups++;
@@ -236,6 +238,7 @@ int main(void) {
         check_group_reorder(YES);
         check_group_reorder(NO);
         check_group_overflow();
+        check_hidden_groups();
         check_group_creation_side();
         NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 900, 42)
                                                        styleMask:NSWindowStyleMaskBorderless

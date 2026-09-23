@@ -27,6 +27,7 @@
     CGFloat headers = 0;
     for (NSUInteger i = 0; i < self.tabs.count; ++i) {
         SPDFDocumentTab* tab = self.tabs[i];
+        if (tab.group.hidden) continue;
         if (current.group != tab.group) {
             current = [[SPDFTabGroupLayout alloc] init];
             current.group = tab.group;

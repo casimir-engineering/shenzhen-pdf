@@ -84,7 +84,7 @@
 
     NSMutableArray<NSNumber*>* hiddenIndexes = [NSMutableArray array];
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
-        if (![visibleIndexes containsIndex:(NSUInteger)i]) [hiddenIndexes addObject:@(i)];
+        if (!self.tabs[(NSUInteger)i].group.hidden && ![visibleIndexes containsIndex:(NSUInteger)i]) [hiddenIndexes addObject:@(i)];
     }
     return hiddenIndexes;
 }

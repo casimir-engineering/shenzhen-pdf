@@ -9,6 +9,9 @@
 @property(nonatomic, copy) NSString* colorName;
 @property(nonatomic, copy) NSString* lastUsedPath;
 @property(nonatomic) BOOL collapsed;
+@property(nonatomic) BOOL hidden;
+// General created explicitly in Group Management survives without custom groups.
+@property(nonatomic) BOOL explicitGeneral;
 @property(nonatomic, readonly) BOOL general;
 @property(nonatomic, readonly) NSString* displayName;
 + (instancetype)generalGroup;
@@ -33,6 +36,8 @@ NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tab
 - (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color
              beforeTargetGroup:(BOOL)before;
 - (void)toggleTabGroup:(SPDFTabGroup*)group;
+- (void)setTabGroup:(SPDFTabGroup*)group hidden:(BOOL)hidden;
+- (void)jumpTabGroup:(SPDFTabGroup*)group;
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name;
 - (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color;
 - (void)ungroupTabs:(SPDFTabGroup*)group;

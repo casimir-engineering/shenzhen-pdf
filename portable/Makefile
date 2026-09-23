@@ -670,3 +670,8 @@ mac-sidebar-navigation-tests: | $(BUILD)
 mac-group-management-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacGroupManagementTests.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacTabGroups.mm -framework Cocoa -o "$(BUILD)/SPDFMacGroupManagementTests"
 	"$(BUILD)/SPDFMacGroupManagementTests"
+
+.PHONY: mac-sidebar-workspace-tests
+mac-sidebar-workspace-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(YAML_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSidebarWorkspaceTests.mm mac/SPDFMacSidebarWorkspace.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(YAML_OBJ)" "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacSidebarWorkspaceTests"
+	"$(BUILD)/SPDFMacSidebarWorkspaceTests"

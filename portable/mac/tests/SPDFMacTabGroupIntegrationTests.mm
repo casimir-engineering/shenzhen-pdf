@@ -11,6 +11,7 @@
 
 @interface GroupReaderProbe : ShenzhenMacDelegate
 @property(nonatomic, copy) NSString* activePath;
+@property(nonatomic) NSMutableDictionary* workspace;
 @property(nonatomic, strong) NSArray* savedTabs;
 @property(nonatomic) NSInteger saveCount;
 @property(nonatomic) NSInteger handoffWriteCount;
@@ -28,12 +29,14 @@
 - (NSArray*)tabs { return _tabs; }
 - (NSInteger)selectedIndex { return _selectedTabIndex; }
 - (void)rememberActiveTabState {}
+- (NSMutableDictionary*)sidebarWorkspaceState { if (!self.workspace) self.workspace=[NSMutableDictionary dictionary]; return self.workspace; }
 - (void)writeStateObject:(id)object toFile:(NSString*)name {
     (void)object; (void)name; self.handoffWriteCount++;
 }
 - (id)stateObjectFromFile:(NSString*)name { (void)name; return nil; }
 - (void)showError:(NSString*)message detail:(NSString*)detail { (void)message; (void)detail; self.errorCount++; }
 - (void)updateTabStrip {}
+- (void)refreshSidebarWorkspacePanel {}
 - (void)savePersistentState {
     self.saveCount++;
     NSMutableArray* encoded = [NSMutableArray array];
@@ -95,8 +98,62 @@ static void CheckCreationPlacement(BOOL before, BOOL explicitPlacement) {
         [[restored valueForKey:@"path"] isEqual:[reader.tabs valueForKey:@"path"]] &&
         ((SPDFDocumentTab*)(before ? restored.lastObject : restored.firstObject)).group.general);
 }
+static void CheckGroupManagement(void) {
+    GroupReaderProbe* reader=[GroupReaderProbe new];
+    SPDFDocumentTab* a=Tab(@"/managed-a.pdf"), *b=Tab(@"/managed-b.md");
+    [reader seed:@[a,b] selected:0];
+    SPDFTabGroup* general=[reader ensureGeneralTabGroup];
+    Expect(@"explicit General materializes all ordinary tabs",general.general && a.group==general && b.group==general);
+    [reader setTabGroup:general hidden:YES];
+    Expect(@"hiding active General keeps document and selection",[reader.activePath isEqual:a.path] && reader.selectedIndex==0 && general.hidden);
+    NSMutableArray* decoded=[NSMutableArray array];
+    for (NSDictionary* saved in reader.savedTabs) [decoded addObject:spdf_tab_from_dictionary(saved)];
+    spdf_tab_groups_normalize(decoded);
+    Expect(@"a lone hidden General survives session roundtrip",((SPDFDocumentTab*)decoded[0]).group.general &&
+        ((SPDFDocumentTab*)decoded[0]).group.hidden && ((SPDFDocumentTab*)decoded[0]).group.explicitGeneral);
+    general.lastUsedPath=b.path;
+    [reader jumpTabGroup:general];
+    Expect(@"manager jump unhides and activates remembered document",!general.hidden && [reader.activePath isEqual:b.path]);
+    [reader renameTabGroup:general name:@"Inbox"];
+    NSString* promotedID=[general.identifier copy];
+    Expect(@"renamed General becomes a real custom group",!general.general && [general.name isEqual:@"Inbox"] &&
+        [spdf_tab_group_colors() containsObject:general.colorName] && [reader.workspace[@"newDocumentsInGeneral"] boolValue]);
+    SPDFDocumentTab* fresh=Tab(@"/fresh-after-rename.pdf");
+    [reader appendNewTabToActiveGroup:fresh];
+    Expect(@"first new document creates fresh General instead of entering promoted group",fresh.group.general &&
+        fresh.group!=general && [general.identifier isEqual:promotedID] && a.group==general && b.group==general);
+    [reader setTabGroup:general hidden:YES]; [reader setTabGroup:fresh.group hidden:YES];
+    Expect(@"all groups can hide without changing active document",[reader.activePath isEqual:b.path] && general.hidden && fresh.group.hidden);
+    decoded=[NSMutableArray array];
+    for (NSDictionary* saved in reader.savedTabs) [decoded addObject:spdf_tab_from_dictionary(saved)];
+    spdf_tab_groups_normalize(decoded);
+    GroupReaderProbe* restored=[GroupReaderProbe new]; [restored seed:decoded selected:reader.selectedIndex];
+    restored.workspace=[reader.workspace mutableCopy];
+    Expect(@"roundtrip preserves hidden groups order membership and selected document",[restored.activePath isEqual:b.path] &&
+        [[restored.tabs valueForKey:@"path"] isEqual:[reader.tabs valueForKey:@"path"]] &&
+        ((SPDFDocumentTab*)restored.tabs[0]).group.hidden && ((SPDFDocumentTab*)restored.tabs.lastObject).group.hidden &&
+        [((SPDFDocumentTab*)restored.tabs[0]).group.identifier isEqual:promotedID]);
+    SPDFDocumentTab* next=Tab(@"/next-after-relaunch.md"); [restored appendNewTabToActiveGroup:next];
+    Expect(@"new opens retain General routing after restart and reveal the new tab",next.group.general && !next.group.hidden &&
+        ((SPDFDocumentTab*)restored.tabs[0]).group.hidden && [spdf_tab_group_members(restored.tabs,next.group) count]==2);
+    SPDFTabGroup* currentGeneral=next.group;
+    [restored closeTabGroup:((SPDFDocumentTab*)restored.tabs[0]).group];
+    SPDFDocumentTab* reopened=Tab(@"/reopened-after-close.md"); [restored appendNewTabToActiveGroup:reopened];
+    Expect(@"closing promoted group then reopening reuses the unique General",restored.tabs.count==3 &&
+        reopened.group==currentGeneral && spdf_tab_group_members(restored.tabs,currentGeneral).count==3);
+    [restored closeTabGroup:currentGeneral];
+    SPDFDocumentTab* afterEmpty=Tab(@"/after-empty.md"); [restored appendNewTabToActiveGroup:afterEmpty];
+    Expect(@"opening after every group closes creates one fresh General",restored.tabs.count==1 && afterEmpty.group.general &&
+        afterEmpty.group!=currentGeneral && afterEmpty.group.explicitGeneral);
+    // Ungrouping before General must retain its persisted hidden state.
+    [reader setTabGroup:fresh.group hidden:YES];
+    [reader ungroupTabs:general];
+    Expect(@"ungrouping before hidden General preserves its canonical settings",a.group==fresh.group &&
+        b.group==fresh.group && fresh.group.hidden && fresh.group.explicitGeneral);
+}
 int main(void) {
     @autoreleasepool {
+        CheckGroupManagement();
         CheckCreationPlacement(YES,NO); CheckCreationPlacement(NO,NO);
         CheckCreationPlacement(YES,YES); CheckCreationPlacement(NO,YES);
         GroupReaderProbe* reader = [[GroupReaderProbe alloc] init];
@@ -115,11 +172,6 @@ int main(void) {
         [reader recolorTabGroup:purple color:@"Teal"];
         Expect(@"rename and palette persist immediately", [reader.savedTabs[2][@"group"][@"name"] isEqual:@"References"]
             && [reader.savedTabs[2][@"group"][@"color"] isEqual:@"Teal"]);
-        [reader renameTabGroup:a.group name:@"Inbox"];
-        Expect(@"General can be renamed without losing its policy", a.group.general
-            && [a.group.displayName isEqualToString:@"Inbox"]);
-        [reader renameTabGroup:a.group name:@""];
-        Expect(@"empty General name restores its default", [a.group.displayName isEqualToString:@"General"]);
         [reader toggleTabGroup:purple];
         Expect(@"folding persists immediately", [reader.savedTabs[2][@"group"][@"collapsed"] boolValue]);
         SPDFDocumentTab* fresh = Tab(@"/new.md");

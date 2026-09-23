@@ -1,5 +1,6 @@
 #import "SPDFMacTabGroupIntegration.h"
 #import "SPDFMacTabDetach.h"
+#import "SPDFMacSidebarWorkspace.h"
 
 @interface ShenzhenMacDelegate (SPDFMacTabGroupPrivate)
 - (void)rememberActiveTabState;
@@ -15,6 +16,32 @@
 @end
 
 @implementation ShenzhenMacDelegate (SPDFMacTabGroupIntegration)
+- (SPDFTabGroup*)ensureGeneralTabGroup {
+    SPDFTabGroup* general=nil;
+    for (SPDFDocumentTab* tab in _tabs) if (tab.group.general) { general=tab.group; break; }
+    if (!general) for (SPDFDocumentTab* tab in _tabs) if (!tab.group) {
+        if (!general) general=SPDFTabGroup.generalGroup;
+        tab.group=general;
+    }
+    if (general) { general.explicitGeneral=YES; [self finishTabGroupChange]; }
+    return general;
+}
+- (void)setTabGroup:(SPDFTabGroup*)group hidden:(BOOL)hidden {
+    if (!group || !spdf_tab_group_members(_tabs,group).count) return;
+    group.hidden=hidden;
+    if (group.general) group.explicitGeneral=YES;
+    // Visibility is independent of selection: hiding the active group leaves its document open.
+    [self finishTabGroupChange];
+}
+- (void)jumpTabGroup:(SPDFTabGroup*)group {
+    NSArray* members=spdf_tab_group_members(_tabs,group); if (!members.count) return;
+    SPDFDocumentTab* target=members.firstObject;
+    for (SPDFDocumentTab* tab in members) if ([tab.path isEqual:group.lastUsedPath]) { target=tab; break; }
+    group.hidden=NO;
+    spdf_tab_groups_activate(_tabs,target);
+    [self selectTabAtIndex:[_tabs indexOfObjectIdenticalTo:target]];
+    [self finishTabGroupChange];
+}
 - (void)normalizeTabGroups {
     SPDFDocumentTab* selected = _selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count
         ? _tabs[(NSUInteger)_selectedTabIndex] : nil;
@@ -28,6 +55,14 @@
 - (NSInteger)appendNewTabToActiveGroup:(SPDFDocumentTab*)tab {
     SPDFTabGroup* group = _selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count
         ? _tabs[(NSUInteger)_selectedTabIndex].group : nil;
+    if ([[self sidebarWorkspaceState][@"newDocumentsInGeneral"] boolValue] || group.hidden) {
+        group=nil;
+        for (SPDFDocumentTab* existing in _tabs) if (existing.group.general) { group=existing.group; break; }
+        if (!group) group=SPDFTabGroup.generalGroup;
+        group.explicitGeneral=YES;
+    }
+    // Explicitly opening a new document must not strand its tab in a hidden group.
+    group.hidden=NO;
     tab.group = group;
     NSInteger index = _tabs.count;
     if (group) {
@@ -41,6 +76,7 @@
     [self normalizeTabGroups];
     [self updateTabStrip];
     [self savePersistentState];
+    [self refreshSidebarWorkspacePanel];
 }
 - (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color {
     NSInteger target = other >= 0 && other < (NSInteger)_tabs.count ? other : index;
@@ -93,7 +129,20 @@
 }
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name {
     if (!group) return;
-    group.name = [name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString* trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (group.general && trimmed.length && ![trimmed isEqual:@"General"]) {
+        NSString* previousIdentifier=group.identifier;
+        group.identifier=NSUUID.UUID.UUIDString;
+        NSMutableArray* expanded=[[self sidebarWorkspaceState][@"expandedGroups"] mutableCopy];
+        if ([expanded containsObject:previousIdentifier]) {
+            [expanded removeObject:previousIdentifier]; [expanded addObject:group.identifier];
+            [self sidebarWorkspaceState][@"expandedGroups"]=expanded;
+        }
+        group.colorName=spdf_tab_group_unused_color(_tabs);
+        group.explicitGeneral=NO;
+        [self sidebarWorkspaceState][@"newDocumentsInGeneral"]=@YES;
+    }
+    group.name = trimmed;
     [self finishTabGroupChange];
 }
 - (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color {

@@ -12,6 +12,7 @@ NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"
 #pragma clang diagnostic pop
 @interface AgentGroupProbe : ShenzhenMacDelegate
 @property(nonatomic) NSUInteger saves;
+@property(nonatomic) NSMutableDictionary* workspace;
 @property(nonatomic) NSArray* savedTabs;
 - (void)seed:(NSArray*)tabs;
 - (NSArray*)tabs;
@@ -20,7 +21,9 @@ NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"
 - (void)seed:(NSArray*)tabs { _tabs=[tabs mutableCopy]; _selectedTabIndex=tabs.count ? 0 : -1; _windowSessionID=@"test-window"; }
 - (NSArray*)tabs { return _tabs; }
 - (void)updateTabStrip {}
+- (void)refreshSidebarWorkspacePanel {}
 - (void)rememberActiveTabState {}
+- (NSMutableDictionary*)sidebarWorkspaceState { if (!self.workspace) self.workspace=[NSMutableDictionary dictionary]; return self.workspace; }
 - (void)savePersistentState {
     self.saves++; NSMutableArray* encoded=[NSMutableArray array];
     for (SPDFDocumentTab* tab in _tabs) [encoded addObject:spdf_dictionary_from_tab(tab,0)];
@@ -61,7 +64,7 @@ int main(void) {
         Check([Group(state,@"general")[@"paths"] isEqual:@[@"/b.md",@"/d.md"]]);
         NSUInteger saves=host.saves;
         Check(Run(host,@{@"action":@"update-group",@"groupID":research,@"name":@"Wrong window",@"windowSessionID":@"other"})[@"error"]);
-        Check(Run(host,@{@"action":@"update-group",@"groupID":@"general",@"name":@"Must not change",@"color":@"Blue"})[@"error"]);
+        Check(Run(host,@{@"action":@"update-group",@"groupID":@"general",@"name":@"",@"color":@"Blue"})[@"error"]);
         Check(Run(host,@{@"action":@"move-tab",@"path":@"/b.md",@"groupID":research,@"beforePath":@"/d.md"})[@"error"]);
         Check(host.saves==saves);
         state=Run(host,@{@"action":@"update-group",@"groupID":research,@"name":@"Sources",@"color":@"Rose",@"collapsed":@YES});
@@ -93,6 +96,18 @@ int main(void) {
         Check(!Group(state,research) && [Group(state,@"general")[@"paths"] count]==3);
         Check(Run(host,@{@"action":@"ungroup",@"groupID":@"general"})[@"error"]);
         Check(Run(host,@{@"action":@"update-group",@"groupID":research,@"name":@"Gone"})[@"error"]);
+        AgentGroupProbe* managed=[AgentGroupProbe new]; [managed seed:@[Tab(@"/one.md"),Tab(@"/two.md")]];
+        Check(Run(managed,@{@"action":@"update-group",@"groupID":@"general",@"color":@"Blue"})[@"error"] && managed.saves==0);
+        state=Run(managed,@{@"action":@"update-group",@"groupID":@"general",@"hidden":@YES});
+        Check([Group(state,@"general")[@"hidden"] boolValue] && [state[@"tabs"] count]==2 && [state[@"tabs"][0][@"selected"] boolValue]);
+        state=Run(managed,@{@"action":@"jump-group",@"groupID":@"general"});
+        Check(![Group(state,@"general")[@"hidden"] boolValue]);
+        state=Run(managed,@{@"action":@"update-group",@"groupID":@"general",@"name":@"Inbox",@"color":@"Teal"});
+        NSString* promoted=state[@"groupID"];
+        Check(![promoted isEqual:@"general"] && ![Group(state,promoted)[@"general"] boolValue] &&
+            [Group(state,promoted)[@"name"] isEqual:@"Inbox"] && [state[@"newDocumentsInGeneral"] boolValue]);
+        SPDFDocumentTab* fresh=Tab(@"/next.md"); [managed appendNewTabToActiveGroup:fresh];
+        Check(fresh.group.general && !fresh.group.hidden && [fresh.group.identifier isEqual:@"general"]);
         puts("SPDFMacAgentGroupTests passed");
     }
 }

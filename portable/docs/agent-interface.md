@@ -114,11 +114,14 @@ Start by listing the window's state:
 
 The response includes `windowSessionID`, ordered `groups`, ordered `tabs`, and
 supported `colors`. Each group includes its persisted `id`, custom `name`,
-`displayName`, `color`, `collapsed`, `general`, `lastUsedPath`, one-based
+`displayName`, `color`, `collapsed`, `hidden`, `general`, `lastUsedPath`, one-based
 `position`, and ordered document `paths`. Each tab includes its one-based
 `index`, `path`, `title`, `groupID`, `selected`, `readOnly`, and `missingFile`.
 Ungrouped tabs have `groupID: null`; the General group's stable ID is `general`.
-Listing does not modify the session or create groups.
+Listing does not modify the session or create groups. Hidden groups remain in
+these results even though their headers and tabs are absent from the top strip.
+The response also reports `newDocumentsInGeneral`, the persisted window routing
+preference enabled when General is renamed.
 
 Use returned IDs rather than names, which need not be unique. Include
 `windowSessionID` on later group commands to reject accidental routing to a
@@ -129,7 +132,8 @@ activate the intended reader window before working with its groups.
 |---|---|---|
 | `list-groups` | None | `windowSessionID` |
 | `create-group` | `paths` | `name`, `color`, `beforeGroupID`, `windowSessionID` |
-| `update-group` | `groupID`, at least one setting | `name`, `color`, `collapsed`, `windowSessionID` |
+| `update-group` | `groupID`, at least one setting | `name`, `color`, `collapsed`, `hidden`, `windowSessionID` |
+| `jump-group` | `groupID` | `windowSessionID` |
 | `move-tab` | `path`, `groupID` | `beforePath`, `windowSessionID` |
 | `move-group` | `groupID` | `beforeGroupID`, `windowSessionID` |
 | `ungroup` | `groupID` | `windowSessionID` |
@@ -150,11 +154,26 @@ existing group that will retain at least one member.
 ```
 
 An empty `name` restores the default color name. `collapsed` must be a JSON
-Boolean. Use a color from the returned palette; General stays gray. Omitting
+Boolean, as must `hidden`. Use a color from the returned palette; General stays
+gray until renamed. Renaming General to a nonempty name other than “General”
+promotes its existing tabs to an ordinary custom group with a **new ID** and a
+pastel color. Subsequent opened documents enter a new or existing General, not
+the renamed group; this routing preference survives session restoration.
+
+`update-group` with `hidden:true` hides a group without closing its documents or
+changing the active reader. `jump-group` shows a hidden group and selects its
+last-used document. Both work for General. With ordinary ungrouped tabs, use
+`groupID:"general"` in `update-group` or `jump-group` to materialize General
+lazily. Opening a new document while its active group is hidden puts that new
+document in visible General. The manager and API retain access when all groups
+are hidden.
+
+ Omitting
 `beforePath` appends a tab; omitting `beforeGroupID` appends a group. Moving tabs
 within a group also reorders them. `ungroup` keeps every document open and
 returns custom-group members to General; when no custom groups remain the
-reader returns to its ordinary ungrouped tab strip. General cannot be ungrouped.
+reader returns to its ordinary ungrouped tab strip unless General was explicitly
+managed or hidden. General cannot be ungrouped.
 
 Creation and tab moves select the affected tab, following normal reader
 behavior. Group order/name/color changes do not open documents. Expand/collapse
@@ -185,7 +204,7 @@ start this command, substituting absolute paths for your checkout and app:
 The adapter implements the MCP 2025-11-25 stdio protocol with
 `initialize`, `ping`, `tools/list`, and `tools/call`. Its tools are
 `inspect_document`, `open_document`, `list_tab_groups`, `create_tab_group`,
-`update_tab_group`, `move_tab_to_group`, `move_tab_group`, and `ungroup_tabs`.
+`update_tab_group`, `jump_to_tab_group`, `move_tab_to_group`, `move_tab_group`, and `ungroup_tabs`.
 The group tools use the fields documented above, without the native `action`
 field. Discovery does not launch the reader.
 Each call invokes the native command with argument arrays, never a shell.

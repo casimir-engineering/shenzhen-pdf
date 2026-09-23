@@ -18,7 +18,8 @@
 - (NSString*)displayName { return self.name.length ? self.name : self.general ? @"General" : self.colorName; }
 - (NSDictionary*)dictionary {
     return @{@"id": self.identifier ?: @"", @"name": self.name ?: @"", @"color": self.colorName ?: @"Purple",
-             @"collapsed": @(self.collapsed), @"lastUsedPath": self.lastUsedPath ?: @""};
+             @"collapsed": @(self.collapsed), @"hidden":@(self.hidden), @"explicitGeneral":@(self.explicitGeneral),
+             @"lastUsedPath": self.lastUsedPath ?: @""};
 }
 + (instancetype)fromDictionary:(id)value {
     if (![value isKindOfClass:NSDictionary.class]) return nil;
@@ -34,6 +35,10 @@
     if ([value[@"lastUsedPath"] isKindOfClass:NSString.class]) group.lastUsedPath = value[@"lastUsedPath"];
     id collapsed = value[@"collapsed"];
     group.collapsed = [collapsed respondsToSelector:@selector(boolValue)] && [collapsed boolValue];
+    for (NSString* key in @[@"hidden",@"explicitGeneral"]) {
+        id flag=value[key];
+        if ([flag respondsToSelector:@selector(boolValue)]) [group setValue:@([flag boolValue]) forKey:key];
+    }
     return group;
 }
 - (id)copyWithZone:(NSZone*)zone { (void)zone; return [SPDFTabGroup fromDictionary:self.dictionary]; }
@@ -95,12 +100,14 @@ NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tab
 void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs) {
     BOOL hasCustom = NO;
     BOOL hasAny = NO;
+    BOOL retainGeneral = NO;
     for (SPDFDocumentTab* tab in tabs) {
         if (tab.group) hasAny = YES;
+        if (tab.group.general && (tab.group.hidden || tab.group.explicitGeneral)) retainGeneral = YES;
         if (tab.group && !tab.group.general) { hasCustom = YES; break; }
     }
     if (!hasAny) return;
-    if (!hasCustom) { for (SPDFDocumentTab* tab in tabs) tab.group = nil; return; }
+    if (!hasCustom && !retainGeneral) { for (SPDFDocumentTab* tab in tabs) tab.group = nil; return; }
     // Strip refreshes also happen while reading. Already canonical, contiguous
     // groups need no buckets, arrays, or identity dictionaries on that path.
     BOOL needsNormalization = NO;
@@ -115,12 +122,15 @@ void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs) {
     }
     if (!needsNormalization) return;
     NSMutableDictionary<NSString*, SPDFTabGroup*>* canonical = [NSMutableDictionary dictionary];
+    // Ungrouping a custom group can place nil-group tabs before an existing
+    // General. Keep that General's explicit visibility instead of replacing it.
+    for (SPDFDocumentTab* tab in tabs) if (tab.group.general) { canonical[@"general"]=tab.group; break; }
     NSMutableArray<NSString*>* order = [NSMutableArray array];
     NSMutableDictionary<NSString*, NSMutableArray*>* buckets = [NSMutableDictionary dictionary];
     for (SPDFDocumentTab* tab in tabs) {
         NSString* identifier = tab.group.identifier ?: @"general";
-        if (!canonical[identifier]) {
-            canonical[identifier] = tab.group ?: SPDFTabGroup.generalGroup;
+        if (!buckets[identifier]) {
+            canonical[identifier] = canonical[identifier] ?: tab.group ?: SPDFTabGroup.generalGroup;
             buckets[identifier] = [NSMutableArray array];
             [order addObject:identifier];
         }
