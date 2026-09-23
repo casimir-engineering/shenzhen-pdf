@@ -106,6 +106,7 @@ static NSString* DateLabel(NSDictionary* version) {
     if ([self.expandedResults containsObject:key]) [self.expandedResults removeObject:key]; else [self.expandedResults addObject:key];
     NSIndexSet* indexes = [NSIndexSet indexSetWithIndex:index]; [self.table noteHeightOfRowsWithIndexesChanged:indexes];
     [self.table reloadDataForRowIndexes:indexes columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+    [self persistManagerPreferences];
 }
 - (void)selectSearchMatch:(NSControl*)sender {
     NSInteger index = sender.tag, matchIndex = sender.identifier.integerValue;
@@ -114,6 +115,7 @@ static NSString* DateLabel(NSDictionary* version) {
     if (matchIndex < 0 || matchIndex >= (NSInteger)matches.count) return;
     row[@"selectedPage"] = matches[(NSUInteger)matchIndex][@"page"] ?: @0;
     row[@"selectedMatch"] = matches[(NSUInteger)matchIndex];
+    row[@"selectedMatchIndex"] = @(matchIndex);
     NSMutableArray* rows = [self.rows mutableCopy]; rows[(NSUInteger)index] = row; self.rows = rows;
     [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
     [self.table reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:index] columnIndexes:[NSIndexSet indexSetWithIndex:0]];

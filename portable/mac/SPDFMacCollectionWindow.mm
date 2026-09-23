@@ -11,22 +11,35 @@
     _store = store; _openHandler = [open copy]; _rows = @[]; _documents = @[];
     window.title = @"Collection"; window.releasedWhenClosed = NO;
     window.minSize = NSMakeSize(940, 560); [window setFrameAutosaveName:@"CollectionManager"];
-    _expandedResults = [NSMutableSet set];
+    NSDictionary* preferences = store.settings;
+    _initialBrowseState = [preferences[@"managerBrowseState"] isKindOfClass:NSDictionary.class] ? preferences[@"managerBrowseState"] : @{};
+    NSArray* expanded = [_initialBrowseState[@"expanded"] isKindOfClass:NSArray.class] ? _initialBrowseState[@"expanded"] : @[];
+    _expandedResults = [NSMutableSet setWithArray:expanded];
+    if ([preferences[@"managerDestination"] isEqual:@"History"]) {
+        _documentID = preferences[@"managerHistoryDocumentID"];
+        _restoreHistoryVersionID = preferences[@"managerHistoryVersionID"];
+    }
     _preferenceQueue = dispatch_queue_create("engineering.casimir.collection.manager-preferences", DISPATCH_QUEUE_SERIAL);
     [self buildManagerLayout];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(managerWindowWillClose:)
+        name:NSWindowWillCloseNotification object:window];
     return self;
 }
 - (void)showDocumentID:(NSString*)documentID query:(NSString*)query {
-    _documentID = documentID;
+    if (documentID.length || query != nil) {
+        _documentID = documentID;
+        _restoreHistoryVersionID = nil;
+    }
     if (query != nil) { _search.stringValue = query; [self showDestination:@"Documents"]; }
 
     [self reload:nil]; [self showWindow:nil]; [self.window makeKeyAndOrderFront:nil];
 }
 - (void)reload:(id)sender {
-    if (sender == _viewPicker && _viewPicker.indexOfSelectedItem != 1) _documentID = nil;
+    if (sender == _search || sender == _scopePicker || sender == _viewPicker) {
+        _documentID = nil; _restoreHistoryVersionID = nil;
+    }
     [self persistManagerPreferences];
-    NSString* previousDocument = [self selectedDocument][@"id"];
-    NSString* previousVersion = [self selectedVersion][@"id"];
+    NSDictionary* browseState = [self captureBrowseState];
     BOOL allVersions = self.scopePicker.indexOfSelectedItem == 1;
     NSUInteger generation = ++_generation;
     NSInteger view = _viewPicker.indexOfSelectedItem, sort = _sortPicker.indexOfSelectedItem;
@@ -67,21 +80,26 @@
         unsigned long long used = [self.store storageUsedBytes];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation != self.generation) return;
-            self.documents = docs; self.rows = rows;
+            self.reloadingResults = YES;
+            [self restoreBrowseState:browseState toRows:rows query:query];
+            if (![browseState[@"query"] isEqual:query]) [self.expandedResults removeAllObjects];
+            self.documents = docs; self.rows = rows; self.resultQuery = query; self.hasLoadedResults = YES;
             self.table.rowHeight = 100;
             [self.table reloadData];
-            NSUInteger selected = [rows indexOfObjectPassingTest:^BOOL(NSDictionary* row,NSUInteger i,BOOL* stop) {
-                (void)i; (void)stop;
-                return [row[@"document"][@"id"] isEqual:previousDocument] && [row[@"version"][@"id"] isEqual:previousVersion];
-            }];
-            if (selected != NSNotFound) [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:selected] byExtendingSelection:NO];
             [self reloadGrid];
+            [self restoreBrowseSelectionAndScroll:browseState];
+            self.reloadingResults = NO;
             self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? @"matching saved copies" : @"items"];
             self.locationField.stringValue = self.store.rootURL.path;
             if (selectedID.length) {
                 self.documentID = nil;
-                for (NSDictionary* doc in docs) if ([doc[@"id"] isEqual:selectedID])
-                    [self showHistoryForDocument:doc version:[doc[@"versions"] lastObject]];
+                for (NSDictionary* doc in docs) if ([doc[@"id"] isEqual:selectedID]) {
+                    NSDictionary* chosen = [doc[@"versions"] lastObject];
+                    for (NSDictionary* version in doc[@"versions"])
+                        if ([version[@"id"] isEqual:self.restoreHistoryVersionID]) { chosen = version; break; }
+                    [self showHistoryForDocument:doc version:chosen];
+                }
+                self.restoreHistoryVersionID = nil;
             }
             self.storage.stringValue = [NSString stringWithFormat:@"%@ used · %@\n%@\nOriginals are never deleted by Collection.",
                 [NSByteCountFormatter stringFromByteCount:(long long)used countStyle:NSByteCountFormatterCountStyleFile],
@@ -96,6 +114,7 @@
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)notification {
     (void)notification; [self synchronizeGridSelection]; [self updateDetails];
+    if (!self.reloadingResults && self.hasLoadedResults) [self persistManagerPreferences];
 }
 - (NSDictionary*)selectedDocument {
     if ([self.destination isEqual:@"History"]) return [self historySelectedDocument];
@@ -140,5 +159,9 @@
         if ([action hasPrefix:@"compare"]) button.enabled &= ![version[@"encrypted"] boolValue];
     }
 }
+- (void)managerWindowWillClose:(NSNotification*)notification {
+    (void)notification; [self persistManagerPreferences];
+}
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (void)showError:(NSError*)error { if (error) [self.window presentError:error]; }
 @end

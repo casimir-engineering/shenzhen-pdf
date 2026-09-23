@@ -2,6 +2,7 @@
 #import "SPDFMacCollectionWindowPrivate.h"
 #import "SPDFMacCollectionHistory.h"
 #import "SPDFMacCollectionCompareViews.h"
+#import "SPDFMacCollectionWindowHistory.h"
 
 // The comparison controller stays private in the app; the test exercises the
 // real constructor without calling the facade that orders its window onscreen.
@@ -147,6 +148,75 @@ int main(void) {
             manager.search.stringValue = @"orchid";
             [manager showDestination:@"Settings"]; [manager showDestination:@"Documents"];
             Expect(@"settings navigation preserves query and document rows",[manager.search.stringValue isEqual:@"orchid"] && manager.rows.count == 1);
+            NSMutableDictionary* remembered = [manager.rows.firstObject mutableCopy];
+            remembered[@"selectedMatchIndex"] = @0; remembered[@"selectedMatch"] = matches.firstObject;
+            remembered[@"selectedPage"] = matches.firstObject[@"page"] ?: @0;
+            manager.rows = @[remembered];
+            NSString* resultKey = [NSString stringWithFormat:@"%@/%@",remembered[@"document"][@"id"],remembered[@"version"][@"id"]];
+            [manager.expandedResults addObject:resultKey];
+            [manager.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            [manager showHistoryForDocument:remembered[@"document"] version:remembered[@"version"]];
+            [manager returnFromCollectionHistory:nil];
+            NSDate* returnDeadline = [NSDate dateWithTimeIntervalSinceNow:2];
+            NSArray* previousRows = manager.rows;
+            while (manager.rows == previousRows && returnDeadline.timeIntervalSinceNow > 0)
+                [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+            Expect(@"History return refresh keeps the selected context and expanded result",
+                manager.table.selectedRow == 0 && manager.rows.firstObject[@"selectedMatch"] &&
+                [manager.rows.firstObject[@"selectedPage"] isEqual:remembered[@"selectedPage"]] &&
+                [manager.expandedResults containsObject:resultKey] && [manager.search.stringValue isEqual:@"orchid"]);
+            // Context is JSON-safe and stable across sorting. Scroll restoration runs after
+            // native row layout, so returning from a long result list does not jump to its top.
+            NSMutableArray* longRows = [NSMutableArray array];
+            for (NSUInteger n=0;n<15;n++) {
+                NSMutableDictionary* copy = [remembered mutableCopy]; NSMutableDictionary* version = [copy[@"version"] mutableCopy];
+                version[@"id"] = [NSString stringWithFormat:@"layout-%lu",(unsigned long)n]; copy[@"version"] = version;
+                [longRows addObject:copy];
+            }
+            manager.rows = longRows; [manager.table reloadData]; [manager reloadGrid];
+            [manager.table selectRowIndexes:[NSIndexSet indexSetWithIndex:7] byExtendingSelection:NO];
+            [manager.window.contentView layoutSubtreeIfNeeded];
+            [manager.listScroll.contentView scrollToPoint:NSMakePoint(0,320)];
+            NSDictionary* browsing = [manager captureBrowseState];
+            Expect(@"browsing state can persist in the JSON manifest",[NSJSONSerialization isValidJSONObject:browsing]);
+            NSMutableArray* reordered = [[[longRows reverseObjectEnumerator] allObjects] mutableCopy];
+            [manager restoreBrowseState:browsing toRows:reordered query:@"orchid"];
+            manager.rows = reordered; [manager.table reloadData]; [manager restoreBrowseSelectionAndScroll:browsing];
+            Expect(@"restored native list keeps its scroll offset",fabs(manager.listScroll.contentView.bounds.origin.y-320) < 1);
+            Expect(@"restored selection follows version identity",[[manager selectedVersion][@"id"] isEqual:@"layout-7"]);
+            NSMutableArray* changedQuery = [NSMutableArray arrayWithObject:@{@"document":remembered[@"document"],
+                @"version":remembered[@"version"],@"matches":matches}];
+            [manager restoreBrowseState:browsing toRows:changedQuery query:@"different query"];
+            Expect(@"changed searches never inherit an unrelated hit",!changedQuery.firstObject[@"selectedMatch"]);
+            dispatch_sync(manager.preferenceQueue,^{});
+            [@"# Greenhouse log\nThe orchid has a new leaf.\n" writeToFile:indexedPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            NSDictionary* newer = [store capturePath:indexedPath reason:@"Modified" error:nil];
+            NSString* oldVersion = remembered[@"version"][@"id"];
+            [store updateSettings:@{@"managerDestination":@"History",@"managerHistoryDocumentID":indexed[@"id"],
+                @"managerHistoryVersionID":oldVersion,@"managerHistoryPage":@1,@"managerQuery":@"orchid",
+                @"managerBrowseState":browsing} error:nil];
+            SPDFMacCollectionWindow* restored = [[SPDFMacCollectionWindow alloc] initWithStore:store open:^(NSString* path,BOOL archived) {
+                (void)path; (void)archived;
+            }];
+            Expect(@"constructing a restored manager defers history loading",!restored.historyPane && !restored.hasLoadedResults);
+            [restored reload:nil];
+            NSDate* restoreDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
+            while (![restored.destination isEqual:@"History"] && restoreDeadline.timeIntervalSinceNow > 0)
+                [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+            Expect(@"manager relaunch resumes the saved historical version rather than latest",newer &&
+                [[restored historySelectedVersion][@"id"] isEqual:oldVersion] &&
+                ![oldVersion isEqual:[newer[@"versions"] lastObject][@"id"]]);
+            Expect(@"history restoration never shows a window",!restored.window.visible);
+            [restored.window close]; dispatch_sync(restored.preferenceQueue,^{});
+            NSString* mdownPath = [root.path stringByAppendingString:@"-Thumbnail.mdown"];
+            [@"# Markdown thumbnail\nA visible saved page.\n" writeToFile:mdownPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            NSDictionary* mdown = [store capturePath:mdownPath reason:@"Opened" error:nil];
+            [manager requestThumbnail:@{@"document":mdown,@"version":[mdown[@"versions"] lastObject],@"selectedPage":@1} key:@"mdown-thumbnail"];
+            NSDate* thumbnailDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
+            while (![manager.thumbnailCache objectForKey:@"mdown-thumbnail"] && thumbnailDeadline.timeIntervalSinceNow > 0)
+                [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+            Expect(@"mdown saved pages render as Markdown thumbnails",[manager.thumbnailCache objectForKey:@"mdown-thumbnail"] != nil);
+            [NSFileManager.defaultManager removeItemAtPath:mdownPath error:nil];
             [NSFileManager.defaultManager removeItemAtPath:indexedPath error:nil];
         } @catch (NSException* exception) {
             fprintf(stderr,"FAIL: manager constructor/layout raised %s\n",exception.description.UTF8String); failures++;

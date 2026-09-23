@@ -167,7 +167,7 @@
             NSError* error = nil;
             NSURL* URL = [store materializeVersionID:version[@"id"] documentID:row[@"document"][@"id"] error:&error];
             NSImage* image = nil;
-            if (URL && [@[@"md",@"markdown"] containsObject:URL.pathExtension.lowercaseString]) {
+            if (URL && [@[@"md",@"markdown",@"mdown"] containsObject:URL.pathExtension.lowercaseString]) {
                 SPDFMarkdownDocument* markdown = [SPDFMarkdownDocument documentWithURL:URL options:nil error:&error];
                 SPDFMarkdownPageConfiguration* config = markdown.authoredPageConfiguration ?: [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
                 SPDFMarkdownPaginationPlan* plan = [markdown paginationPlanForConfiguration:config];

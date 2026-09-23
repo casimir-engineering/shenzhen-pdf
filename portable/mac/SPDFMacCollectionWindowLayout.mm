@@ -122,7 +122,7 @@ static void Fill(NSView* child, NSView* parent) {
     NSDictionary* preferences = @{@"managerView":@(self.viewPicker.indexOfSelectedItem),
         @"managerLayout":@(self.layoutPicker.indexOfSelectedItem),@"managerSort":@(self.sortPicker.indexOfSelectedItem),
         @"managerDestination":self.destination ?: @"Documents", @"managerQuery":self.search.stringValue,
-        @"managerSearchScope":@(self.scopePicker.indexOfSelectedItem)};
+        @"managerSearchScope":@(self.scopePicker.indexOfSelectedItem), @"managerBrowseState":[self captureBrowseState]};
     dispatch_async(self.preferenceQueue, ^{
         NSError* error = nil; [self.store updateSettings:preferences error:&error];
         if (error) dispatch_async(dispatch_get_main_queue(),^{ [self showError:error]; });
