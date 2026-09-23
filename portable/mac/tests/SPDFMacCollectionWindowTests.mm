@@ -80,7 +80,34 @@ int main(void) {
                 fabs(manager.listScroll.frame.size.width-NSWidth(manager.documentsPane.bounds)) < 1);
             Expect(@"navigation uses the mockup compact type and height",manager.documentsButton.font.pointSize == 13 &&
                 fabs(manager.documentsButton.frame.size.height-32)<1);
+            Expect(@"navigation accessibility names describe destinations instead of symbols",
+                [manager.documentsButton.accessibilityLabel isEqual:@"Documents"] && [manager.settingsButton.accessibilityLabel isEqual:@"Settings"]);
+            NSSearchFieldCell* searchCell = (id)manager.search.cell;
+            NSRect searchText = [searchCell searchTextRectForBounds:manager.search.bounds];
+            NSRect searchIcon = [searchCell searchButtonRectForBounds:manager.search.bounds];
+            Expect(@"search text is centered with a separate icon inset",NSMinX(searchText)>=29 &&
+                fabs(NSMidY(searchText)-NSMidY(manager.search.bounds))<=1 && NSMinX(searchText)>NSMaxX(searchIcon));
+            Expect(@"search field stays editable after custom cell installation",manager.search.editable && manager.search.selectable);
+            [manager.window makeFirstResponder:manager.search]; [manager.search selectText:nil];
+            NSTextView* searchEditor = (id)manager.search.currentEditor;
+            Expect(@"focusing search creates the real field editor",searchEditor != nil);
+            if (!searchEditor) searchEditor = (id)[manager.window fieldEditor:YES forObject:manager.search];
+            [searchCell selectWithFrame:manager.search.bounds inView:manager.search editor:searchEditor
+                delegate:manager.search start:0 length:0];
+            NSRect editing = searchEditor ? [searchEditor convertRect:searchEditor.bounds toView:manager.search] : NSZeroRect;
+            Expect(@"focused search editor preserves the icon inset and centered text",searchEditor &&
+                NSMinX(editing)>=NSMinX(searchText)-1 && fabs(NSMidY(editing)-NSMidY(searchText))<=2);
+            [searchCell endEditing:searchEditor]; [manager.window makeFirstResponder:manager.table];
             Expect(@"storage defaults to an explicit Unlimited choice",[manager.limitPicker.title containsString:@"Unlimited"] && manager.limitField.hidden);
+            [manager.limitPicker selectItemAtIndex:1];
+            [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
+            Expect(@"custom storage policy updates before Apply and reveals its field",!manager.limitField.hidden &&
+                [manager.storagePolicy.stringValue containsString:@"Least opened"] && [manager.settingsStatus.stringValue containsString:@"Pending change"] &&
+                [manager.settingsStatus.stringValue containsString:@"Applied limit: Unlimited"]);
+            Expect(@"changing cap mode does not apply or delete anything",[store.settings[@"storageLimitBytes"] unsignedLongLongValue] == 0);
+            manager.limitField.stringValue = @"0"; [manager updateStoragePolicy];
+            Expect(@"zero custom cap describes unlimited accurately",[manager.storagePolicy.stringValue containsString:@"No automatic deletion"]);
+            [manager.limitPicker selectItemAtIndex:0]; [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
             NSMenu* actions = [NSMenu new]; [manager populateDocumentMenu:actions];
             Expect(@"all secondary document commands remain accessible in More",actions.numberOfItems == 10 &&
                 [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Delete Selected Copies…"]);

@@ -46,7 +46,7 @@
     self.limitField.font = [NSFont systemFontOfSize:13]; self.limitField.textColor = SPDFCollectionColor(@"text");
     self.limitField.backgroundColor = SPDFCollectionColor(@"pane");
     self.limitField.accessibilityLabel = @"Storage limit in GB; zero means unlimited";
-    self.limitField.target = self; self.limitField.action = @selector(changeLimit:);
+    self.limitField.target = self; self.limitField.action = @selector(changeLimit:); self.limitField.delegate = (id)self;
     [self.limitField.widthAnchor constraintEqualToConstant:70].active = YES; [cap addArrangedSubview:self.limitField];
     self.limitUnit = SPDFCollectionText(@"GB",13,NSFontWeightRegular,NO); [cap addArrangedSubview:self.limitUnit]; add(cap);
     self.limitField.hidden = self.limitPicker.indexOfSelectedItem == 0; self.limitUnit.hidden = self.limitField.hidden;
@@ -68,7 +68,7 @@
     NSTextField* locationHelp = SPDFCollectionText(@"Set location moves the Collection after verifying the copies.",12,NSFontWeightRegular,YES);
     add(locationHelp); [stack setCustomSpacing:19 afterView:locationHelp]; divider();
     NSStackView* footer = [NSStackView stackViewWithViews:@[]]; footer.distribution = NSStackViewDistributionFill;
-    [footer addArrangedSubview:SPDFCollectionText(@"Storage changes are reviewed before applying.",12,NSFontWeightRegular,YES)];
+    self.settingsStatus = SPDFCollectionText(@"",12,NSFontWeightRegular,YES); [footer addArrangedSubview:self.settingsStatus];
     [footer addArrangedSubview:[NSView new]];
     [footer addArrangedSubview:SPDFCollectionButton(@"Apply",self,@selector(changeLimit:),@"normal")]; add(footer);
     [self updateStoragePolicy];
@@ -77,10 +77,25 @@
     (void)sender; BOOL unlimited = self.limitPicker.indexOfSelectedItem == 0;
     self.limitField.hidden = unlimited; self.limitUnit.hidden = unlimited;
     if (!unlimited && self.limitField.doubleValue == 0) self.limitField.doubleValue = 10;
+    [self updateStoragePolicy]; [self.window.contentView layoutSubtreeIfNeeded];
+    NSAccessibilityPostNotification(self.settingsPane,NSAccessibilityLayoutChangedNotification);
+    if (!unlimited) { [self.window makeFirstResponder:self.limitField]; [self.limitField selectText:nil]; }
+}
+- (void)controlTextDidChange:(NSNotification*)notification {
+    if (notification.object == self.limitField) [self updateStoragePolicy];
 }
 - (void)updateStoragePolicy {
-    self.storagePolicy.stringValue = [self.store.settings[@"storageLimitBytes"] unsignedLongLongValue] == 0 ?
+    double amount = 0; BOOL unlimited = self.limitPicker.indexOfSelectedItem == 0;
+    NSScanner* scanner = [NSScanner scannerWithString:self.limitField.stringValue];
+    BOOL valid = unlimited || ([scanner scanDouble:&amount] && scanner.isAtEnd && isfinite(amount) && amount>=0 && amount<=1e8);
+    unsigned long long proposed = valid ? (unsigned long long)(amount*1e9) : 0;
+    unsigned long long applied = [self.store.settings[@"storageLimitBytes"] unsignedLongLongValue];
+    self.storagePolicy.stringValue = !valid ? @"Enter a valid storage limit" : proposed == 0 ?
         @"No automatic deletion while unlimited" : @"Least opened first · older versions, then documents";
+    NSString* appliedLabel = applied ? [NSByteCountFormatter stringFromByteCount:(long long)applied countStyle:NSByteCountFormatterCountStyleFile] : @"Unlimited";
+    self.settingsStatus.stringValue = !valid ? @"Enter a valid limit before applying." : proposed != applied ?
+        [NSString stringWithFormat:@"Pending change · Apply to review. Applied limit: %@.",appliedLabel] :
+        [NSString stringWithFormat:@"Applied limit: %@.",appliedLabel];
 }
 - (void)openLocation:(id)sender {
     (void)sender;
