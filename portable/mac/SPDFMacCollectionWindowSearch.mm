@@ -39,12 +39,9 @@ static NSString* DateLabel(NSDictionary* version) {
     NSButton* more = SPDFCollectionButton(@"…",self,@selector(showDocumentMenu:),@"quiet"); more.tag = index;
     more.accessibilityLabel = [@"More actions for " stringByAppendingString:doc[@"title"] ?: @"document"];
     more.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:more];
-    BOOL isLatest = SPDFCollectionVersionIsLatest(doc,version);
-    NSString* identity = isLatest ? @"" : @"Older saved version · ";
-    NSTextField* metadata = SPDFCollectionText([NSString stringWithFormat:@"%@%@%@",identity,DateLabel(version),
+    NSTextField* metadata = SPDFCollectionText([NSString stringWithFormat:@"%@%@",DateLabel(version),
         [version[@"keep"] boolValue] ? @" · Kept" : @""],12,NSFontWeightRegular,YES);
-    NSArray* metadataViews = isLatest ? @[SPDFCollectionLatestBadge(),metadata] : @[metadata];
-    NSStackView* meta = [NSStackView stackViewWithViews:metadataViews]; meta.spacing = 8;
+    NSStackView* meta = [NSStackView stackViewWithViews:@[metadata]]; meta.spacing = 8;
     meta.alignment = NSLayoutAttributeCenterY;
     meta.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:meta];
     NSImageView* image = [NSImageView new]; image.translatesAutoresizingMaskIntoConstraints = NO;

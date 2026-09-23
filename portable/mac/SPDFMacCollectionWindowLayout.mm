@@ -62,22 +62,23 @@ static void Fill(NSView* child, NSView* parent) {
     NSStackView* documents = Stack(NO); documents.spacing = 0; self.documentsPane = documents; Fill(documents,self.contentHost);
     NSStackView* toolbar = Stack(NO); toolbar.spacing = 10; toolbar.edgeInsets = NSEdgeInsetsMake(16,20,13,20);
     [documents addArrangedSubview:toolbar]; [toolbar.widthAnchor constraintEqualToAnchor:documents.widthAnchor].active = YES;
-    self.search = SPDFCollectionSearchField(); self.search.placeholderString = @"Search documents and saved text";
+    self.search = SPDFCollectionSearchField(); self.search.placeholderString = @"Search documents and latest saved text";
     self.search.stringValue = [preferences[@"managerQuery"] isKindOfClass:NSString.class] ? preferences[@"managerQuery"] : @"";
     self.search.target = self; self.search.action = @selector(reload:); self.search.sendsSearchStringImmediately = YES;
     [toolbar addArrangedSubview:self.search]; [self.search.widthAnchor constraintEqualToAnchor:toolbar.widthAnchor constant:-40].active = YES;
     [self.search.heightAnchor constraintEqualToConstant:31].active = YES;
     NSStackView* filters = Stack(YES); filters.spacing = 8;
     self.viewPicker = SPDFCollectionPopUp();
-    [self.viewPicker addItemsWithTitles:@[@"All Documents",@"Versions",@"Originals Unavailable",@"Kept",@"Excluded"]];
-    [self.viewPicker selectItemAtIndex:MIN(4,MAX(0,[preferences[@"managerView"] integerValue]))];
-    self.scopePicker = SPDFCollectionPopUp(); [self.scopePicker addItemsWithTitles:@[@"Latest saved copies",@"All saved versions"]];
-    [self.scopePicker selectItemAtIndex:MIN(1,MAX(0,[preferences[@"managerSearchScope"] integerValue]))];
-    for (NSPopUpButton* picker in @[self.scopePicker,self.viewPicker]) { picker.target = self; picker.action = @selector(reload:); }
-    [filters addArrangedSubview:SPDFCollectionText(@"Search",13,NSFontWeightRegular,NO)]; [filters addArrangedSubview:self.scopePicker];
+    [self.viewPicker addItemsWithTitles:@[@"All Documents",@"Originals Unavailable",@"Kept",@"Excluded"]];
+    NSArray<NSNumber*>* filterTags = @[@0,@2,@3,@4];
+    for (NSUInteger index=0;index<filterTags.count;index++) [self.viewPicker itemAtIndex:index].tag = filterTags[index].integerValue;
+    NSInteger restoredFilter = [preferences[@"managerView"] integerValue];
+    if (![filterTags containsObject:@(restoredFilter)]) restoredFilter = 0;
+    [self.viewPicker selectItemWithTag:restoredFilter];
+    self.viewPicker.target = self; self.viewPicker.action = @selector(reload:);
     [filters addArrangedSubview:SPDFCollectionText(@"Show",13,NSFontWeightRegular,NO)]; [filters addArrangedSubview:self.viewPicker];
     [toolbar addArrangedSubview:filters];
-    [toolbar addArrangedSubview:SPDFCollectionText(@"Search saved titles and text. History opens a read-only version preview.",12,NSFontWeightRegular,YES)];
+    [toolbar addArrangedSubview:SPDFCollectionText(@"Search each document’s latest saved text. Open History for previous versions.",12,NSFontWeightRegular,YES)];
     NSView* divider = SPDFCollectionDivider(); [documents addArrangedSubview:divider];
     [divider.widthAnchor constraintEqualToAnchor:documents.widthAnchor].active = YES;
     NSStackView* resultsHead = Stack(YES); resultsHead.spacing = 8; resultsHead.edgeInsets = NSEdgeInsetsMake(8,20,7,20);
@@ -130,10 +131,10 @@ static void Fill(NSView* child, NSView* parent) {
     self.settingsButton.state = [destination isEqual:@"Settings"] ? NSControlStateValueOn : NSControlStateValueOff;
 }
 - (void)persistManagerPreferences {
-    NSDictionary* preferences = @{@"managerView":@(self.viewPicker.indexOfSelectedItem),
+    NSDictionary* preferences = @{@"managerView":@(self.viewPicker.selectedItem.tag),
         @"managerLayout":@(self.layoutPicker.indexOfSelectedItem),@"managerSort":@(self.sortPicker.indexOfSelectedItem),
         @"managerDestination":self.destination ?: @"Documents", @"managerQuery":self.search.stringValue,
-        @"managerSearchScope":@(self.scopePicker.indexOfSelectedItem), @"managerBrowseState":[self captureBrowseState]};
+        @"managerSearchScope":@0, @"managerBrowseState":[self captureBrowseState]};
     dispatch_async(self.preferenceQueue, ^{
         NSError* error = nil; [self.store updateSettings:preferences error:&error];
         if (error) dispatch_async(dispatch_get_main_queue(),^{ [self showError:error]; });
