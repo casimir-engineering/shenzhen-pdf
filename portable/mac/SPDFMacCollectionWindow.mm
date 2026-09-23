@@ -90,7 +90,7 @@
             [self reloadGrid];
             [self restoreBrowseSelectionAndScroll:browseState];
             self.reloadingResults = NO;
-            self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? @"matching saved copies" : @"items"];
+            self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? (rows.count==1 ? @"matching saved copy" : @"matching saved copies") : (rows.count==1 ? @"item" : @"items")];
             self.locationField.stringValue = self.store.rootURL.path;
             [self updateStoragePolicy];
             self.enabled.state = self.store.isEnabled ? NSControlStateValueOn : NSControlStateValueOff;

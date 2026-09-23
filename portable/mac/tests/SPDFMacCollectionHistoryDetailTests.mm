@@ -114,6 +114,11 @@ int main(void) {
         Expect(@"saved preview trims and folds accents like contextual search",history.reader.highlightedSelections.count==1);
         Expect(@"preview and version table have real viewports",history.reader.bounds.size.width>350 &&
             history.reader.bounds.size.height>180 && history.table.enclosingScrollView.bounds.size.height>300);
+        history.table.enclosingScrollView.autohidesScrollers=NO;
+        [host.contentView layoutSubtreeIfNeeded];
+        Expect(@"version rows fit the viewport even with a permanent scrollbar",
+            NSWidth(history.table.bounds)<=NSWidth(history.table.enclosingScrollView.contentView.bounds)+1);
+        history.table.enclosingScrollView.autohidesScrollers=YES;
         Expect(@"headless construction never orders a window",!host.visible);
         [host setContentSize:NSMakeSize(750,560)]; [host.contentView layoutSubtreeIfNeeded];
         PDFSelection* highlighted=history.reader.highlightedSelections.firstObject;
