@@ -12,6 +12,7 @@
 - (void)collectionDidSavePath:(NSString*)path;
 - (void)collectionClearObservedChangeAtPath:(NSString*)path;
 - (void)collectionDidOpenPath:(NSString*)path;
+- (void)collectionRememberPasswordForPath:(NSString*)path;
 - (void)collectionWillOpenPaths:(NSArray<NSString*>*)paths;
 - (void)collectionRecordUserOpenForPath:(NSString*)path document:(NSDictionary*)document;
 - (NSUInteger)collectionConsumeUserOpenForPath:(NSString*)path;
