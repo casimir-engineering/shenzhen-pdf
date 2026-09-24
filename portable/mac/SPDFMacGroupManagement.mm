@@ -54,8 +54,8 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     button.bordered = NO; button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:help];
     button.target = target; button.action = action; button.toolTip = help;
     [button setAccessibilityLabel:help];
-    [button.widthAnchor constraintEqualToConstant:28].active = YES;
-    [button.heightAnchor constraintEqualToConstant:28].active = YES;
+    [button.widthAnchor constraintEqualToConstant:26].active = YES;
+    [button.heightAnchor constraintEqualToConstant:26].active = YES;
     return button;
 }
 @implementation SPDFGroupManagementController {
@@ -75,12 +75,12 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (void)loadView {
     self.view = [NSView new];
     _summary = Label(@"",11,YES);
-    _search = [SPDFGroupSearchField new]; _search.placeholderString = @"Search group names";
+    _search = [SPDFGroupSearchField new]; _search.placeholderString = @"Search groups"; _search.toolTip = @"Search group names, not document titles.";
     _search.delegate = self; _search.sendsSearchStringImmediately = YES;
     [_search setAccessibilityLabel:@"Search group names"];
     _search.focusRingType = NSFocusRingTypeExterior;
     _table = [SPDFGroupManagementTable new]; _table.headerView = nil; _table.dataSource = self; _table.delegate = self;
-    _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStyleFullWidth; _table.intercellSpacing = NSMakeSize(0,2);
+    _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStylePlain; _table.intercellSpacing = NSMakeSize(0,2);
     _table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
     _table.target = self; _table.action = @selector(activateRow:);
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"group"];
@@ -94,27 +94,30 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         name:NSViewBoundsDidChangeNotification object:_scroll.contentView];
     _empty = [NSTextField wrappingLabelWithString:@""]; _empty.textColor = NSColor.secondaryLabelColor;
     _empty.alignment = NSTextAlignmentCenter; _empty.hidden = YES;
-    NSTextField* hint = [NSTextField wrappingLabelWithString:@"Hidden groups stay open."];
-    hint.font = [NSFont systemFontOfSize:11]; hint.textColor = NSColor.secondaryLabelColor;
-    NSStackView* header = [NSStackView stackViewWithViews:@[_summary,_search]];
-    header.orientation = NSUserInterfaceLayoutOrientationVertical; header.alignment = NSLayoutAttributeLeading; header.spacing = 7;
-    for (NSView* child in @[header,_scroll,_empty,hint]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
+    NSString* help = @"Hidden groups stay open. Hiding removes their tabs from the tab bar without closing documents.";
+    _summary.toolTip = help; [_summary setAccessibilityHelp:help];
+    NSImageView* info = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"info.circle" accessibilityDescription:help]];
+    info.contentTintColor = NSColor.secondaryLabelColor; info.toolTip = help;
+    [info.widthAnchor constraintEqualToConstant:12].active = YES;
+    [_summary setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+    NSStackView* footer = [NSStackView stackViewWithViews:@[_summary,info]]; footer.spacing = 6;
+    for (NSView* child in @[_search,_scroll,_empty,footer]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
     [NSLayoutConstraint activateConstraints:@[
-        [header.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:12],
-        [header.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
-        [header.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
-        [_search.widthAnchor constraintEqualToAnchor:header.widthAnchor],
-        [_search.heightAnchor constraintEqualToConstant:28],
-        [_scroll.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:10],
+        [_search.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8],
+        [_search.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
+        [_search.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_search.heightAnchor constraintEqualToConstant:26],
+        [_scroll.topAnchor constraintEqualToAnchor:_search.bottomAnchor constant:8],
         [_scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:4],
         [_scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-4],
-        [_scroll.bottomAnchor constraintEqualToAnchor:hint.topAnchor constant:-10],
-        [hint.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
-        [hint.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
-        [hint.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-12],
-        [_empty.topAnchor constraintEqualToAnchor:_scroll.topAnchor constant:30],
-        [_empty.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
-        [_empty.trailingAnchor constraintEqualToAnchor:header.trailingAnchor]]];
+        [_scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor],
+        [footer.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
+        [footer.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [footer.heightAnchor constraintEqualToConstant:22],
+        [footer.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [_empty.topAnchor constraintEqualToAnchor:_scroll.topAnchor constant:20],
+        [_empty.leadingAnchor constraintEqualToAnchor:_search.leadingAnchor],
+        [_empty.trailingAnchor constraintEqualToAnchor:_search.trailingAnchor]]];
     _expanded = [NSMutableSet set]; _groups = @[]; _rows = @[];
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
@@ -184,46 +187,48 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     (void)table; (void)row; return [SPDFGroupManagementRow new];
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _rows.count; }
-- (CGFloat)tableView:(NSTableView*)table heightOfRow:(NSInteger)row { (void)table; return _rows[row][@"document"] ? 30 : 48; }
+- (CGFloat)tableView:(NSTableView*)table heightOfRow:(NSInteger)row { (void)table; return _rows[row][@"document"] ? 26 : 36; }
 - (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
     (void)table; (void)column; NSDictionary* item = _rows[row], *group = item[@"group"], *document = item[@"document"];
     NSView* container = [NSView new];
     NSStackView* contents;
     if (document) {
         NSImageView* icon = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:[document[@"selected"] boolValue] ? @"doc.fill" : @"doc" accessibilityDescription:nil]];
-        icon.contentTintColor = [document[@"selected"] boolValue] ? NSColor.controlAccentColor : NSColor.secondaryLabelColor; [icon.widthAnchor constraintEqualToConstant:14].active = YES;
+        icon.contentTintColor = [document[@"selected"] boolValue] ? NSColor.controlAccentColor : NSColor.secondaryLabelColor; [icon.widthAnchor constraintEqualToConstant:12].active = YES;
         NSTextField* label = Label(document[@"title"],12,NO); label.toolTip = document[@"path"];
         if ([document[@"selected"] boolValue]) label.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
-        contents = [NSStackView stackViewWithViews:@[icon,label]]; contents.spacing = 7;
+        contents = [NSStackView stackViewWithViews:@[icon,label]]; contents.spacing = 5;
     } else {
         BOOL expanded = [_expanded containsObject:group[@"id"]];
         SPDFGroupActionButton* disclosure = Icon(expanded ? @"chevron.down" : @"chevron.right",
             [NSString stringWithFormat:@"%@ %@ documents",expanded ? @"Collapse" : @"Expand",group[@"name"]],self,@selector(disclose:)); disclosure.groupID = group[@"id"];
         NSImageView* swatch = [NSImageView imageViewWithImage:spdf_tab_group_swatch_image(group[@"color"])];
-        [swatch.widthAnchor constraintEqualToConstant:12].active = YES;
-        NSTextField* name = Label(group[@"name"],13,NO);
-        [name setContentCompressionResistancePriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal]; name.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+        [swatch.widthAnchor constraintEqualToConstant:8].active = YES;
+        NSTextField* name = Label(group[@"name"],12,NO);
+        [name setContentCompressionResistancePriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal]; name.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
         name.toolTip = group[@"name"];
         NSUInteger count = [group[@"documents"] count];
         NSString* status = [NSString stringWithFormat:@"%lu%@%@%@",count,
             [group[@"hidden"] boolValue] || [group[@"selected"] boolValue] ? @"" : (count==1 ? @" document" : @" documents"),
             [group[@"hidden"] boolValue] ? @" · Hidden" : @"",[group[@"selected"] boolValue] ? @" · Active" : @""];
-        NSTextField* statusLabel = Label(status,11,YES); statusLabel.toolTip = status;
+        BOOL hiddenAndActive = [group[@"hidden"] boolValue] && [group[@"selected"] boolValue];
+        if (hiddenAndActive) name.stringValue = [NSString stringWithFormat:@"%@ (%lu)",group[@"name"],count];
+        NSTextField* statusLabel = Label(hiddenAndActive ? @"Hidden · Active" : status,11,YES); statusLabel.toolTip = status;
         [statusLabel setContentCompressionResistancePriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
         NSStackView* labels = [NSStackView stackViewWithViews:@[name,statusLabel]];
         [labels setContentCompressionResistancePriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
-        labels.orientation = NSUserInterfaceLayoutOrientationVertical; labels.alignment = NSLayoutAttributeLeading; labels.spacing = 3;
+        labels.orientation = NSUserInterfaceLayoutOrientationVertical; labels.alignment = NSLayoutAttributeLeading; labels.spacing = 1;
         BOOL hidden = [group[@"hidden"] boolValue];
         SPDFGroupActionButton* visibility = Icon(hidden ? @"eye.slash" : @"eye",[NSString stringWithFormat:@"%@ %@ %@ tab bar",hidden ? @"Show" : @"Hide",group[@"name"],hidden ? @"in" : @"from"],self,@selector(visibility:));
         visibility.groupID = group[@"id"];
         [labels setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
-        contents = [NSStackView stackViewWithViews:@[disclosure,swatch,labels,visibility]]; contents.spacing = 7;
+        contents = [NSStackView stackViewWithViews:@[disclosure,swatch,labels,visibility]]; contents.spacing = 5;
         container.toolTip = [NSString stringWithFormat:@"Open %@. Right-click for group actions.",group[@"name"]];
     }
     contents.distribution = NSStackViewDistributionFill; contents.alignment = NSLayoutAttributeCenterY;
     contents.translatesAutoresizingMaskIntoConstraints = NO; [container addSubview:contents];
     [NSLayoutConstraint activateConstraints:@[
-        [contents.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:document ? 43 : 2],
+        [contents.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:document ? 28 : 2],
         [contents.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-6],
         [contents.centerYAnchor constraintEqualToAnchor:container.centerYAnchor]]];
     return container;

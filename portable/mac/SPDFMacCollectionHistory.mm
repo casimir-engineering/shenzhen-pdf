@@ -13,6 +13,17 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
+
+@interface SPDFHistoryVersionRow : NSTableRowView
+@end
+@implementation SPDFHistoryVersionRow
+- (void)drawSelectionInRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    [[NSColor.controlAccentColor colorWithAlphaComponent:.14] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,2,1) xRadius:6 yRadius:6] fill];
+}
+@end
+
 @implementation SPDFMacCollectionHistoryController {
     SPDFMacCollectionStore* _store;
     NSString* _documentID;
@@ -22,7 +33,9 @@
     NSTableView* _table;
     NSTextField* _title;
     NSTextField* _status;
-    NSMutableArray<NSButton*>* _buttons;
+    NSButton* _compareButton;
+    NSButton* _keepButton;
+    NSPopUpButton* _actionsMenu;
     NSUInteger _generation;
     NSUInteger _previewGeneration;
     BOOL _restoringSelection;
@@ -36,43 +49,69 @@
 }
 - (void)loadView {
     self.view = [[NSView alloc] initWithFrame:NSMakeRect(0,0,280,650)];
-    NSTextField* heading = [NSTextField labelWithString:@"Version History"];
-    heading.font = [NSFont boldSystemFontOfSize:15];
-    _title = [NSTextField wrappingLabelWithString:@"Loading…"];
-    _title.maximumNumberOfLines = 3;
-    _status = [NSTextField wrappingLabelWithString:@"Archived copies are read-only."];
+    _title = [NSTextField labelWithString:@"Loading…"];
+    _title.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
+    _title.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    _status = [NSTextField wrappingLabelWithString:@"Saved versions are read-only."];
     _status.font = [NSFont systemFontOfSize:11];
     _status.textColor = NSColor.secondaryLabelColor;
-    _table = [NSTableView new]; _table.headerView = nil; _table.rowHeight = 82;
+    _table = [NSTableView new]; _table.headerView = nil; _table.rowHeight = 56;
     _table.dataSource = self; _table.delegate = self;
+    _table.style = NSTableViewStylePlain; _table.backgroundColor = NSColor.clearColor;
+    _table.intercellSpacing = NSMakeSize(0,2);
+    _table.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
+    [_table setAccessibilityLabel:@"Saved document versions"];
     _table.menu = [[NSMenu alloc] initWithTitle:@"Version"]; _table.menu.delegate = self;
-    NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"version"]; column.width = 240;
-    [_table addTableColumn:column];
+    [_table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"version"]];
     NSScrollView* scroll = [NSScrollView new]; scroll.documentView = _table;
-    scroll.hasVerticalScroller = YES;
-    _buttons = [NSMutableArray array];
-    NSStackView* actions = [NSStackView stackViewWithViews:@[]];
-    actions.orientation = NSUserInterfaceLayoutOrientationVertical; actions.alignment = NSLayoutAttributeLeading;
-    NSArray* titles = @[@"Compare with Latest",@"Compare with Previous",@"Save a Copy…",@"Keep Version",@"Manage Collection…"];
-    NSArray* selectors = @[@"compareCurrent:",@"comparePrevious:",@"saveCopy:",@"keep:",@"manage:"];
-    for (NSUInteger index = 0; index < titles.count; index++) {
-        NSButton* button = [NSButton buttonWithTitle:titles[index] target:self action:NSSelectorFromString(selectors[index])];
-        button.bezelStyle = NSBezelStyleRounded;
-        [actions addArrangedSubview:button]; [_buttons addObject:button];
+    scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.drawsBackground = NO;
+    scroll.identifier = @"HistoryVersionsViewport";
+    _compareButton = [NSButton buttonWithTitle:@"Compare with Latest" target:self action:@selector(compareCurrent:)];
+    _compareButton.bezelStyle = NSBezelStyleRounded; _compareButton.controlSize = NSControlSizeSmall;
+    _compareButton.font = [NSFont systemFontOfSize:11];
+    _keepButton = [NSButton checkboxWithTitle:@"Keep" target:self action:@selector(keep:)];
+    _keepButton.controlSize = NSControlSizeSmall; _keepButton.font = [NSFont systemFontOfSize:11];
+    _keepButton.accessibilityLabel = @"Keep selected version";
+    _keepButton.toolTip = @"Keep this version during automatic Collection cleanup.";
+    _actionsMenu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:YES];
+    _actionsMenu.identifier = @"HistoryVersionActions";
+    _actionsMenu.controlSize = NSControlSizeSmall; _actionsMenu.font = [NSFont systemFontOfSize:11];
+    _actionsMenu.bezelStyle = NSBezelStyleRounded; _actionsMenu.accessibilityLabel = @"Version actions";
+    _actionsMenu.menu.autoenablesItems = NO;
+    [_actionsMenu addItemWithTitle:@"Actions"];
+    NSArray* titles = @[@"Compare with Previous",@"Save a Copy…",@"Manage Collection…"];
+    NSArray* selectors = @[@"comparePrevious:",@"saveCopy:",@"manage:"];
+    for (NSUInteger i = 0; i < titles.count; i++) {
+        NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:titles[i]
+            action:NSSelectorFromString(selectors[i]) keyEquivalent:@""];
+        item.target = self; [_actionsMenu.menu addItem:item];
     }
+    NSView* flexible = [NSView new];
+    NSStackView* secondary = [NSStackView stackViewWithViews:@[_keepButton,flexible,_actionsMenu]];
+    secondary.orientation = NSUserInterfaceLayoutOrientationHorizontal; secondary.spacing = 6;
+    NSStackView* actions = [NSStackView stackViewWithViews:@[_compareButton,secondary]];
+    actions.orientation = NSUserInterfaceLayoutOrientationVertical;
+    actions.alignment = NSLayoutAttributeLeading; actions.spacing = 4;
     NSButton* find = [NSButton buttonWithTitle:@"Find Document…" target:self action:@selector(findDocument:)];
     NSButton* save = [NSButton buttonWithTitle:@"Save New Copy As…" target:self action:@selector(saveLatestAs:)];
+    for (NSButton* button in @[find,save]) {
+        button.bordered = NO; button.alignment = NSTextAlignmentLeft;
+        button.contentTintColor = NSColor.controlAccentColor;
+        button.font = [NSFont systemFontOfSize:11];
+        [button.heightAnchor constraintEqualToConstant:24].active = YES;
+    }
     _recoveryActions = [NSStackView stackViewWithViews:@[find,save]];
     _recoveryActions.orientation = NSUserInterfaceLayoutOrientationVertical;
-    _recoveryActions.alignment = NSLayoutAttributeLeading; _recoveryActions.hidden = YES;
-    NSStackView* stack = [NSStackView stackViewWithViews:@[heading,_title,_status,_recoveryActions,scroll,actions]];
+    _recoveryActions.alignment = NSLayoutAttributeLeading; _recoveryActions.spacing = 4;
+    _recoveryActions.hidden = YES;
+    // Show versions before the recovery/actions area: a short panel must still
+    // answer the user's history question before presenting administrative controls.
+    NSStackView* stack = [NSStackView stackViewWithViews:@[_title,_status,scroll,_recoveryActions,actions]];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeLeading;
-    stack.spacing = 10; stack.translatesAutoresizingMaskIntoConstraints = NO;
-    // Keep all recovery and version actions reachable below the vertical mode list,
-    // including at the reader's minimum window height.
+    stack.spacing = 6; stack.translatesAutoresizingMaskIntoConstraints = NO;
     NSScrollView* viewport = [NSScrollView new];
     viewport.identifier = @"HistoryContentViewport";
-    viewport.hasVerticalScroller = YES; viewport.drawsBackground = NO;
+    viewport.hasVerticalScroller = YES; viewport.autohidesScrollers = YES; viewport.drawsBackground = NO;
     viewport.translatesAutoresizingMaskIntoConstraints = NO;
     NSView* content = [SPDFHistoryContentView new];
     content.translatesAutoresizingMaskIntoConstraints = NO; viewport.documentView = content;
@@ -88,13 +127,28 @@
         [content.heightAnchor constraintGreaterThanOrEqualToAnchor:viewport.contentView.heightAnchor], fill,
         [stack.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:10],
         [stack.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-10],
-        [stack.topAnchor constraintEqualToAnchor:content.topAnchor constant:12],
-        [stack.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-10],
+        [stack.topAnchor constraintEqualToAnchor:content.topAnchor constant:8],
+        [stack.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-8],
         [_title.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [_status.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [scroll.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
-        [scroll.heightAnchor constraintGreaterThanOrEqualToConstant:80]]];
+        [scroll.heightAnchor constraintGreaterThanOrEqualToConstant:112],
+        [actions.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [_compareButton.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [secondary.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [_recoveryActions.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [find.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [save.widthAnchor constraintEqualToAnchor:stack.widthAnchor]]];
     [self reload];
+}
+- (void)viewDidLayout {
+    [super viewDidLayout];
+    // Last-column autoresizing alone retains a stale width after sidebar resizing.
+    CGFloat width = NSWidth(_table.enclosingScrollView.contentView.bounds);
+    if (width > 0) {
+        _table.tableColumns.firstObject.width = width;
+        [_table setFrameSize:NSMakeSize(width,NSHeight(_table.frame))];
+    }
 }
 - (void)cancelPendingPreviews { ++_previewGeneration; }
 - (void)reload {
@@ -112,8 +166,9 @@
             self->_title.toolTip = found[@"path"];
             BOOL available = SPDFCollectionOriginalAvailable(found);
             self->_recoveryActions.hidden = available || !versions.count;
-            self->_status.stringValue = available ? @"Latest opens your original. Earlier versions are read-only." :
-                (versions.count ? @"Original missing. Saved versions remain available." : @"No saved versions yet");
+            self->_status.stringValue = !versions.count ? @"No saved versions yet" :
+                available ? @"Original available · saved versions are read-only" :
+                @"Original missing · saved versions available";
             self->_restoringSelection = YES;
             [self->_table reloadData];
             if (selected) for (NSUInteger i = 0; i < versions.count; i++) if ([versions[i][@"id"] isEqual:selected])
@@ -124,21 +179,49 @@
     });
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _versions.count; }
+- (NSTableRowView*)tableView:(NSTableView*)table rowViewForRow:(NSInteger)row {
+    (void)table; (void)row; return [SPDFHistoryVersionRow new];
+}
 - (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
     (void)table; (void)column;
     NSDictionary* version = _versions[row];
-    NSString* date = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]]
-        dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
+    NSDate* captured = [NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]];
+    NSString* date = [NSDateFormatter localizedStringFromDate:captured
+        dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterNoStyle];
+    NSString* time = [NSDateFormatter localizedStringFromDate:captured
+        dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle];
     NSString* size = [NSByteCountFormatter stringFromByteCount:[version[@"size"] longLongValue]
         countStyle:NSByteCountFormatterCountStyleFile];
-    NSTextField* label = [NSTextField wrappingLabelWithString:[NSString stringWithFormat:@"%@%@\n%@ · %@",
-        [version[@"keep"] boolValue] ? @"★ " : @"",date,version[@"reason"] ?: @"Saved version",size]];
-    label.font = [NSFont systemFontOfSize:12]; label.maximumNumberOfLines = 3;
-    NSStackView* rowView = [NSStackView stackViewWithViews:SPDFCollectionVersionIsLatest(_document, version)
-        ? @[SPDFCollectionLatestBadge(), label] : @[label]];
-    rowView.orientation = NSUserInterfaceLayoutOrientationVertical;
-    rowView.alignment = NSLayoutAttributeLeading; rowView.spacing = 3;
-    return rowView;
+    NSTextField* label = [NSTextField labelWithString:date];
+    label.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
+    label.lineBreakMode = NSLineBreakByTruncatingTail;
+    label.identifier = @"HistoryVersionDate";
+    NSTextField* clock = [NSTextField labelWithString:time];
+    clock.font = [NSFont systemFontOfSize:11]; clock.textColor = NSColor.secondaryLabelColor;
+    NSView* spacer = [NSView new];
+    // Dates retain a whole line even with always-visible scrollbars at 176pt.
+    NSStackView* title = [NSStackView stackViewWithViews:SPDFCollectionVersionIsLatest(_document,version)
+        ? @[clock,spacer,SPDFCollectionLatestBadge()] : @[clock,spacer]];
+    title.orientation = NSUserInterfaceLayoutOrientationHorizontal; title.spacing = 5;
+    NSTextField* detail = [NSTextField labelWithString:[NSString stringWithFormat:@"%@%@ · %@",
+        [version[@"keep"] boolValue] ? @"★ " : @"",version[@"reason"] ?: @"Saved version",size]];
+    detail.font = [NSFont systemFontOfSize:10]; detail.textColor = NSColor.secondaryLabelColor;
+    detail.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSStackView* lines = [NSStackView stackViewWithViews:@[label,title,detail]];
+    lines.orientation = NSUserInterfaceLayoutOrientationVertical;
+    lines.alignment = NSLayoutAttributeLeading; lines.spacing = 1;
+    NSTableCellView* cell = [NSTableCellView new]; lines.translatesAutoresizingMaskIntoConstraints = NO;
+    [cell addSubview:lines];
+    cell.toolTip = [NSString stringWithFormat:@"%@ · %@ · %@",date,time,detail.stringValue];
+    cell.accessibilityLabel = cell.toolTip;
+    [NSLayoutConstraint activateConstraints:@[
+        [lines.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:5],
+        [lines.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-5],
+        [lines.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+        [label.widthAnchor constraintEqualToAnchor:lines.widthAnchor],
+        [title.widthAnchor constraintEqualToAnchor:lines.widthAnchor],
+        [detail.widthAnchor constraintEqualToAnchor:lines.widthAnchor]]];
+    return cell;
 }
 - (NSDictionary*)selectedVersion {
     NSInteger row = _table.selectedRow;
@@ -146,13 +229,18 @@
 }
 - (void)updateActions {
     NSDictionary* version = [self selectedVersion];
-    for (NSUInteger i = 0; i < _buttons.count; i++) {
-        _buttons[i].enabled = i == 4 || version != nil;
-        if (i == 0) _buttons[i].enabled &= _versions.count > 0;
-        if (i == 1) _buttons[i].enabled &= _table.selectedRow+1 < (NSInteger)_versions.count;
-        if (i < 2) _buttons[i].enabled &= ![version[@"encrypted"] boolValue];
-        if (i == 3) _buttons[i].title = [version[@"keep"] boolValue] ? @"Unkeep Version" : @"Keep Version";
-    }
+    BOOL encrypted = [version[@"encrypted"] boolValue];
+    BOOL latest = version && SPDFCollectionVersionIsLatest(_document,version);
+    _compareButton.enabled = version != nil && !latest && !encrypted;
+    _compareButton.toolTip = !version ? @"Select a saved version to compare." : encrypted ?
+        @"Comparison is unavailable for an encrypted saved version." : latest ?
+        @"Select an earlier version to compare with Latest. Compare with Previous is in Actions." :
+        @"Compare this version with the latest document.";
+    _keepButton.enabled = version != nil;
+    _keepButton.state = [version[@"keep"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    [_actionsMenu itemAtIndex:1].enabled = version != nil && !encrypted && _table.selectedRow+1 < (NSInteger)_versions.count;
+    [_actionsMenu itemAtIndex:2].enabled = version != nil;
+    [_actionsMenu itemAtIndex:3].enabled = YES;
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)note {
     (void)note; [self updateActions];
@@ -168,7 +256,7 @@
             if (generation != self->_previewGeneration) return;
             self->_document = current; self->_recoveryActions.hidden = SPDFCollectionOriginalAvailable(current);
             self->_status.stringValue = error.localizedDescription ?: (SPDFCollectionOriginalAvailable(current) ?
-                @"Latest opens your original. Earlier versions are read-only." : @"Original missing. Saved versions remain available.");
+                @"Original available · saved versions are read-only" : @"Original missing · saved versions available");
             if (URL) self->_open(URL.path,!original);
         });
     });
