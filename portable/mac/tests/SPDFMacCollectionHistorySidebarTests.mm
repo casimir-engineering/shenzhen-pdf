@@ -53,14 +53,20 @@ static NSUInteger Badges(NSView* view) {
     for (NSView* child in view.subviews) count += Badges(child);
     return count;
 }
+static NSView* Identified(NSView* view, NSString* identifier) {
+    if ([view.identifier isEqual:identifier]) return view;
+    for (NSView* child in view.subviews) { NSView* found = Identified(child,identifier); if (found) return found; }
+    return nil;
+}
 @interface HistoryFixtureStore : SPDFMacCollectionStore
 @property NSString* fixturePath;
 @property NSUInteger materializations;
+@property BOOL empty;
 @end
 @implementation HistoryFixtureStore
 - (NSArray*)documents {
-    return @[@{@"id":@"fixture",@"title":@"Garden notes.md",@"status":@"Protected local copies",@"path":self.fixturePath ?: @"/missing/Notes.md",@"versions":@[
-        @{@"id":@"old",@"capturedAt":@1780358400,@"size":@1240,@"reason":@"Before edit"},@{@"id":@"new",@"capturedAt":@1790121600,@"size":@1510,@"reason":@"Saved"}]}];
+    return @[@{@"id":@"fixture",@"title":@"Garden notes.md",@"status":@"Protected local copies",@"path":self.fixturePath ?: @"/missing/Notes.md",@"versions":(self.empty ? @[] : @[
+        @{@"id":@"old",@"capturedAt":@1780358400,@"size":@1240,@"reason":@"Before edit"},@{@"id":@"new",@"capturedAt":@1790121600,@"size":@1510,@"reason":@"Saved"}])}];
 }
 - (NSURL*)materializeVersionID:(NSString*)version documentID:(NSString*)document error:(NSError**)error {
     (void)document; (void)error;
@@ -88,6 +94,15 @@ static BOOL Await(BOOL (^ready)(void)) {
     while (!ready() && end.timeIntervalSinceNow > 0)
         [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     return ready();
+}
+static void Capture(NSView* view, NSString* evidence, NSString* suffix) {
+    if (!evidence.length) return;
+    [view layoutSubtreeIfNeeded];
+    NSBitmapImageRep* image = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
+    [view cacheDisplayInRect:view.bounds toBitmapImageRep:image];
+    NSString* path = [[evidence stringByDeletingPathExtension] stringByAppendingFormat:@"-%@.png",suffix];
+    Expect([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES],
+        "additional History evidence writes a native PNG");
 }
 static NSButton* Button(NSView* view, NSString* title) {
     if ([view isKindOfClass:NSButton.class] && [[(NSButton*)view title] isEqual:title]) return (id)view;
@@ -121,7 +136,7 @@ int main(void) {
                 openedPath = path; archivedOpen = archived; ++opens;
             }];
         NSWindow* host = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,280,620)
-            styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+            styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
         host.releasedWhenClosed = NO;
         host.contentView = [[CollectionEvidenceSurface alloc] initWithFrame:NSMakeRect(0,0,280,620)];
         NSView* container = host.contentView;
@@ -149,6 +164,13 @@ int main(void) {
         NSView* older = [history tableView:table viewForTableColumn:table.tableColumns.firstObject row:1];
         Expect(Badges(newest) == 1,"latest row has exactly one Latest pill");
         Expect(Badges(older) == 0,"older row never claims to be Latest");
+        Expect(table.rowHeight <= 56,"compact version rows preserve history reading space");
+        NSPopUpButton* actions = (id)Find(history.view,NSPopUpButton.class);
+        Expect(actions && [actions itemWithTitle:@"Compare with Previous"] &&
+            [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Manage Collection…"],
+            "secondary version actions remain discoverable in a labeled menu");
+        Expect([actions itemWithTitle:@"Manage Collection…"].enabled &&
+            ![actions itemWithTitle:@"Save a Copy…"].enabled,"menu availability follows selection");
         history.view.hidden = YES; history.view.hidden = NO;
         Expect(table.numberOfRows == 2,"switching away from History preserves the loaded versions");
         Expect(opens == 0,"loading and panel switching never opens a version implicitly");
@@ -177,9 +199,16 @@ int main(void) {
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
         Expect(Await(^BOOL { return opens == 2; }) && !archivedOpen && [openedPath isEqual:store.fixturePath],
             "Latest rechecks current link and opens on-disk original");
+        Expect(!Button(history.view,@"Compare with Latest").enabled &&
+            [actions itemWithTitle:@"Compare with Previous"].enabled,
+            "latest selected disables self comparison while previous comparison stays reachable");
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
         Expect(Await(^BOOL { return opens == 3; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"old.md"],
             "older selection stays read-only");
+        Expect(Button(history.view,@"Compare with Latest").enabled &&
+            ![actions itemWithTitle:@"Compare with Previous"].enabled &&
+            [actions itemWithTitle:@"Save a Copy…"].enabled,
+            "oldest selection compares with latest and exports but has no previous version");
         [history menuNeedsUpdate:table.menu];
         NSMenuItem* reveal = table.menu.itemArray.firstObject;
         Expect([reveal.title isEqual:@"Show in Explorer"],"version context menu offers configured explorer");
@@ -206,9 +235,18 @@ int main(void) {
             "recovery routes old and new identities to retain existing reader tab instead of opening a duplicate");
         Expect(Await(^BOOL { return !Button(history.view,@"Find Document…").superview.hidden; }),
             "missing-link recovery reload finishes before short-window layout");
-        [host setContentSize:NSMakeSize(220,300)];
+        [host setContentSize:NSMakeSize(176,296)];
         [container layoutSubtreeIfNeeded];
-        Expect(container.bounds.size.height == 300,"History does not force a short reader window to grow");
+        Expect(container.bounds.size.height == 296 && container.bounds.size.width == 176,
+            "History preserves the true minimum sidebar width and short height");
+        fprintf(stderr,"History geometry panel=%.0f table=%.0f clip=%.0f column=%.0f\n",
+            NSWidth(history.view.bounds),NSWidth(table.bounds),
+            NSWidth(table.enclosingScrollView.contentView.bounds),table.tableColumns.firstObject.width);
+        NSView* latestCell = [table viewAtColumn:0 row:0 makeIfNecessary:YES];
+        NSTextField* fullDate = (id)Identified(latestCell,@"HistoryVersionDate");
+        Expect(fullDate && NSWidth(fullDate.bounds) >=
+            [fullDate.stringValue sizeWithAttributes:@{NSFontAttributeName:fullDate.font}].width,
+            "minimum-width History shows the whole date beside always-visible scrollbars");
         if (evidence.length) {
             NSBitmapImageRep* bitmap = [container bitmapImageRepForCachingDisplayInRect:container.bounds];
             [container cacheDisplayInRect:container.bounds toBitmapImageRep:bitmap];
@@ -219,13 +257,38 @@ int main(void) {
         NSScrollView* viewport = (id)Find(history.view,NSScrollView.class);
         Expect(viewport.documentView.bounds.size.height > viewport.contentView.bounds.size.height,
             "short History scrolls its actions instead of clipping them");
-        for (NSString* title in @[@"Compare with Latest",@"Manage Collection…",@"Find Document…",@"Save New Copy As…"]) {
+        NSRect firstVersion = [table convertRect:[table rectOfRow:0] toView:viewport.documentView];
+        Expect(NSContainsRect(viewport.documentVisibleRect,firstVersion),
+            "minimum missing-source History shows a complete version before recovery actions");
+        for (NSString* title in @[@"Compare with Latest",@"Actions",@"Find Document…",@"Save New Copy As…"]) {
             NSButton* button = Button(history.view,title);
             [button scrollRectToVisible:button.bounds];
             NSRect frame = [button convertRect:button.bounds toView:viewport.documentView];
             Expect(!button.hiddenOrHasHiddenAncestor && button.bounds.size.height >= 20 &&
                 NSContainsRect(viewport.documentVisibleRect,frame),"History actions are reachable at minimum window size");
         }
+        Capture(container,evidence,@"actions-minimum");
+        [host setContentSize:NSMakeSize(240,620)];
+        host.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+        [container layoutSubtreeIfNeeded];
+        [viewport.contentView scrollToPoint:NSZeroPoint]; [viewport reflectScrolledClipView:viewport.contentView];
+        Capture(container,evidence,@"dark");
+        host.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        store.fixturePath = [root.path stringByAppendingPathComponent:@"Original.md"];
+        [history reload];
+        Expect(Await(^BOOL { return [[(NSTextField*)[history valueForKey:@"status"] stringValue]
+            containsString:@"Original available"]; }),"linked History refreshes source context");
+        [container layoutSubtreeIfNeeded];
+        [viewport.contentView scrollToPoint:NSZeroPoint];
+        Capture(container,evidence,@"linked");
+        store.empty = YES; [history reload];
+        Expect(Await(^BOOL { return table.numberOfRows == 0; }),"empty History reloads without opening a document");
+        Expect(!Button(history.view,@"Compare with Latest").enabled &&
+            ![actions itemWithTitle:@"Save a Copy…"].enabled && [actions itemWithTitle:@"Manage Collection…"].enabled,
+            "empty History disables version actions and preserves Collection access");
+        Expect([[(NSTextField*)[history valueForKey:@"status"] stringValue] isEqual:@"No saved versions yet"],
+            "empty History explains the absent versions");
+        Capture(container,evidence,@"empty");
         Expect(!host.visible,"all History interaction tests remain headless");
         [NSFileManager.defaultManager removeItemAtURL:root error:nil];
         if (!failures) puts("SPDFMacCollectionHistorySidebarTests passed");

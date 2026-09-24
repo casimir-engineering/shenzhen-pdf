@@ -23,11 +23,12 @@ static void Check(BOOL ok, const char* label) { if (!ok) { fprintf(stderr,"FAIL:
 @end
 static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, NSString* evidence) {
     NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,height)
-        styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     window.releasedWhenClosed = NO;
     window.appearance = [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
     window.contentView = [[SidebarSurface alloc] initWithFrame:NSMakeRect(0,0,width,height)];
     NSView* surface = window.contentView;
+    Check(fabs(NSWidth(surface.bounds)-width)<.5,"fixture renders the requested sidebar width");
     SPDFSidebarNavigationControl* navigation = [SPDFSidebarNavigationControl new];
     spdf_sidebar_mode_control_configure_navigation(navigation,YES,YES);
     navigation.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
@@ -53,11 +54,13 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
         [scroll.trailingAnchor constraintEqualToAnchor:surface.trailingAnchor],
         [scroll.bottomAnchor constraintEqualToAnchor:surface.bottomAnchor]]];
     [surface layoutSubtreeIfNeeded];
+    Check(fabs(NSWidth(surface.bounds)-width)<.5,"layout preserves the requested sidebar width");
+    fprintf(stdout,"Nav requested %.0f actual %.0f control %.0f\n",width,NSWidth(surface.bounds),NSWidth(navigation.bounds));
     Check(navigation.segmentCount == 5,"all PDF workspace modes present");
     Check(navigation.accessibilityChildren.count == 5,"navigation is a vertical row per mode");
     CGFloat bottom = 0;
     for (NSButton* row in navigation.accessibilityChildren) {
-        Check(NSHeight(row.frame) == 28 && NSMinY(row.frame) >= bottom,"rows have full click targets and never overlap");
+        Check(NSHeight(row.frame) == 26 && NSMinY(row.frame) >= bottom,"rows have full click targets and never overlap");
         Check(NSWidth(row.frame) == width-16,"navigation uses available panel width");
         Check(row.accessibilityLabel.length > 0,"all icons have accessible text names");
         bottom = NSMaxY(row.frame);
@@ -117,6 +120,7 @@ int main(void) {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         NSString* directory = NSProcessInfo.processInfo.environment[@"SPDF_SIDEBAR_EVIDENCE_DIR"];
         if (directory.length) [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+        Exercise(176,296,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-minimum.png"] : nil);
         Exercise(220,620,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-light-narrow.png"] : nil);
         Exercise(240,620,YES,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-dark.png"] : nil);
         Exercise(220,340,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-short.png"] : nil);

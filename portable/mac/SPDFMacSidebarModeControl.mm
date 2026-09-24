@@ -48,7 +48,7 @@ static void Configure(NSSegmentedControl* control, BOOL supportsComments, BOOL h
         [control setLabel:mode == SPDFSidebarModeChapters ? @"Chapters" :
                          (mode == SPDFSidebarModeComments ? @"Comments" :
                           (mode == SPDFSidebarModeSearch ? @"Search" :
-                           (mode == SPDFSidebarModeHistory ? @"History" : @"Group Management"))) forSegment:segment];
+                           (mode == SPDFSidebarModeHistory ? @"History" : @"Groups"))) forSegment:segment];
         ++segment;
     }
     control.spdf_selectedSidebarMode = selectedMode;

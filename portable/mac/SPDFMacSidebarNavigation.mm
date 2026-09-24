@@ -1,6 +1,6 @@
 #import "SPDFMacSidebarModeControl.h"
 
-static const CGFloat RowHeight = 28, RowGap = 3;
+static const CGFloat RowHeight = 26, RowGap = 0;
 static NSString* Symbol(NSInteger mode) {
     switch (mode) {
         case SPDFSidebarModeComments: return @"text.bubble";
@@ -24,27 +24,22 @@ static NSString* Symbol(NSInteger mode) {
     NSRect bounds = NSInsetRect(self.bounds,.5,.5);
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7 yRadius:7];
     if (selected || self.highlighted || _hovered) {
-        NSColor* fill = selected || self.highlighted ? [NSColor.controlAccentColor colorWithAlphaComponent:selected ? .14 : .07] :
-            [NSColor.labelColor colorWithAlphaComponent:.045];
+        NSColor* fill = [NSColor.labelColor colorWithAlphaComponent:selected ? .085 : (self.highlighted ? .065 : .035)];
         [fill setFill]; [shape fill];
     }
     if (selected && self.window.firstResponder == self.superview) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
-    if (selected) {
-        [NSColor.controlAccentColor setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0,7,3,14) xRadius:1.5 yRadius:1.5] fill];
-    }
     NSColor* color = self.enabled ? NSColor.labelColor : NSColor.disabledControlTextColor;
     NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:13 weight:selected ? NSFontWeightSemibold : NSFontWeightRegular]];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:NSMakeRect(12,7,14,14) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    [icon drawInRect:NSMakeRect(10,6,14,14) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
     NSMutableParagraphStyle* paragraph = [NSMutableParagraphStyle new]; paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
     NSDictionary* attributes = @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:selected ? NSFontWeightSemibold : NSFontWeightRegular],
         NSForegroundColorAttributeName:color,NSParagraphStyleAttributeName:paragraph};
     CGFloat height = [self.title sizeWithAttributes:attributes].height;
-    [self.title drawInRect:NSMakeRect(35,floor((NSHeight(self.bounds)-height)/2),MAX(0,NSWidth(self.bounds)-45),height) withAttributes:attributes];
+    [self.title drawInRect:NSMakeRect(32,floor((NSHeight(self.bounds)-height)/2),MAX(0,NSWidth(self.bounds)-42),height) withAttributes:attributes];
 }
 - (void)updateTrackingAreas {
     [super updateTrackingAreas]; if (_hoverArea) [self removeTrackingArea:_hoverArea];
@@ -71,7 +66,7 @@ static NSString* Symbol(NSInteger mode) {
     return self;
 }
 - (NSSize)intrinsicContentSize {
-    return NSMakeSize(196,self.segmentCount ? self.segmentCount*RowHeight+(self.segmentCount-1)*RowGap+9 : 0);
+    return NSMakeSize(NSViewNoIntrinsicMetric,self.segmentCount ? self.segmentCount*RowHeight+(self.segmentCount-1)*RowGap+9 : 0);
 }
 - (void)rebuildRows {
     if (!_rows) return;

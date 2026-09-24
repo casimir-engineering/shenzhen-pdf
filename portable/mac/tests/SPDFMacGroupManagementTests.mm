@@ -32,14 +32,15 @@ static NSArray* Groups(void) {
 }
 static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, NSString* output) {
     NSWindow* host = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,height)
-        styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     host.releasedWhenClosed = NO; host.appearance = [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
     host.contentView = [[GroupSurface alloc] initWithFrame:NSMakeRect(0,0,width,height)];
+    Check(fabs(NSWidth(host.contentView.bounds)-width)<.5,"fixture renders the requested sidebar width");
     SPDFSidebarNavigationControl* navigation = [SPDFSidebarNavigationControl new];
-    spdf_sidebar_mode_control_configure_navigation(navigation,variant == 3,YES);
+    spdf_sidebar_mode_control_configure_navigation(navigation,variant == 3 || variant == 4,YES);
     navigation.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
     NSMutableArray* fixtureGroups = [Groups() mutableCopy];
-    BOOL hiddenActive = variant == 1;
+    BOOL hiddenActive = variant == 1 || variant == 4;
     if (hiddenActive) {
         NSMutableDictionary* active = [fixtureGroups[1] mutableCopy]; active[@"hidden"] = @YES; fixtureGroups[1] = active;
         NSMutableDictionary* longName = [fixtureGroups[3] mutableCopy]; longName[@"name"] = @"Design references and archived project material"; fixtureGroups[3] = longName;
@@ -51,11 +52,12 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
         [navigation.topAnchor constraintEqualToAnchor:host.contentView.topAnchor constant:8],
         [navigation.leadingAnchor constraintEqualToAnchor:host.contentView.leadingAnchor constant:8],
         [navigation.trailingAnchor constraintEqualToAnchor:host.contentView.trailingAnchor constant:-8],
-        [manager.view.topAnchor constraintEqualToAnchor:navigation.bottomAnchor constant:8],
+        [manager.view.topAnchor constraintEqualToAnchor:navigation.bottomAnchor constant:4],
         [manager.view.leadingAnchor constraintEqualToAnchor:host.contentView.leadingAnchor],
         [manager.view.trailingAnchor constraintEqualToAnchor:host.contentView.trailingAnchor],
         [manager.view.bottomAnchor constraintEqualToAnchor:host.contentView.bottomAnchor]]];
     [host.contentView layoutSubtreeIfNeeded];
+    Check(fabs(NSWidth(host.contentView.bounds)-width)<.5,"layout preserves the requested sidebar width");
     NSTableView* table = (id)Find(manager.view,NSTableView.class);
     NSSearchField* search = (id)Find(manager.view,NSSearchField.class);
     NSScrollView* scroll = table.enclosingScrollView;
@@ -64,6 +66,11 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
         "initial detached scroll restore waits for real viewport and clamps to content");
     Check(table.numberOfRows == 8,"expanded group exposes documents inline");
     Check(NSWidth(scroll.frame) <= width && NSHeight(scroll.frame) > 35,"group list fits narrow and short panel");
+    if (height <= 296) Check(NSHeight(scroll.contentView.bounds) >= 76,"minimum sidebar initially fits two complete group rows including gaps");
+    Check([manager tableView:table heightOfRow:0] >= 36,"group metadata retains two readable lines");
+    Check(NSHeight(search.frame) >= 26 && NSWidth(search.frame) >= 160,"search remains usable at minimum supported width");
+    fprintf(stdout,"Groups geometry %.0fx%.0f modes=%ld list=%.0fpt first=%.0fpt\n",width,height,navigation.segmentCount,
+        NSHeight(scroll.contentView.bounds),height-NSMaxY([scroll convertRect:scroll.bounds toView:host.contentView]));
     Check(search.focusRingType != NSFocusRingTypeNone,"search retains accessible keyboard focus feedback");
     Check(table.selectedRow == 3,"active document has selected-row feedback");
     __block NSString* action; __block NSString* target; __block NSUInteger changes = 0;
@@ -101,6 +108,14 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     [host.contentView layoutSubtreeIfNeeded];
     if (hiddenActive) [host makeFirstResponder:search];
     if (variant == 2) { search.stringValue = @"Conference"; [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]]; }
+    [table layoutSubtreeIfNeeded];
+    NSView* visibleResearch = table.numberOfRows > 1 ? [table viewAtColumn:0 row:1 makeIfNecessary:YES] : nil;
+    NSButton* eye = Button(visibleResearch,hiddenActive ? @"Show Research in tab bar" : @"Hide Research from tab bar");
+    if (eye) {
+        NSRect eyeBounds = [eye convertRect:eye.bounds toView:table];
+        Check(NSWidth(eye.bounds) >= 26 && NSHeight(eye.bounds) >= 26,"visibility retains its full click target");
+        Check(NSMinX(eyeBounds) >= 0 && NSMaxX(eyeBounds) <= NSWidth(table.bounds),"visibility target never clips at narrow width");
+    }
     if (output.length) {
         NSBitmapImageRep* bitmap = [host.contentView bitmapImageRepForCachingDisplayInRect:host.contentView.bounds];
         [host.contentView cacheDisplayInRect:host.contentView.bounds toBitmapImageRep:bitmap];
@@ -113,6 +128,10 @@ int main(void) {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_GROUP_MANAGEMENT_EVIDENCE_DIR"];
         if (evidence.length) [NSFileManager.defaultManager createDirectoryAtPath:evidence withIntermediateDirectories:YES attributes:nil error:nil];
+        Render(176,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-minimum.png"] : nil);
+        Render(220,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-220-minimum.png"] : nil);
+        Render(240,640,YES,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-default-dark.png"] : nil);
+        Render(176,640,NO,4,evidence ? [evidence stringByAppendingPathComponent:@"groups-minimum-hidden-active.png"] : nil);
         Render(220,640,NO,NO,evidence ? [evidence stringByAppendingPathComponent:@"groups-narrow.png"] : nil);
         Render(280,640,YES,NO,evidence ? [evidence stringByAppendingPathComponent:@"groups-dark.png"] : nil);
         Render(220,340,NO,NO,evidence ? [evidence stringByAppendingPathComponent:@"groups-short.png"] : nil);
