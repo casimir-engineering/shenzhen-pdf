@@ -1,5 +1,7 @@
 # Mobile design journal · 24 September 2026
 
+**Revision notice:** the original document-switching wheel below was rejected. Its grades are historical. The current reader-controls study and appended correction log supersede that interaction.
+
 ## Scope and sequence
 
 The prior desktop performance/release work was complete before this design task began. A separate creative technical director developed the mobile direction; an independent critic reviewed the specification before reviewing mockups. Root integrated the contracts, built the browser document and exercised the prototype in the Codex browser. No desktop app was launched or modified for this proposal.
@@ -47,10 +49,28 @@ The live pass found a stale filtered result count, default highlighting without 
 
 Browser evidence covers appearance, modeled navigation and DOM accessibility only. It does not prove native TalkBack, physical touch geometry, Android URI permissions, PDF/EPUB reading, storage durability, startup latency or iPhone compatibility. The specification contains separate acceptance gates for those.
 
-## Final result
+## Earlier result — superseded wheel
 
 Text **9.57/10**; visual prototype **9.57/10**. Eight total independent review rounds, with text accepted before visual review began. The final pass corrected all reviewed major/medium findings; native implementation gates remain open by design. Root ran 18 focused state assertions, JavaScript syntax validation, local HTML reference validation, the repository file-size ratchet and whitespace checks. Final live-browser evidence and source hashes are in `prototype-evidence/final/`.
 
 ![Final dark reader](prototype-evidence/final/dark-final.png)
 ![True 200% text](prototype-evidence/final/groups-360-200.png)
 ![Final exact unverified export identity](prototype-evidence/final/unverified-export-final.png)
+
+
+## Corrected brief: reader controls only · 24 September 2026
+
+The user rejected the document-switching wheel. That was an interpretation error, not a styling problem. The current proposal removes documents, Groups and library navigation from the wheel. The previous grades remain historical; they do not validate this revision.
+
+A creative director researched primary manuals for Procreate, Sketchbook, Concepts and Samsung, alongside Acrobat/PDF Expert reading gestures, Android/Apple platform guidance and marking-menu research. A separate inventory agent audited the desktop controls. Root synthesized a finite current-document command map and compared page hold, edge swipe, two fingers, invisible hot zones, floating buttons and reserved chrome. The selected prototype begins immediately on a visible Tools control outside the document viewport and system gesture area.
+
+Six control families expand to a broad child fan. The gesture keeps one contact through command selection; release commits. Zoom/page scrubbing can continue into a value rail without lifting. Text entry, annotation placement and system destinations remain explicit task inputs. The study shows six complete four-frame sequences, not a single open-wheel image.
+
+![Complete Fit width sequence](control-wheel-evidence/sequence-fit-width-final.png)
+![Continuous zoom adjustment](control-wheel-evidence/sequence-zoom-final.png)
+
+The independent critic caught an event-rate-dependent correction bug: a straight cross-fan path could retain a family with sparse events but unlock it with dense events. Segment-based inward retreat and outward relock now agree, with a regression test. Further corrections removed footer interference over the fan, preserved current zoom values, explained disabled commands, made the parameter continuation discoverable, trapped dialog focus among actually visible controls, restored focus to the invoker, disclosed small-layout fallbacks, and kept embedded match scrolling local. Root also corrected numeric zoom rendering to scale text rather than merely widen its container.
+
+Root verified actual pointer traces and ordinary document scrolling, the equivalent Controls list, 200% text, numeric state, keyboard focus, 320 px narrow and 844×320 short layouts. All 34 pure gesture tests pass. The final independent review rates the design/prototype 9.35/10 with no remaining major/medium finding in that scope. It does not score native gesture safety or participant success, which remain untested. Full results, screenshots and source fingerprints are in [the evidence log](control-wheel-evidence/README.md).
+
+The canonical mobile spec and browser entry point now use this corrected design. The broader architecture remains accessible as an appendix. No native reader or desktop application code changed during this revision.

@@ -1,3 +1,5 @@
+> **Superseded wheel direction:** the document-switching interpretation below was rejected. The canonical replacement is `control-wheel-study.md`; the wheel contains reader commands only.
+
 # Mobile reader — independent creative and technical direction
 
 **Historical direction, not the implementation contract.** `spec.md` is canonical after critique round 1. It supersedes these exploratory choices: Reader uses header Organizer plus bottom Contents/Find/Switch/More; Groups navigates to a dedicated document list; deletion moves documents to General; Close removes working membership only; current wheel slots are neutral and hold uses a center-arming corridor. SQLite/jobs are foreground TypeScript repository-owned. This note records the independent creative contribution and is retained rather than silently rewritten.
