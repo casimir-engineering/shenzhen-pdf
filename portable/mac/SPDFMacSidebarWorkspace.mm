@@ -49,6 +49,13 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     state[@"width"] = @(_sidebarWidth); state[@"visible"] = @(_sidebarPreferredVisible);
     [self savePersistentState];
 }
+- (void)syncSidebarNavigationAvailability {
+    BOOL markdown = [self isMarkdownActive];
+    BOOL hasSearch = markdown ? [self markdownHasSearchSidebar] : [self hasSearchSidebar];
+    [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
+    spdf_sidebar_mode_control_set_document_availability(_sidebarModeControl,
+        markdown ? [self markdownHasChapters] : _outline.count > 0, !markdown && _comments.count > 0);
+}
 - (NSArray<NSDictionary*>*)sidebarGroupSnapshots {
     NSMutableArray* groups = [NSMutableArray array]; NSMutableDictionary* lookup = [NSMutableDictionary dictionary];
     for (SPDFDocumentTab* tab in _tabs) {

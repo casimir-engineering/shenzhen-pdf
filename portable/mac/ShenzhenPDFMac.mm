@@ -9415,6 +9415,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)rebuildSidebar {
+    [self syncSidebarNavigationAvailability];
     if ([self showSidebarWorkspacePanel] || [self collectionShowSelectedHistoryPanel]) return;
     if ([self isMarkdownActive]) {
         [self rebuildMarkdownSidebar];
@@ -9426,7 +9427,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     BOOL hasSearch = [self hasSearchSidebar];
     BOOL hasSidebar = _sidebarModeControl != nil;
 
-    [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
     if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)
         _sidebarModeControl.spdf_selectedSidebarMode =
             hasChapters ? SPDFSidebarModeChapters : (hasComments ? SPDFSidebarModeComments : SPDFSidebarModeChapters);
@@ -9444,10 +9444,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
     else if (!hasChapters && !hasComments && !hasSearch)
         _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
-
-    [_sidebarModeControl spdf_setEnabled:hasChapters forSidebarMode:SPDFSidebarModeChapters];
-    [_sidebarModeControl spdf_setEnabled:hasComments forSidebarMode:SPDFSidebarModeComments];
-    if (hasSearch) [_sidebarModeControl spdf_setEnabled:YES forSidebarMode:SPDFSidebarModeSearch];
 
     [self syncSidebarFilterField];
     NSString* filter = [self sidebarFilterTextForCurrentMode];

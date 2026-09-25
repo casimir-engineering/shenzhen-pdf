@@ -27,6 +27,11 @@ void spdf_sidebar_mode_control_configure(NSSegmentedControl* control, BOOL suppo
 
 void spdf_sidebar_mode_control_configure_history(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory);
 
+// Keep document-dependent modes in sync even while a workspace panel bypasses
+// the normal Chapters / Comments / Search list builder.
+void spdf_sidebar_mode_control_set_document_availability(NSSegmentedControl* control, BOOL hasChapters,
+                                                         BOOL hasComments);
+
 // The sidebar's Chapters / Comments / Search control, which grows a Search
 // segment while a search is live and drops it again when the search ends.
 //

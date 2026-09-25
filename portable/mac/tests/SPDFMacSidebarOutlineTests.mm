@@ -191,6 +191,38 @@ int main(void) {
         Expect("Uncollected document drops History safely", switching.segmentCount == 1 &&
             switching.spdf_selectedSidebarMode == SPDFSidebarModeChapters);
 
+        // Workspace panels return before the regular list builder, so their
+        // route must still refresh document-dependent mode availability.
+        NSSegmentedControl* workspaceModes = [SPDFSidebarNavigationControl new];
+        spdf_sidebar_mode_control_configure_navigation(workspaceModes, YES, YES);
+        workspaceModes.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
+        spdf_sidebar_mode_control_set_document_availability(workspaceModes, NO, NO);
+        Expect("a document without outline or comments disables those rows while Groups is open",
+            ![workspaceModes isEnabledForSegment:0] && ![workspaceModes isEnabledForSegment:1]);
+        spdf_sidebar_mode_control_configure_navigation(workspaceModes, YES, NO);
+        spdf_sidebar_mode_control_set_document_availability(workspaceModes, YES, YES);
+        Expect("switching documents re-enables Chapters and Comments without leaving Groups",
+            [workspaceModes isEnabledForSegment:0] && [workspaceModes isEnabledForSegment:1] &&
+            workspaceModes.spdf_selectedSidebarMode == SPDFSidebarModeGroups);
+        spdf_sidebar_mode_control_configure_navigation(workspaceModes, NO, NO);
+        spdf_sidebar_mode_control_set_document_availability(workspaceModes, YES, NO);
+        Expect("Markdown restores Chapters without exposing Comments",
+            workspaceModes.segmentCount == 3 && [workspaceModes isEnabledForSegment:0] &&
+            workspaceModes.spdf_selectedSidebarMode == SPDFSidebarModeGroups);
+
+        NSString* coordinator = [NSString stringWithContentsOfFile:@"mac/ShenzhenPDFMac.mm"
+            encoding:NSUTF8StringEncoding error:nil];
+        NSRange rebuild = [coordinator rangeOfString:@"- (void)rebuildSidebar {"];
+        NSRange availability = rebuild.location == NSNotFound ? NSMakeRange(NSNotFound, 0) :
+            [coordinator rangeOfString:@"[self syncSidebarNavigationAvailability];" options:0
+            range:NSMakeRange(rebuild.location, coordinator.length-rebuild.location)];
+        NSRange workspaceRoute = rebuild.location == NSNotFound ? NSMakeRange(NSNotFound, 0) :
+            [coordinator rangeOfString:@"if ([self showSidebarWorkspacePanel]"
+            options:0 range:NSMakeRange(rebuild.location, coordinator.length-rebuild.location)];
+        Expect("sidebar availability is synchronized before Groups and History can short-circuit rebuilding",
+            availability.location != NSNotFound && workspaceRoute.location != NSNotFound &&
+            availability.location < workspaceRoute.location);
+
         if (gFailures == 0) fprintf(stderr, "SPDFMacSidebarOutlineTests passed\n");
     }
     return gFailures == 0 ? 0 : 1;
