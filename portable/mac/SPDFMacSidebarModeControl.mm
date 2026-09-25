@@ -58,6 +58,13 @@ void spdf_sidebar_mode_control_configure_history(NSSegmentedControl* control, BO
     BOOL vertical = [control isKindOfClass:SPDFSidebarNavigationControl.class];
     Configure(control,supportsComments,hasSearch || vertical,hasHistory,vertical);
 }
+
+void spdf_sidebar_mode_control_set_document_availability(NSSegmentedControl* control, BOOL hasChapters,
+                                                         BOOL hasComments) {
+    [control spdf_setEnabled:hasChapters forSidebarMode:SPDFSidebarModeChapters];
+    [control spdf_setEnabled:hasComments forSidebarMode:SPDFSidebarModeComments];
+}
+
 void spdf_sidebar_mode_control_configure_navigation(NSSegmentedControl* control, BOOL supportsComments, BOOL hasHistory) {
     Configure(control,supportsComments,YES,hasHistory,YES);
 }

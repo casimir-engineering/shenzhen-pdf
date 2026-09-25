@@ -6,6 +6,7 @@
 - (void)restoreSidebarWorkspaceState:(id)value;
 - (void)applySidebarWorkspaceState;
 - (void)rememberSidebarWorkspaceMode;
+- (void)syncSidebarNavigationAvailability;
 - (BOOL)showSidebarWorkspacePanel;
 - (void)refreshSidebarWorkspacePanel;
 @end
