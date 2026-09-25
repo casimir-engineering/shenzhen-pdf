@@ -528,6 +528,8 @@ All 25 native Markdown/UI suites and four sidebar suites pass, including full-da
 
 ### Whole-reader UX reset and sidebar availability correction
 
+Follow-up proposal correction: grouped document tabs are fused with the title bar, matching the current app. Removed the redundant app-title/tab-row split, retained compact Cmd+K at the right, and checked desktop/narrow header fit and command-palette access. This changes the proposal only.
+
 The user rejected the component-focused balance pass. A new whole-interface study separates workspace navigation, current-document tasks, reading controls and source/version status. The interactive proposal exercises a synthetic 72-document workspace, search, PDF/Markdown switching, History, comparison and the Collection companion at full and compact sizes. An independent critic found state and search errors in the prototype; these were corrected and targeted browser workflows were repeated. This remains a proposal, not a shipped redesign. [Decision, evidence and limitations](../../proposals/mac-workspace-rethink/decision-and-validation.md).
 
 A separate agent reproduced and fixed the reported Chapters/Comments gray-state bug: workspace/history routes could return before refreshing the active document's navigation availability. The refresh now precedes those routes. Focused regressions, syntax checks and the native build pass. The signed candidate matches `dist/ShenzhenPDF.app`; the previous bundle is preserved and the user's running app was not restarted. [Bug audit and packaging](../../proposals/mac-workspace-rethink/bug-audit.md).

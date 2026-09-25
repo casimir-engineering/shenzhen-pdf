@@ -2,6 +2,12 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
+## Revision: tabs share the title bar
+
+Following user feedback, grouped document tabs now sit beside the window controls in the top bar, preserving the current app's organization. The separate application-title row and lower tab row are removed. Cmd+K remains at the right as a compact search control. This returns the previous tab row's height to the document and task pane. The header fits desktop and narrow widths without horizontal overflow; its search button still opens the command palette. Earlier captures below record the preceding review; this is the updated composition.
+
+![Tabs fused with the top bar](evidence/fused-topbar-desktop.png)
+
 ## Why the previous pass failed
 
 It optimized the vertical size of individual components while retaining the wrong hierarchy. Global workspace management, current-document navigation, search and saved-version management still competed in one stack. Synthetic component tests established that controls fit, not that the entire reader made sense. The previous numerical scores did not establish that outcome.
@@ -12,8 +18,7 @@ This pass began with the native reader's source and a read-only accessibility in
 
 | Area | Responsibility | What changes |
 |---|---|---|
-| Window title bar | Find anything across the workspace | One labeled Cmd+K entry; ordered document/group/text/Collection scopes. |
-| Grouped tab strip | Choose the current open document | Retains group identity and stronger selected-tab color. Overflow opens the existing group inventory. |
+| Unified title bar and grouped tabs | Choose the current document; find anything across the workspace | Window controls, grouped tabs, inventory overflow and compact Cmd+K share one row. Retains group identity, stronger selected-tab color and ordered document/group/text/Collection search scopes. |
 | Task rail | Choose what to do | Workspace: Groups and Collection. Document: Chapters, Find, Comments where supported, History. Icons precede labels. |
 | Single task pane | Show the chosen task's content | List/query begins at the top. No permanent five-row selector above it. One task owns one pane. |
 | Reading toolbar | Navigate and size the document | Page controls and zoom stay together. Occasional tools live in a labeled Document Tools menu. |
