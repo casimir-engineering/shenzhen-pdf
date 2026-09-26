@@ -2,7 +2,19 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Revision: tabs share the title bar
+## Latest revision: Brave-style tabs
+
+26 September 2026. The user requested Brave's tab system. Read-only inspection of the already-running Brave window supplied the horizontal tab shape, spacing, selected surface, close control and trailing plus/dropdown arrangement. No Brave tabs or settings were changed. Brave's [compact horizontal tabs issue](https://github.com/brave/brave-browser/issues/40044) was also consulted as a supplementary primary source.
+
+The proposal now uses individual rounded tabs with file icons, trailing close buttons, a distinct selected surface and equal title foreground colors. Compact colored group labels and a continuous line beneath expanded members replace the enclosing capsules. Tabs remain fused with the title bar. Clicking a group label expands/collapses its members without switching the document; selecting a document collapses the other groups. The plus opens a synthetic document picker, and the trailing dropdown opens the complete group inventory. These are local prototype interactions, not native file operations. Dragging, full context menus and cross-window group transfers remain outside this visual revision.
+
+Browser checks covered expanded groups without document changes, closing/reopening a tab, PDF/Markdown switching, dark/light appearance, and a 323px-wide header without horizontal overflow. Browser console errors: none observed. Close state and expanded groups join the prototype's existing saved state. The following images supersede the older tab styling below.
+
+![Brave-style tabs in dark appearance](evidence/brave-tabs-desktop.png)
+
+![Brave-style tabs in light appearance](evidence/brave-tabs-light.png)
+
+## Previous revision: tabs share the title bar
 
 Following user feedback, grouped document tabs now sit beside the window controls in the top bar, preserving the current app's organization. The separate application-title row and lower tab row are removed. Cmd+K remains at the right as a compact search control. This returns the previous tab row's height to the document and task pane. The header fits desktop and narrow widths without horizontal overflow; its search button still opens the command palette. Earlier captures below record the preceding review; this is the updated composition.
 
