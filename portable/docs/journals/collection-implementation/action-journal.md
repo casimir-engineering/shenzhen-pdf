@@ -528,6 +528,8 @@ All 25 native Markdown/UI suites and four sidebar suites pass, including full-da
 
 ### Whole-reader UX reset and sidebar availability correction
 
+26 September, alignment correction: replaced the proposal's independent panel/toolbar positioning with a shared window grid. Measured equal 44px header rows and matching tab/control centerlines; aligned the tab strip with the navigation column and made the footer span the window. Compact History now respects both toolbar and footer boundaries. Checked pane collapse, compact overflow and console errors; saved new visual evidence. Native app unchanged.
+
 26 September: replaced the proposal's group capsules with a Brave-style horizontal tab strip after inspecting Brave read-only. Individual rounded tabs now include document icons and close controls; compact group labels and an underline communicate membership. Verified group expansion without navigation, closing/reopening, document switching and dark/light/narrow presentation. Updated evidence and limitations in the proposal; no native app change or release.
 
 Follow-up proposal correction: grouped document tabs are fused with the title bar, matching the current app. Removed the redundant app-title/tab-row split, retained compact Cmd+K at the right, and checked desktop/narrow header fit and command-palette access. This changes the proposal only.
