@@ -2,7 +2,17 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Latest revision: Brave-style tabs
+## Latest revision: shared alignment grid
+
+26 September 2026, after the alignment feedback. The window now uses one grid for navigation, the task pane, document controls, canvas and footer. The pane heading sits alongside the reading toolbar, instead of starting a row below it. Workspace heading, pane heading and reading toolbar have the same 44px height and top coordinate. Tabs begin at the navigation column's right edge. Group labels, document tabs, close buttons and title-bar search share the same vertical center. Navigation uses 36px rows, 16px icons and consistent 8px gaps. The footer spans the entire window.
+
+Browser geometry confirmed identical header tops/heights and identical tab-control centerlines; the tab start and rail edge differed by under 0.01 CSS px from rounding. The compact History drawer begins exactly below the toolbar and ends at the footer, including the older-version status row. No horizontal overflow was observed in either checked size. Closing the task pane returns its width to the canvas. No browser console errors were observed. These remain prototype checks, not native app changes.
+
+![Aligned whole reader](evidence/aligned-reader-desktop.png)
+
+![Compact History with aligned drawer boundaries](evidence/aligned-compact-history.png)
+
+## Previous revision: Brave-style tabs
 
 26 September 2026. The user requested Brave's tab system. Read-only inspection of the already-running Brave window supplied the horizontal tab shape, spacing, selected surface, close control and trailing plus/dropdown arrangement. No Brave tabs or settings were changed. Brave's [compact horizontal tabs issue](https://github.com/brave/brave-browser/issues/40044) was also consulted as a supplementary primary source.
 
