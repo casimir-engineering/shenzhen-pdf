@@ -33,18 +33,16 @@
     CGFloat leftInset = 6.0;
     CGFloat rightInset = 6.0;
 
-    // Read-only indicator: a small orange dot immediately left of the title for
-    // any tab whose SOURCE is read-only (the app renders a copy without
-    // prompting). Drawn per-tab so it follows reorder; never for a missing tab
-    // (the red tint already owns that case). systemOrange is theme-correct.
-    BOOL showReadOnlyDot = tab.readOnly && !missing;
-    if (showReadOnlyDot) {
+    // Unsaved clipboard captures use the same reserved space as read-only
+    // files, with a red dot. The flag is cached on path assignment/restoration.
+    BOOL showDot = (tab.unsavedPastedImage || tab.readOnly) && !missing;
+    if (showDot) {
         // -rebuildReadOnlyTooltips computes the same rect via kReadOnlyDotLeftInset,
         // so the hover hit-area stays aligned with the drawn dot.
         NSRect dotRect = [self readOnlyDotRectForTabRect:tabRect
                                                 diameter:kReadOnlyDotDiameter
                                                leftInset:kReadOnlyDotLeftInset];
-        [NSColor.systemOrangeColor setFill];
+        [(tab.unsavedPastedImage ? NSColor.systemRedColor : NSColor.systemOrangeColor) setFill];
         [[NSBezierPath bezierPathWithOvalInRect:dotRect] fill];
         // Reserve space so the (middle-ellipsis) title sits just right of the dot.
         leftInset = kReadOnlyDotLeftInset + kReadOnlyDotDiameter + kReadOnlyDotTitleGap;

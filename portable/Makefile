@@ -758,3 +758,23 @@ mac-document-tool-input-tests: core/spdf_document_export.h mupdf-libs $(CORE_OBJ
 mac-shortcut-help-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-protocol -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacShortcutHelpTests.mm mac/ShenzhenMacDelegate+ShortcutHelp.mm mac/SPDFMacShortcutHelpStyle.mm mac/SPDFKeycapLabel.mm -framework Cocoa -o "$(BUILD)/SPDFMacShortcutHelpTests"
 	"$(BUILD)/SPDFMacShortcutHelpTests"
+
+.PHONY: mac-image-save-tests
+mac-image-save-tests: core/spdf_document_export.h mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ) | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacImageSaveTests.mm mac/SPDFMacImageSave.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework ImageIO -framework PDFKit -lm -o "$(BUILD)/SPDFMacImageSaveTests"
+	"$(BUILD)/SPDFMacImageSaveTests" "$(abspath ..)"
+
+.PHONY: mac-clipboard-image-tests
+mac-clipboard-image-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacClipboardImageTests.mm mac/SPDFMacClipboardImage.mm -framework Cocoa -framework ImageIO -o "$(BUILD)/SPDFMacClipboardImageTests"
+	"$(BUILD)/SPDFMacClipboardImageTests"
+
+.PHONY: mac-clipboard-routing-tests
+mac-clipboard-routing-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-protocol -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacClipboardRoutingTests.mm mac/SPDFMacClipboardIntegration.mm mac/SPDFMacClipboardImage.mm -framework Cocoa -framework ImageIO -o "$(BUILD)/SPDFMacClipboardRoutingTests"
+	"$(BUILD)/SPDFMacClipboardRoutingTests"
+
+.PHONY: mac-pasted-image-state-tests
+mac-pasted-image-state-tests: mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ) | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-protocol -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPastedImageStateTests.mm mac/SPDFMacImageSaveIntegration.mm mac/SPDFMacImageSave.mm mac/SPDFMacDocumentToolInput.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -lm -o "$(BUILD)/SPDFMacPastedImageStateTests"
+	"$(BUILD)/SPDFMacPastedImageStateTests"

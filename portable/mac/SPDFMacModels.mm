@@ -1,9 +1,18 @@
 #import "SPDFMacModels.h"
+#import "SPDFMacPastedImageState.h"
 #import "SPDFMacTabGroups.h"
 
 #import "SPDFMacMarkdownSession.h"
 
 @implementation SPDFDocumentTab
+@synthesize path = _path;
+@synthesize unsavedPastedImage = _unsavedPastedImage;
+
+- (void)setPath:(NSString*)path {
+    if ([_path isEqualToString:path]) return;
+    _path = [path copy];
+    _unsavedPastedImage = SPDFPathIsUnsavedPastedImage(_path);
+}
 
 - (instancetype)init {
     self = [super init];

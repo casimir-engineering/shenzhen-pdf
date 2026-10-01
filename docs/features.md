@@ -50,6 +50,13 @@ extension. Direct image files also receive bounded Collection thumbnails through
 macOS ImageIO where that decoder is available. GIFs use MuPDF's static reading
 representation rather than animated playback.
 
+**Paste images (macOS)** — Cmd+V in the reader opens copied image files or PNG,
+TIFF and JPEG clipboard pictures. Pasting inside a text field keeps its normal
+behavior. Clipboard pictures have a red unsaved dot and survive session restoration
+in app-owned storage. **Save As** offers the original image format or PDF and opens
+the saved file. Image copies preserve the original bytes, including transparency,
+metadata and animation; PDF includes every page exposed by the reader.
+
 The bundled build does not include JPEG XR or RAR decoders, nor native HEIC/WebP,
 legacy Office `.doc`/`.xls`/`.ppt`, or DRM removal. These are not advertised as
 openable. ZIP/TAR support means comic/image archives, not arbitrary archive browsing.
@@ -68,8 +75,9 @@ the same offline language catalog as fenced code blocks, including C/C++, Python
 JavaScript/TypeScript, Swift, Java, Rust, Go, HTML/XML, JSON and YAML. SVG keeps its
 image viewer, and Markdown keeps its formatted document view.
 
-Password-protected PDFs prompt for the password, remember it for the session,
-and drop every stored credential at quit.
+Password-protected PDFs prompt for the password. On macOS, successfully entered
+passwords are remembered in Keychain for Collection and matching originals; saved
+PDFs remain encrypted. In-memory document credentials are released at quit.
 
 Read-only sources (a file on a locked volume, a document opened from a
 read-only location) are opened through a persisted shadow copy, so a relaunch
