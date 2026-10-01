@@ -2,7 +2,17 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Latest revision: visible group labels, direct tools and full-height map
+## Latest revision: lean document tabs and direct sidebar icons
+
+1 October 2026. Removed the sidebar dropdown, replacing it with directly accessible Groups, Chapters, Find, Comments and History icons in the existing header. Each has an accessible name, hover helper text and selected state. Comments remains absent for Markdown. No extra navigation column or menu is introduced.
+
+Document tabs now have 24px surfaces, versus 20px group labels, with unchanged 12px/16px title typography and 4px inter-tab gaps. Vertical title padding is reduced to 4px; selected/close-visible horizontal padding is 22px. Close surfaces are 20px. Tabs use measured title widths with compact padding and a 200px cap instead of stretching every title to 220px. The checked short Power review tab is 116px wide; the long selected Interface specification tab is 200px. Capacity accounts for these individual widths, preserving the selected document and allocating remaining space to group labels.
+
+Checked direct History/Find/Chapters switching, Markdown Comments availability, dark/light presentation and 1248px/736px/352px widths. There is no sidebar select element. All five PDF panel icons remain reachable at the narrow fixture. No horizontal overflow or browser console errors were observed, and the General fixture still displays six documents at desktop width. This remains a prototype revision; native app and dist are unchanged.
+
+![Lean tabs and direct sidebar icons](evidence/lean-tabs-sidebar-icons.png)
+
+## Previous revision: visible group labels, direct tools and full-height map
 
 1 October 2026. Other group labels now use remaining tab-strip space individually, after allocating readable slots to the expanded group's documents. The previous all-or-nothing rule and narrow-width blanket hiding were removed. In the checked 1248px Hardware view all four group labels fit; at 736px Hardware and General fit. The crowded General view still shows six documents at desktop width.
 
