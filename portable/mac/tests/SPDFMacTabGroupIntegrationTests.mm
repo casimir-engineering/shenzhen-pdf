@@ -122,6 +122,38 @@ static void CheckFreshGeneral(void) {
     Expect(@"initial General survives the regular persistence path",
         ((SPDFDocumentTab*)restored[0]).group.general && ((SPDFDocumentTab*)restored[1]).group.general);
 }
+static void CheckCollapsedGroupRestore(void) {
+    GroupReaderProbe* reader=[GroupReaderProbe new];
+    SPDFDocumentTab* reading=Tab(@"/reading.pdf"), *browsing=Tab(@"/browsing.md");
+    reading.group=[SPDFTabGroup groupWithColor:@"Purple"];
+    browsing.group=SPDFTabGroup.generalGroup;
+    reading.pageIndex=7;
+    [reader seed:@[reading,browsing] selected:0];
+    [reader toggleTabGroup:reading.group];
+    Expect(@"folding the reading group keeps its document active",
+        reading.group.collapsed && reader.selectedIndex==0 && [reader.activePath isEqual:reading.path]);
+    NSMutableArray* restored=[NSMutableArray array];
+    for (NSDictionary* encoded in reader.savedTabs) [restored addObject:spdf_tab_from_dictionary(encoded)];
+    GroupReaderProbe* relaunched=[GroupReaderProbe new];
+    [relaunched seed:restored selected:0];
+    [relaunched normalizeTabGroups];
+    SPDFDocumentTab* selected=relaunched.tabs[0];
+    Expect(@"session restore preserves the collapsed reading group and position",
+        selected.group.collapsed && selected.pageIndex==7 && relaunched.selectedIndex==0);
+    NSString* path=[@(__FILE__).stringByDeletingLastPathComponent stringByAppendingPathComponent:@"../ShenzhenPDFMac.mm"];
+    NSString* coordinator=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    Expect(@"startup selects the already restored index",
+        [coordinator containsString:@"[self selectTabAtIndex:MAX(0, _selectedTabIndex)];"]);
+    Expect(@"initial restore skips group activation until a real navigation occurs",
+        [coordinator containsString:@"if (index != _selectedTabIndex || [self hasActiveDocument])\n        spdf_tab_groups_activate"]);
+    NSRange begin=[coordinator rangeOfString:@"- (void)loadSelectedTab {"];
+    NSRange end=begin.location==NSNotFound ? NSMakeRange(NSNotFound,0) :
+        [coordinator rangeOfString:@"// Tail of loadSelectedTab" options:0
+            range:NSMakeRange(begin.location,coordinator.length-begin.location)];
+    NSString* load=end.location==NSNotFound ? nil : [coordinator substringWithRange:NSMakeRange(begin.location,end.location-begin.location)];
+    Expect(@"document restore does not reexpand the reading group",
+        load.length && ![load containsString:@"activateSelectedTabGroup"] && ![load containsString:@"spdf_tab_groups_activate"]);
+}
 static void CheckGroupManagement(void) {
     GroupReaderProbe* reader=[GroupReaderProbe new];
     SPDFDocumentTab* a=Tab(@"/managed-a.pdf"), *b=Tab(@"/managed-b.md");
@@ -178,6 +210,7 @@ static void CheckGroupManagement(void) {
 int main(void) {
     @autoreleasepool {
         CheckFreshGeneral();
+        CheckCollapsedGroupRestore();
         CheckGroupManagement();
         CheckCreationPlacement(YES,NO); CheckCreationPlacement(NO,NO);
         CheckCreationPlacement(YES,YES); CheckCreationPlacement(NO,YES);
