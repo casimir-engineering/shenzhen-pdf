@@ -165,7 +165,7 @@ static NSString* DateLabel(NSDictionary* version) {
     [self updateDetails]; [menu removeAllItems]; menu.autoenablesItems = NO;
     for (NSButton* command in self.selectionButtons) {
         NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:command.title action:command.action keyEquivalent:@""];
-        item.target = self; item.enabled = command.enabled; [menu addItem:item];
+        item.target = self; item.enabled = command.enabled; item.toolTip = command.toolTip; [menu addItem:item];
     }
 }
 - (void)historyForRow:(NSControl*)sender {

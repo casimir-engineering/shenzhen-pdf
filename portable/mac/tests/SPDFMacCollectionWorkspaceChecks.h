@@ -30,7 +30,7 @@ static void CheckCollectionPDFWorkspace(SPDFMacCollectionWindow* manager, SPDFMa
     [CollectionWorkspacePDF() writeToFile:path atomically:YES];
     NSDictionary* document = [store capturePath:path reason:@"Opened" error:nil];
     Expect(@"workspace PDF fixture captures a latest version",[document[@"latestVersionID"] length]>0);
-    [manager showDestination:@"Documents"]; [manager.layoutPicker selectItemAtIndex:0]; [manager.viewPicker selectItemWithTag:0];
+    [manager showDestination:@"Documents"]; [manager.viewPicker selectItemWithTag:0];
     manager.search.stringValue = @"power";
     NSArray* previous = manager.rows; [manager reload:nil];
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:3];
