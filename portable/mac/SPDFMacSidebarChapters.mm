@@ -3,6 +3,8 @@
 
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarOutline.h"
+#import "SPDFMacCollectionStyle.h"
+#import "SPDFMacMarkdownSidebarModel.h"
 
 // Chapter nesting, end to end.
 //
@@ -170,6 +172,7 @@ static NSString* const kSPDFCollapsedChaptersKey = @"collapsedChapters";
 // without a bespoke NSTableCellView subclass.
 static const NSInteger kSPDFTriangleTag = 8800;
 static const NSInteger kSPDFOutlineToggleTag = 8801;
+static const NSInteger kSPDFChapterPageTag = 8802;
 static NSString* const kSPDFIndentConstraintID = @"SPDFChapterIndent";
 static NSString* const kSPDFFilterTrailingConstraintID = @"SPDFSidebarFilterTrailing";
 
@@ -216,16 +219,26 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
     cell.textField = field;
     [cell addSubview:field];
 
+    NSTextField* page = [NSTextField labelWithString:@""];
+    page.tag = kSPDFChapterPageTag; page.translatesAutoresizingMaskIntoConstraints = NO;
+    page.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+    page.textColor = SPDFCollectionColor(@"secondary"); page.alignment = NSTextAlignmentRight;
+    [page setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [page setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [cell addSubview:page];
+
     // The triangle's leading is the indent: it moves with the heading's depth
     // and the text follows it, so a nested chapter lines up under its parent's
     // title rather than under the parent's triangle.
-    NSLayoutConstraint* indent = [triangle.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:6];
+    NSLayoutConstraint* indent = [triangle.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:2];
     indent.identifier = kSPDFIndentConstraintID;
     [NSLayoutConstraint activateConstraints:@[
         indent,
         [triangle.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [field.leadingAnchor constraintEqualToAnchor:triangle.trailingAnchor constant:2],
-        [field.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-6],
+        [field.trailingAnchor constraintEqualToAnchor:page.leadingAnchor constant:-8],
+        [page.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-16],
+        [page.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [field.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
     ]];
     return cell;
@@ -250,11 +263,24 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
     triangle.image = SPDFChapterTriangleImage(collapsed);
     triangle.toolTip = collapsed ? @"Expand" : @"Collapse";
     triangle.tag = kSPDFTriangleTag;
-    SPDFIndentConstraint(cell).constant = 6 + level * kSPDFChapterIndentPerLevel;
+    SPDFIndentConstraint(cell).constant = 2 + level * kSPDFChapterIndentPerLevel;
 
     cell.textField.stringValue = title ?: @"";
-    cell.textField.font = [NSFont systemFontOfSize:13];
-    cell.textField.textColor = page >= 0 ? NSColor.labelColor : NSColor.secondaryLabelColor;
+    BOOL chapter = [item[@"kind"] isEqual:@"chapter"];
+    cell.textField.font = [NSFont systemFontOfSize:chapter ? 12 : 13 weight:NSFontWeightRegular];
+    cell.textField.textColor = SPDFCollectionColor(page >= 0 ? @"text" : @"secondary");
+    NSTextField* pageLabel = [cell viewWithTag:kSPDFChapterPageTag];
+    pageLabel.stringValue = chapter && page >= 0 ? [NSString stringWithFormat:@"%ld",(long)page+1] : @"";
+    pageLabel.accessibilityLabel = pageLabel.stringValue.length
+        ? [@"Page " stringByAppendingString:pageLabel.stringValue] : @"";
+    cell.toolTip = title;
+}
+
+- (NSString*)sidebarOutlineSummary {
+    NSUInteger count = [self isMarkdownActive] ? [self activeMarkdownSession].sidebarModel.chapterItems.count
+        : (NSUInteger)MAX(0,_outline.count);
+    return [NSString stringWithFormat:@"%@ · %lu %@",[self isMarkdownActive] ? @"Markdown headings" : @"PDF outline",
+        (unsigned long)count,count == 1 ? @"chapter" : @"chapters"];
 }
 
 #pragma mark - The expand / collapse all control
@@ -266,7 +292,7 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
 // state it would otherwise spell out is already visible in the rows.
 static const CGFloat kSPDFOutlineToggleWidth = 22.0;
 static const CGFloat kSPDFOutlineToggleGap = 4.0;
-static const CGFloat kSPDFSidebarEdgeInset = 8.0;
+static const CGFloat kSPDFSidebarEdgeInset = 12.0;
 
 static NSImage* SPDFOutlineToggleImage(BOOL collapses) {
     NSString* symbol = collapses ? @"arrow.down.right.and.arrow.up.left" : @"arrow.up.left.and.arrow.down.right";

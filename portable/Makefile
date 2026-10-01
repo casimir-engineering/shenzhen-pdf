@@ -694,3 +694,8 @@ mac-collection-companion-link-tests: $(MAC_COLLECTION_SRCS) $(YAML_OBJ) $(CORE_R
 mac-workspace-panel-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacWorkspacePanelTests.mm mac/SPDFMacWorkspacePanels.mm -framework Cocoa -o "$(BUILD)/SPDFMacWorkspacePanelTests"
 	"$(BUILD)/SPDFMacWorkspacePanelTests"
+
+.PHONY: mac-sidebar-presentation-tests
+mac-sidebar-presentation-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarPresentationTests.mm mac/SPDFMacSidebarPresentation.mm mac/SPDFMacCollectionStyle.mm -framework Cocoa -o "$(BUILD)/SPDFMacSidebarPresentationTests"
+	"$(BUILD)/SPDFMacSidebarPresentationTests"

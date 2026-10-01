@@ -6,4 +6,6 @@
 - (void)collectionSetVersionInfo:(NSDictionary*)info forTab:(SPDFDocumentTab*)tab;
 - (void)collectionRefreshVersionInfoForDocument:(NSDictionary*)document;
 - (void)collectionUpdateVersionIndicator;
+// Cached tab identity only; does not open the store or touch the filesystem.
+- (BOOL)collectionTabIsSavedVersion:(SPDFDocumentTab*)tab;
 @end
