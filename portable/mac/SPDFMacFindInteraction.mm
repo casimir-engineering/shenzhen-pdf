@@ -7,6 +7,7 @@
 static char previousPanelKey;
 @interface ShenzhenMacDelegate (FindInteractionHost)
 - (void)clearFindFieldFocus;
+- (void)findFromCurrentForward:(BOOL)forward;
 - (BOOL)hasActiveDocument;
 - (void)rebuildSidebar;
 - (void)startFindForCurrentQuery;
@@ -36,6 +37,19 @@ static char previousPanelKey;
         [self rebuildSidebar]; [self syncWorkspaceChrome]; [self rememberSidebarWorkspaceMode];
     }
     [self clearFindFieldFocus];
+}
+
+- (BOOL)documentFindReturnKeyDown:(NSEvent*)event {
+    if (event.keyCode != 36 && event.keyCode != 76) return NO;
+    if (![self hasActiveDocument] || _presentationMode || _window.attachedSheet ||
+        _sidebarModeControl.spdf_selectedSidebarMode != SPDFSidebarModeSearch || !_searchField.stringValue.length) return NO;
+    if (event.modifierFlags & (NSEventModifierFlagOption|NSEventModifierFlagControl)) return NO;
+    id responder=_window.firstResponder;
+    if (([responder isKindOfClass:NSText.class] || [responder isKindOfClass:NSTextField.class]) &&
+        responder != _searchField && responder != _searchField.currentEditor) return NO;
+    BOOL previous=(event.modifierFlags & (NSEventModifierFlagCommand|NSEventModifierFlagShift)) != 0;
+    if (_findMatches.count) [self findFromCurrentForward:!previous]; else [self startFindForCurrentQuery];
+    return YES;
 }
 
 - (BOOL)documentEscapeKeyDown:(NSEvent*)event {

@@ -207,8 +207,35 @@ static void CheckGroupManagement(void) {
     Expect(@"ungrouping before hidden General preserves its canonical settings",a.group==fresh.group &&
         b.group==fresh.group && fresh.group.hidden && fresh.group.explicitGeneral);
 }
+static void CheckOpeningOriginalFromBackups(void) {
+    GroupReaderProbe* reader = [GroupReaderProbe new];
+    SPDFDocumentTab* backup = Tab(@"/collection/copy.pdf");
+    backup.readOnly = YES; backup.group = SPDFTabGroup.collectionBackupsGroup;
+    [reader seed:@[backup] selected:0];
+    SPDFDocumentTab* original = Tab(@"/documents/original.pdf");
+    NSInteger inserted = [reader appendNewTabToActiveGroup:original];
+    Expect(@"opening an original from Backups creates General instead of mixing editable documents",
+        inserted == 1 && original.group.general && !original.readOnly && backup.group.collectionBackups);
+    original.group.hidden = YES;
+    SPDFDocumentTab* another = Tab(@"/documents/another.md");
+    [reader appendNewTabToActiveGroup:another];
+    Expect(@"original opens reuse and reveal existing General while Backups stays intact",
+        another.group == original.group && !original.group.hidden && reader.tabs.count == 3 &&
+        [spdf_tab_group_members(reader.tabs,backup.group) isEqual:@[backup]]);
+    [reader savePersistentState];
+    NSMutableArray* restoredTabs = [NSMutableArray array];
+    for (NSDictionary* saved in reader.savedTabs) [restoredTabs addObject:spdf_tab_from_dictionary(saved)];
+    spdf_tab_groups_normalize(restoredTabs);
+    GroupReaderProbe* restored = [GroupReaderProbe new]; [restored seed:restoredTabs selected:0];
+    SPDFDocumentTab* afterRestart = Tab(@"/documents/after-restart.txt");
+    [restored appendNewTabToActiveGroup:afterRestart];
+    Expect(@"reserved routing survives session restoration",afterRestart.group.general &&
+        [spdf_tab_group_members(restored.tabs,afterRestart.group) count] == 3 &&
+        ((SPDFDocumentTab*)restored.tabs[0]).group.collectionBackups);
+}
 int main(void) {
     @autoreleasepool {
+        CheckOpeningOriginalFromBackups();
         CheckFreshGeneral();
         CheckCollapsedGroupRestore();
         CheckGroupManagement();

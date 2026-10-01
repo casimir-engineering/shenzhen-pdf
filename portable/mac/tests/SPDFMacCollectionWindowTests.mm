@@ -16,6 +16,7 @@ static void Expect(NSString* label, BOOL value) {
 }
 #import "SPDFMacCollectionThumbnailChecks.h"
 #import "SPDFMacCollectionRetentionChecks.h"
+#import "SPDFMacCollectionOpenChecks.h"
 static void Layout(NSWindow* window, NSSize size) {
     [window setContentSize:size];
     [window.contentView layoutSubtreeIfNeeded];
@@ -196,6 +197,7 @@ int main(void) {
             NSString* resultKey = [NSString stringWithFormat:@"%@/%@",remembered[@"document"][@"id"],remembered[@"version"][@"id"]];
             [manager.expandedResults addObject:resultKey];
             [manager.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            CheckCollectionOpenTargets(manager,store);
             __block NSDictionary* navigation = nil;
             manager.navigateHandler = ^(NSDictionary* doc, NSDictionary* version, NSUInteger page, NSString* query, BOOL history) {
                 navigation = @{@"document":doc,@"version":version ?: @{},@"page":@(page),@"query":query,@"history":@(history)};
@@ -269,8 +271,8 @@ int main(void) {
                 [latestOnly.rows.firstObject[@"version"][@"id"] isEqual:newer[@"latestVersionID"]]);
             [latestOnly.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
             CheckCollectionRetentionMenu(latestOnly);
-            [latestOnly preview:nil];
-            Expect(@"opening latest Collection document uses the editable original",
+            [latestOnly openOriginal:nil];
+            Expect(@"Open Original uses the editable original",
                 [openedPath isEqual:indexedPath] && !openedArchive);
             NSString* displaced = [indexedPath stringByAppendingString:@".moved"];
             [NSFileManager.defaultManager moveItemAtPath:indexedPath toPath:displaced error:nil];

@@ -47,6 +47,24 @@ int main(void) {
             Expect(@"ungrouped codec omits the optional metadata", !spdf_dictionary_from_tab(restored, 0)[@"group"]);
         }
         Expect(@"ordinary tabs allocate zero group objects through normalize/save/restore", groupAllocations == 0);
+        SPDFDocumentTab* source = Tab(@"/original.md"), *saved = Tab(@"/archive/v1.md");
+        saved.readOnly = YES;
+        NSMutableArray* backupTabs = [@[source,saved] mutableCopy];
+        spdf_tab_group_collection_copy(backupTabs,saved);
+        Expect(@"opening a copy creates the special group while originals stay in General",
+            saved.group.collectionBackups && [saved.group.displayName isEqual:@"Collection Backups"] && source.group.general);
+        SPDFDocumentTab* nextCopy = Tab(@"/archive/v2.md"); nextCopy.readOnly = YES;
+        [backupTabs addObject:nextCopy];
+        spdf_tab_group_collection_copy(backupTabs,nextCopy);
+        Expect(@"more copies reuse one group",saved.group == nextCopy.group);
+        saved.group.hidden = YES; saved.group.collapsed = YES;
+        NSArray* restoredCopies = RoundTrip(backupTabs);
+        SPDFDocumentTab* restoredSaved = restoredCopies[1];
+        Expect(@"backup identity name visibility order and read-only survive session persistence",
+            restoredSaved.group.collectionBackups && restoredSaved.group.hidden && restoredSaved.group.collapsed &&
+            restoredSaved.readOnly && [restoredSaved.path isEqual:saved.path] &&
+            [restoredSaved.group.displayName isEqual:@"Collection Backups"] &&
+            restoredSaved.group == ((SPDFDocumentTab*)restoredCopies[2]).group);
         SPDFTabGroup* purple = [SPDFTabGroup groupWithColor:@"Purple"];
         purple.name = @"Research";
         purple.lastUsedPath = @"/c.md";

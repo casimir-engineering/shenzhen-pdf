@@ -33,8 +33,8 @@
             current.firstIndex = i;
             current.tabRects = [NSMutableDictionary dictionary];
             current.members = [NSMutableArray array];
-            CGFloat labelWidth = MIN(100.0, ceil([tab.group.displayName sizeWithAttributes:
-                @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + 14);
+            CGFloat labelWidth = MIN(tab.group.collectionBackups ? 172.0 : 100.0, ceil([tab.group.displayName sizeWithAttributes:
+                @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + (tab.group.collectionBackups ? 34 : 14));
             current.header = NSMakeRect(0, floor((NSHeight(self.bounds)-20)/2), labelWidth, 20);
             [groups addObject:current];
         }
@@ -162,9 +162,15 @@
             NSString* remaining = [NSString stringWithFormat:@"+%lu",(unsigned long)(layout.members.count-layout.capacity)];
             [remaining drawInRect:NSInsetRect(layout.overflowFrame,0,4) withAttributes:attributes];
         }
+        CGFloat iconSpace=layout.group.collectionBackups ? 20 : 0;
+        if (iconSpace) {
+            NSImage* icon=[NSImage imageWithSystemSymbolName:@"books.vertical" accessibilityDescription:nil];
+            icon=[icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
+            [icon drawInRect:NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12)];
+        }
         CGFloat height = [layout.group.displayName sizeWithAttributes:attributes].height;
-        [layout.group.displayName drawInRect:NSMakeRect(NSMinX(layout.header)+7,
-            NSMidY(layout.header)-height/2, NSWidth(layout.header)-14, height) withAttributes:attributes];
+        [layout.group.displayName drawInRect:NSMakeRect(NSMinX(layout.header)+7+iconSpace,
+            NSMidY(layout.header)-height/2, NSWidth(layout.header)-14-iconSpace, height) withAttributes:attributes];
     }
 }
 - (void)drawGroupDropPreview {

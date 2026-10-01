@@ -31,7 +31,7 @@
         [[NSColor.labelColor colorWithAlphaComponent:0.07] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:5 yRadius:5] fill];
     }
-    NSImage* icon = [NSImage imageWithSystemSymbolName:self.group ? @"square.3.layers.3d" : @"slider.horizontal.3"
+    NSImage* icon = [NSImage imageWithSystemSymbolName:self.group.collectionBackups ? @"books.vertical" : self.group ? @"square.3.layers.3d" : @"slider.horizontal.3"
                             accessibilityDescription:nil];
     NSColor* color = self.group ? spdf_tab_group_accent(self.group.colorName) : NSColor.secondaryLabelColor;
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];

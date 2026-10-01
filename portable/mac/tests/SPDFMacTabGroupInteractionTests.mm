@@ -323,8 +323,9 @@ int main(void) {
                @"collapsed custom-group name did not open the group");
         NSPoint chevronPoint = NSMakePoint(NSMinX(blueHeader) + 13, NSMidY(blueHeader));
         [strip handleGroupMouseDown:mouse(window, NSEventTypeLeftMouseDown, chevronPoint)];
-        [strip handleGroupMouseUp:mouse(window, NSEventTypeLeftMouseUp, chevronPoint)];
-        expect(reader.toggles == 2, @"group chevron did not toggle collapse");
+        [strip handleGroupMouseUp:[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:chevronPoint modifierFlags:0
+            timestamp:0 windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:2 pressure:1]];
+        expect(reader.toggles == 2, @"rapid second click must toggle immediately, not be suppressed as a double click");
 
         // General uses the same activation behavior; rename stays in its menu.
         general.collapsed = YES;

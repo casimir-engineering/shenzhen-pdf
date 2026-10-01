@@ -14,7 +14,7 @@
 // first rendered to a PDF — the same rendition Save as PDF writes — and that
 // PDF is what gets translated. It is therefore available on both kinds of tab.
 typedef struct {
-    bool markdownActive;             // the active tab is a Markdown document
+    bool markdownActive;             // rendered text session: Markdown, plain text, or source code
     bool pdfDocumentOpen;            // a mupdf document is loaded (PDF/XPS/EPUB/CBZ path)
     bool hasSelection;               // trimmed selected text is non-empty
     bool translationRunning;         // a translation job is in flight
@@ -24,9 +24,8 @@ typedef struct {
 // The Translate toolbar button and its overflow-menu twin. A PDF tab behaves
 // exactly as before — enabled whenever a document is open and no translation
 // job is running, with a copy-locked PDF explained on click rather than greyed
-// out. A Markdown tab is enabled only while a selection exists, since there is
-// nothing else Translate could do there. The File-menu item additionally
-// requires a selection, which is unchanged.
+// out. Rendered text tabs also offer whole-document translation through a PDF
+// rendition. Selection-only entry points require selected text.
 bool spdf_translation_command_enabled(spdf_translation_context context);
 
 // The selection-translation panel (toolbar with a selection, context menu,

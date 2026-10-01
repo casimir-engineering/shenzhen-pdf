@@ -13,8 +13,10 @@
 // General created explicitly in Group Management survives without custom groups.
 @property(nonatomic) BOOL explicitGeneral;
 @property(nonatomic, readonly) BOOL general;
+@property(nonatomic, readonly) BOOL collectionBackups;
 @property(nonatomic, readonly) NSString* displayName;
 + (instancetype)generalGroup;
++ (instancetype)collectionBackupsGroup;
 + (instancetype)groupWithColor:(NSString*)color;
 - (NSDictionary*)dictionary;
 + (instancetype)fromDictionary:(id)value;
@@ -48,3 +50,6 @@ NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tab
 - (void)insertDraggedGroup:(NSArray<NSDictionary*>*)tabs atIndex:(NSInteger)index;
 - (void)detachTabGroup:(SPDFTabGroup*)group atScreenPoint:(NSPoint)point;
 @end
+
+// Called only for an opened archive; ordinary documents create no special group.
+void spdf_tab_group_collection_copy(NSMutableArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* tab);

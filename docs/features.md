@@ -177,8 +177,8 @@ does not re-trigger the macOS access prompt.
   clears Find and restores the preceding panel and its visibility, including in fullscreen.
 - **Live match count** — a running "current / total" as you type, with every
   match highlighted in the page.
-- **Find next / previous** (<kbd>Enter</kbd> / <kbd>Shift+Enter</kbd>,
-  <kbd>Cmd+G</kbd> / <kbd>Cmd+Shift+G</kbd>).
+- **Find next / previous** (<kbd>Enter</kbd> / <kbd>Cmd+Enter</kbd>).
+  <kbd>Shift+Enter</kbd> remains an alternate previous-result shortcut.
 - **Regular expressions**, including **multiline** patterns that span line and
   paragraph breaks. An invalid pattern fails gracefully instead of clearing your
   results.
@@ -343,6 +343,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 - **Make a scanned PDF searchable** with OCRmyPDF + Tesseract, entirely on your
   machine. Nothing is uploaded.
+- **Images to searchable PDFs (macOS)** — run OCR on any image format the reader opens,
+  including multipage TIFF. A separate PDF is created; the source image stays unchanged.
 - **Language choice up front** — Simplified or Traditional Chinese alone or with
   English, plus ~20 more; missing language data is fetched on demand.
 - **One job per core**, deskews scans, backs up the original, and swaps in only
@@ -358,8 +360,9 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 - **Argos Translate**, running locally across ~19 languages including Chinese.
   Text never leaves the machine.
-- **Translate a selection** into a panel, or **a whole document** — a PDF, or
-  a Markdown document, which is rendered to a PDF beside it and translated.
+- **Translate a selection** into a panel, or **a whole document**. On macOS this
+  includes Markdown, plain text, source code, EPUB and other readable text documents.
+  Non-PDF documents are rendered to a separate PDF before translation; the source stays unchanged.
 - **Whole-document mode writes a real PDF** (`<name>_<lang>.pdf`) with the
   translated text overlaid at each source line's position, and opens it when it
   finishes.
@@ -449,7 +452,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 | Start searching from the document | Type anywhere |
 | Find in current document | <kbd>Cmd+F</kbd> |
 | Next / previous result | <kbd>Enter</kbd> / <kbd>Shift+Enter</kbd> |
-| Find next / previous | <kbd>Cmd+G</kbd> / <kbd>Cmd+Shift+G</kbd> |
+| Groups panel | <kbd>Cmd+G</kbd> |
+| Find next / previous | <kbd>Enter</kbd> / <kbd>Cmd+Enter</kbd> |
 
 ### Favorites
 

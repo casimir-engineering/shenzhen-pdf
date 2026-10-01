@@ -374,15 +374,16 @@ static void CheckUpdaterMenu(WorkspaceReaderProbe* reader) {
     method_setImplementation(method,original);
     Check(updaterInvoked,@"native menu route requests a user-initiated update check");
 }
-static NSUInteger historyShortcutCalls, previousShortcutCalls;
+static NSUInteger historyShortcutCalls, previousShortcutCalls, groupsShortcutCalls;
 static void NavigationShortcutSpy(id object,SEL action,id sender) {
     (void)object; (void)sender;
     if (action==NSSelectorFromString(@"showCollectionHistory:")) historyShortcutCalls++;
+    else if (action==NSSelectorFromString(@"showGroupsSidebar:")) groupsShortcutCalls++;
     else previousShortcutCalls++;
 }
 static void CheckNavigationShortcuts(WorkspaceReaderProbe* reader) {
-    for (NSString* key in @[@"h",@"d"]) {
-        NSString* actionName=[key isEqual:@"h"] ? @"showCollectionHistory:" : @"returnToPreviousTab:";
+    for (NSString* key in @[@"h",@"d",@"g"]) {
+        NSString* actionName=[key isEqual:@"h"] ? @"showCollectionHistory:" : [key isEqual:@"g"] ? @"showGroupsSidebar:" : @"returnToPreviousTab:";
         NSMenuItem* found=nil; NSUInteger count=0;
         for (NSMenuItem* top in NSApp.mainMenu.itemArray) for (NSMenuItem* item in top.submenu.itemArray)
             if ([item.keyEquivalent isEqual:key] && item.keyEquivalentModifierMask==NSEventModifierFlagCommand) { found=item; count++; }
@@ -396,7 +397,7 @@ static void CheckNavigationShortcuts(WorkspaceReaderProbe* reader) {
         Check([found.menu performKeyEquivalent:event],@"AppKit dispatches the requested navigation key");
         found.menu.autoenablesItems=autoenable; method_setImplementation(method,original);
     }
-    Check(historyShortcutCalls>0 && previousShortcutCalls>0,@"History and Previous Document commands were dispatched");
+    Check(historyShortcutCalls>0 && previousShortcutCalls>0 && groupsShortcutCalls>0,@"History and Previous Document commands were dispatched");
 }
 static NSURL* Fixture(NSString* root) {
     NSURL* URL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Interface specification.pdf"]];

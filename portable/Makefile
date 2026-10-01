@@ -455,7 +455,7 @@ $(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
 mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
 	"$(MAC_STATE_YAML_TEST)"
 
-$(MAC_BIN): $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) $(MAC_COLLECTION_SRCS) mac/companion/main.mm mac/companion/sources.mk mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_BIN): core/spdf_document_export.h $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) $(MAC_COLLECTION_SRCS) mac/companion/main.mm mac/companion/sources.mk mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
@@ -678,12 +678,12 @@ mac-sidebar-navigation-tests: | $(BUILD)
 
 .PHONY: mac-group-management-tests
 mac-group-management-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacGroupManagementTests.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacTabGroups.mm -framework Cocoa -o "$(BUILD)/SPDFMacGroupManagementTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacGroupManagementTests.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacTabGroups.mm -framework Cocoa -o "$(BUILD)/SPDFMacGroupManagementTests"
 	"$(BUILD)/SPDFMacGroupManagementTests"
 
 .PHONY: mac-sidebar-workspace-tests
 mac-sidebar-workspace-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(YAML_OBJ) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSidebarWorkspaceTests.mm mac/SPDFMacSidebarWorkspace.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(YAML_OBJ)" "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacSidebarWorkspaceTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacSidebarWorkspaceTests.mm mac/SPDFMacSidebarWorkspace.mm mac/SPDFMacGroupManagement.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(YAML_OBJ)" "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacSidebarWorkspaceTests"
 	"$(BUILD)/SPDFMacSidebarWorkspaceTests"
 
 .PHONY: mac-tab-group-performance
@@ -747,3 +747,14 @@ mac-properties-model-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERT
 mac-group-name-prompt-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacGroupNamePromptTests.mm mac/SPDFMacTabGroupNamePrompt.mm -framework Cocoa -o "$(BUILD)/SPDFMacGroupNamePromptTests"
 	"$(BUILD)/SPDFMacGroupNamePromptTests"
+
+.PHONY: mac-document-tool-input-tests
+mac-document-tool-input-tests: core/spdf_document_export.h mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ) | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacDocumentToolInputTests.mm mac/SPDFMacDocumentToolInput.mm mac/SPDFMacTranslationPolicy.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework ImageIO -framework PDFKit -lm -o "$(BUILD)/SPDFMacDocumentToolInputTests"
+	@fixture_dir=$$(mktemp -d); trap 'rm -rf "$$fixture_dir"' EXIT; \
+	python3 mac/tests/make-format-fixtures.py "$$fixture_dir" && "$(BUILD)/SPDFMacDocumentToolInputTests" "$$fixture_dir" "$(abspath ..)"
+
+.PHONY: mac-shortcut-help-tests
+mac-shortcut-help-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-protocol -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacShortcutHelpTests.mm mac/ShenzhenMacDelegate+ShortcutHelp.mm mac/SPDFMacShortcutHelpStyle.mm mac/SPDFKeycapLabel.mm -framework Cocoa -o "$(BUILD)/SPDFMacShortcutHelpTests"
+	"$(BUILD)/SPDFMacShortcutHelpTests"
