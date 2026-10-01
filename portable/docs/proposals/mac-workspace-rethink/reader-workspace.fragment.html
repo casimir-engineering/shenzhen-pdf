@@ -6,13 +6,13 @@
       <button class="sz-command" data-action="command" aria-label="Find documents, groups and text" data-tooltip="Find documents, groups and text · ⌘K"><i data-lucide="search" aria-hidden="true"></i><kbd>⌘K</kbd></button>
     </header>
     <div class="sz-shell">
-      <nav class="sz-rail" aria-label="Workspace and document panels"></nav>
       <div class="sz-main">
         <div class="sz-readingbar">
           <button class="sz-panel-toggle" data-action="panel" aria-label="Show or hide current panel"><i data-lucide="panel-left" aria-hidden="true"></i><span class="sz-mode-label">Chapters</span></button>
           <div class="sz-page-controls"><button data-action="previous" aria-label="Previous page"><i data-lucide="chevron-left" aria-hidden="true"></i></button><label><input class="sz-page-number" type="number" min="1" max="20" value="1" aria-label="Page number"> / 20</label><button data-action="next" aria-label="Next page"><i data-lucide="chevron-right" aria-hidden="true"></i></button></div>
           <select class="sz-zoom" aria-label="Document zoom"><option>Fit width</option><option>Fit page</option><option>100%</option><option>125%</option></select>
           <span class="sz-toolbar-space"></span><div class="sz-revision-controls" hidden><button class="sz-version-state" data-action="version-info" hidden></button><button class="sz-return-latest" data-action="return-latest" hidden>Return to Latest</button></div>
+          <button data-action="collection" class="sz-collection-trigger" aria-label="Open Collection" data-tooltip="Collection"><i data-lucide="library" aria-hidden="true"></i><span>Collection</span></button>
           <button data-action="tools" class="sz-tools-trigger" aria-label="Document tools"><i data-lucide="sliders-horizontal" aria-hidden="true"></i><span>Tools</span><i data-lucide="chevron-down" aria-hidden="true"></i></button>
         </div>
         <div class="sz-content">
@@ -23,6 +23,7 @@
         <footer class="sz-status"><span class="sz-source">Original file · changes protected by Collection</span><span class="sz-footer-page">Page 1 of 20</span></footer>
       </div>
     </div>
+    <div class="sz-group-picker" aria-label="Document groups" hidden></div>
     <div class="sz-overlay" hidden></div>
     <div class="sz-announcement" role="status" aria-live="polite"></div>
   </div>
@@ -121,6 +122,38 @@
 @container sz-reader (max-width:650px){#sz-workspace .sz-titlebar{grid-template-columns:64px minmax(0,1fr) 32px;padding:0 8px}}
 @container sz-reader (max-width:500px){#sz-workspace .sz-browser-group.is-expanded:not(.is-current-group){display:none}#sz-workspace .sz-group-label{max-width:70px;overflow:hidden;text-overflow:ellipsis}#sz-workspace .sz-new-tab{display:none}#sz-workspace .sz-tab-drag-space{display:none}#sz-workspace .sz-tabs{gap:4px}}
 @container sz-reader (max-width:420px){#sz-workspace .sz-titlebar{grid-template-columns:52px minmax(0,1fr) 28px;padding:0 6px}#sz-workspace .sz-lights{gap:5px;padding:0}#sz-workspace .sz-browser-group.is-expanded .sz-group-label{margin-right:2px}#sz-workspace .sz-group-label{max-width:60px;padding:2px 5px}#sz-workspace .sz-browser-tab .sz-tab{padding-left:26px;padding-right:26px}}
+/* One sidebar: a labeled native view picker replaces the permanent task rail. */
+#sz-workspace .sz-shell{--sz-rail-width:0px;--sz-pane-width:240px}
+#sz-workspace .sz-rail{display:none}
+#sz-workspace .sz-pane-head{padding:0 8px 0 12px;gap:8px}
+#sz-workspace .sz-view-picker{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+#sz-workspace .sz-view-picker select{font-size:13px;font-weight:500;height:28px;min-width:0;width:100%;border:0;border-radius:5px;background:transparent;color:var(--sz-text);padding:2px 4px}
+#sz-workspace .sz-view-picker select:hover{background:var(--sz-hover)}
+#sz-workspace .sz-view-picker option,#sz-workspace .sz-view-picker optgroup{background:var(--sz-surface);color:var(--sz-text)}
+#sz-workspace .sz-shell:has(.sz-pane:not([hidden])) .sz-readingbar .sz-panel-toggle{display:none}
+#sz-workspace .sz-readingbar .sz-panel-toggle{display:flex;justify-content:center;width:28px;height:28px;min-height:28px;padding:6px;border:0;border-radius:5px}
+#sz-workspace .sz-panel-toggle .sz-mode-label{display:none}
+#sz-workspace .sz-readingbar .sz-collection-trigger{padding:6px;gap:6px;font-size:12px}
+#sz-workspace .sz-list button.sz-row{height:32px;min-height:32px}
+#sz-workspace .sz-pane-subtitle{padding:10px 12px 8px;line-height:16px}
+#sz-workspace .sz-pane-filter{height:30px;min-height:30px;margin:0 10px 8px}
+#sz-workspace .sz-list{padding:0 6px 10px}
+#sz-workspace .sz-browser-group.is-expanded{flex:1;max-width:var(--group-width,none)}
+#sz-workspace .sz-browser-tab{flex:1 1 144px;width:144px;max-width:220px}
+#sz-workspace .sz-browser-tab:not(.selected) .sz-tab{padding-left:12px;padding-right:12px}
+#sz-workspace .sz-browser-tab:not(.selected):is(:hover,:focus-within) .sz-tab{padding-left:28px;padding-right:28px}
+#sz-workspace .sz-tabs{gap:8px}
+#sz-workspace .sz-tab-drag-space{flex:1;min-width:12px}
+#sz-workspace .sz-tab-more{width:32px}
+#sz-workspace .sz-tabs.is-crowded .sz-browser-group.is-collapsed{display:none}
+#sz-workspace .sz-group-picker{position:absolute;top:42px;right:44px;z-index:12;width:236px;padding:6px;background:var(--sz-surface);border:1px solid var(--sz-line);border-radius:8px;box-shadow:0 6px 24px #00000028}
+#sz-workspace .sz-group-picker button{display:flex;width:100%;min-height:32px;font-size:12px;gap:8px}
+#sz-workspace .sz-group-picker button small{margin-left:auto;color:var(--sz-muted);font-size:12px}
+#sz-workspace .sz-group-picker button[aria-pressed=true]{background:var(--sz-active)}
+#sz-workspace .sz-group-picker hr{border:0;border-top:1px solid var(--sz-line);margin:5px 2px}
+@container sz-reader (max-width:900px){#sz-workspace .sz-readingbar .sz-collection-trigger span{display:none}}
+@container sz-reader (max-width:650px){#sz-workspace .sz-shell{--sz-pane-width:0px}#sz-workspace .sz-pane{width:240px}#sz-workspace .sz-readingbar .sz-collection-trigger{width:28px;height:28px;min-height:28px;padding:6px}}
+@container sz-reader (max-width:500px){#sz-workspace .sz-browser-group.is-expanded:not(.is-current-group){display:flex}#sz-workspace .sz-group-picker{right:12px;max-width:calc(100% - 24px)}}
 </style>
 <script>
 (() => {
@@ -135,21 +168,25 @@
   state.closedTabs=state.closedTabs||[];state.tabExpanded=state.tabExpanded||[docs[state.doc]?.group||'Hardware'];
   const openDocs=()=>docs.map((d,i)=>({...d,i})).filter(d=>!state.closedTabs.includes(d.i));
   function visibleTabCounts(){
-    const width=root.clientWidth,strip=q('.sz-tabs').clientWidth,current=docs[state.doc]?.group;
-    const visible=groupData.filter(([name])=>!state.hidden.includes(name)&&openDocs().some(d=>d.group===name))
-      .filter(([name])=>width>780||state.tabExpanded.includes(name)||name===current)
-      .filter(([name])=>width>500||name===current);
-    const expanded=visible.filter(([name])=>state.tabExpanded.includes(name));
-    const counts=new Map(expanded.map(([name])=>[name,1]));
-    // Reserve the group labels, group gutters, utility buttons and window-drag area.
-    const labels=visible.reduce((sum,[name])=>sum+Math.min(100,name.length*7+14)+12,0);
-    let spare=Math.floor((strip-labels-(width>500?120:32)-expanded.length*32)/156)-expanded.length;
-    const priority=[...expanded].sort((a,b)=>(a[0]===current?-1:b[0]===current?1:a[0]==='General'?1:b[0]==='General'?-1:0));
-    while(spare>0){let used=false;for(const [name] of priority){if(spare<=0)break;const total=openDocs().filter(d=>d.group===name).length;if(counts.get(name)<total){counts.set(name,counts.get(name)+1);spare--;used=true;}}if(!used)break;}
-    return counts;
+    const available=q('.sz-tabs').clientWidth;
+    const open=openDocs(),expanded=state.tabExpanded.at(-1),members=open.filter(d=>d.group===expanded);
+    const labels=groupData.filter(([name])=>name!==expanded&&!state.hidden.includes(name)&&open.some(d=>d.group===name));
+    const labelWidth=Math.min(100,(expanded||'').length*7+14)+12;
+    const utilities=root.clientWidth>500?96:44;
+    const otherLabels=labels.reduce((sum,[name])=>sum+Math.min(100,name.length*7+14)+8,0);
+    const fullWidth=labelWidth+members.length*220+Math.max(0,members.length-1)*4;
+    const crowded=fullWidth+otherLabels+utilities>available;
+    q('.sz-tabs').classList.toggle('is-crowded',crowded);
+    // Other group labels yield first. Then retain at least 140px per visible
+    // document, except when the window can only accommodate one smaller tab.
+    const budget=available-labelWidth-utilities-(crowded?0:otherLabels);
+    let count=Math.max(1,Math.floor((budget+4)/144));
+    if(count<members.length)count=Math.max(1,Math.floor((budget-36+4)/144));
+    return new Map([[expanded,Math.min(members.length,count)]]);
   }
   if(state.archiveOpened)docs.push({title:'Bench measurements.pdf',group:'General',format:'pdf'});
-  const design={layout:state.layout,condition:'Linked original',height:594}; let timer;
+  state.layout='single';state.tabExpanded=state.tabExpanded.slice(-1);
+  const design={condition:'Linked original',height:594}; let timer;
   function remember(){state.memories[state.doc]={page:state.page,query:state.query,regex:state.regex||false,filter:state.filter,version:state.version,kept:[...state.kept],zoom:state.zoom,missing:state.missing,canvasScroll:q('.sz-canvas')?.scrollTop||0};}
   function persist(){remember();window.openai?.setWidgetState({modelContent:{layout:state.layout,mode:state.mode,doc:state.doc,page:state.page,version:state.version,pane:state.pane,missing:state.missing},privateContent:state}).catch(()=>{});}
   function symbols(){if(window.lucide)lucide.createIcons({attrs:{width:16,height:16}});}
@@ -164,15 +201,14 @@
     const focused=document.activeElement,focusAttr=focused?.getAttributeNames?.().find(a=>a.startsWith('data-'));
     const focusValue=focusAttr?focused.getAttribute(focusAttr):null;
     q('.sz-shell').style.height=design.height+'px';
-    root.classList.toggle('sz-compact',state.layout==='chooser'||design.height<370);
+
     groupData.forEach(g=>g[1]=openDocs().filter(d=>d.group===g[0]).length);
-    q('.sz-rail').innerHTML=`<label>Workspace</label>${navButton('groups','panels-top-left','Groups')}<button data-action="collection">${icon('library')}Collection</button><label class="sz-doc-section">Document</label>${modes().map(x=>navButton(...x)).join('')}<button class="sz-rail-bottom" data-action="panel">${icon(state.pane?'panel-left-close':'panel-left-open')}${state.pane?'Hide pane':'Show pane'}</button>`;
     const d=docs[state.doc];
     const tabCounts=visibleTabCounts();
     q('.sz-tabs').innerHTML=groupData.filter(g=>g[1]&&!state.hidden.includes(g[0])).map(([name,count])=>{
       const expanded=state.tabExpanded.includes(name),members=openDocs().filter(v=>v.group===name),selected=members.find(v=>v.i===state.doc),limit=tabCounts.get(name)||1,shown=selected?[selected,...members.filter(v=>v.i!==state.doc).slice(0,limit-1)].sort((a,b)=>a.i-b.i):members.slice(0,limit);
-      return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
-    }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-mode="groups" aria-label="Show all ${openDocs().length} open documents" data-tooltip="All open documents">${icon('chevron-down')}</button>`;
+      return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}" style="--group-width:${84+shown.length*224+(count>shown.length?36:0)}px"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}" data-tooltip="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
+    }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-action="group-picker" aria-label="Switch groups" aria-expanded="false" data-tooltip="Switch groups">${icon('panels-top-left')}</button>`;
     q('.sz-mode-label').textContent=state.mode==='groups'?'Groups':modes().find(x=>x[0]===state.mode)?.[2]||'Chapters';
     q('.sz-page-number').value=state.page;q('.sz-zoom').value=state.zoom;
     q('.sz-revision-controls').hidden=state.version==='latest'&&!state.missing;q('.sz-version-state').hidden=state.version==='latest'&&!state.missing;q('.sz-return-latest').hidden=state.version==='latest';
@@ -184,7 +220,7 @@
     renderDocument();symbols();if(q('.sz-list')){q('.sz-list').dataset.owner=paneOwner;q('.sz-list').scrollTop=state.paneScrolls[paneOwner]||0;}
     if(focusAttr)root.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus();
   }
-  function head(name,subtitle){return `<div class="sz-pane-head"><strong>${name}</strong><button data-action="close-pane" aria-label="Close ${name} panel">${icon('x')}</button></div><div class="sz-pane-subtitle">${esc(subtitle)}</div>`;}
+  function head(name,subtitle){const items=[['groups','panels-top-left','Groups'],...modes()],current=items.find(x=>x[0]===state.mode);return `<div class="sz-pane-head"><label class="sz-view-picker">${icon(current[1])}<select aria-label="Sidebar view" data-sidebar-mode><optgroup label="Document">${modes().map(([id,i,label])=>`<option value="${id}" ${state.mode===id?'selected':''}>${label}</option>`).join('')}</optgroup><optgroup label="Workspace"><option value="groups" ${state.mode==='groups'?'selected':''}>Groups</option></optgroup></select></label><button data-action="close-pane" aria-label="Close ${name} panel">${icon('panel-left-close')}</button></div><div class="sz-pane-subtitle">${esc(subtitle)}</div>`;}
   function filter(placeholder,value,kind){return `<label class="sz-pane-filter">${icon('search')}<input aria-label="${placeholder}" data-input="${kind}" placeholder="${placeholder}" value="${esc(value)}"></label>`;}
   function panel(){
     if(state.mode==='groups')return head('Groups',`${openDocs().length} open documents · ${groupData.filter(g=>g[1]).length} groups`)+filter('Search group names',state.groupQuery,'groups')+`<div class="sz-list">${groupList()}</div><div class="sz-pane-foot">${state.hidden.length} hidden · documents stay open</div>`;
@@ -217,10 +253,12 @@
   function setDoc(i){remember();state.closedTabs=state.closedTabs.filter(x=>x!==i);state.tabExpanded=[docs[i].group];state.doc=i;Object.assign(state,{version:'latest',compare:false,page:1,filter:'',query:'',regex:false,kept:[],zoom:'Fit width',missing:false,canvasScroll:0},state.memories[i]||{});state.hidden=state.hidden.filter(x=>x!==docs[i].group);if(state.mode==='comments'&&docs[i].format==='md')state.mode='chapters';closeOverlay();render();q('.sz-canvas').scrollTop=state.canvasScroll||0;persist();}
   function selectVersion(version){state.revisionLocations[state.doc+':'+state.version]={page:state.page,scroll:q('.sz-canvas').scrollTop};state.version=version;state.compare=false;const point=state.revisionLocations[state.doc+':'+version]||{page:state.page,scroll:0};state.page=point.page;render();q('.sz-canvas').scrollTop=point.scroll;persist();}
   root.addEventListener('click',e=>{
+    if(!e.target.closest('.sz-group-picker,[data-action=group-picker]')){q('.sz-group-picker').hidden=true;q('.sz-tab-more')?.setAttribute('aria-expanded','false');}
     const b=e.target.closest('button');if(!b)return;
-    if(b.dataset.mode){state.mode=b.dataset.mode;state.pane=true;state.filter='';closeOverlay();render();persist();return;}
+    if(b.dataset.mode){q('.sz-group-picker').hidden=true;state.mode=b.dataset.mode;state.pane=true;state.filter='';closeOverlay();render();persist();return;}
     if(b.dataset.doc!==undefined){setDoc(Number(b.dataset.doc));return;}
-    if(b.dataset.tabGroup){const g=b.dataset.tabGroup;state.tabExpanded=state.tabExpanded.includes(g)?state.tabExpanded.filter(x=>x!==g):[...state.tabExpanded,g];render();persist();return;}
+    if(b.dataset.browseGroup){state.tabExpanded=[b.dataset.browseGroup];state.hidden=state.hidden.filter(g=>g!==b.dataset.browseGroup);q('.sz-group-picker').hidden=true;render();persist();return;}
+    if(b.dataset.tabGroup){const g=b.dataset.tabGroup;state.tabExpanded=state.tabExpanded.includes(g)?[]:[g];render();persist();return;}
     if(b.dataset.closeTab!==undefined){const i=Number(b.dataset.closeTab),remaining=openDocs().filter(d=>d.i!==i);if(!remaining.length){notice('Keep one document open in this proposal.');return;}state.closedTabs.push(i);if(state.doc===i)setDoc((remaining.find(d=>d.group===docs[i].group)||remaining[0]).i);else{render();persist();}return;}
     if(b.dataset.groupOpen){state.mode='groups';state.pane=true;if(!state.expanded.includes(b.dataset.groupOpen))state.expanded.push(b.dataset.groupOpen);closeOverlay();render();persist();return;}
     if(b.dataset.expand){const g=b.dataset.expand;state.expanded=state.expanded.includes(g)?state.expanded.filter(x=>x!==g):[...state.expanded,g];render();persist();return;}
@@ -232,9 +270,10 @@
     if(b.dataset.archiveOpen){const term=(q('[data-input=command]')?.value||'').replace(/^col:/i,'').trim();let index=docs.findIndex(d=>d.title==='Bench measurements.pdf');if(index<0){state.archiveOpened=true;index=docs.length;docs.push({title:'Bench measurements.pdf',group:'General',format:'pdf'});}setDoc(index);state.mode=b.dataset.archiveOpen==='text'?'find':'chapters';state.query=b.dataset.archiveOpen==='text'?term:'';state.regex=false;state.page=1;state.version='latest';state.missing=true;render();persist();return;}
     if(b.dataset.commandText){const term=q('[data-input=command]').value;setDoc(0);state.query=term;state.regex=false;state.page=Math.max(0,corpus.findIndex(t=>t.toLowerCase().includes(term.toLowerCase())))*3+1;state.version='latest';state.mode='find';state.pane=true;render();persist();return;}
     switch(b.dataset.action){
+      case 'group-picker':{const picker=q('.sz-group-picker');picker.hidden=!picker.hidden;b.setAttribute('aria-expanded',String(!picker.hidden));if(!picker.hidden){picker.innerHTML=groupData.filter(g=>g[1]).map(([name,count])=>`<button data-browse-group="${name}" aria-pressed="${state.tabExpanded.includes(name)}">${icon('panels-top-left')}<span>${name}</span><small>${count}</small></button>`).join('')+`<hr><button data-mode="groups">${icon('settings-2')}Manage groups</button>`;symbols();(picker.querySelector('[aria-pressed=true]')||picker.querySelector('button'))?.focus();}break;}
       case 'open-document':overlay(dialog('Open document',`<div class="sz-chooser">${docs.slice(0,5).map((d,i)=>`<button data-doc="${i}">${icon(d.format==='pdf'?'file':'file-text')}${esc(d.title)}</button>`).join('')}</div>`));break;
       case 'close-pane':state.pane=false;render();persist();break;
-      case 'panel':if(root.classList.contains('sz-compact')||root.clientWidth<=650)overlay(dialog('Panels',`<div class="sz-chooser"><div class="sz-section-label">Workspace</div>${navButton('groups','panels-top-left','Groups')}<button data-action="collection">${icon('library')}Collection</button><div class="sz-section-label">This document</div>${modes().map(x=>navButton(...x)).join('')}<button data-action="hide-pane">${icon('panel-left-close')}Hide panel</button></div>`));else{state.pane=!state.pane;render();persist();}break;
+      case 'panel':state.pane=!state.pane;render();persist();break;
       case 'hide-pane':state.pane=false;closeOverlay();render();persist();break;
       case 'previous':state.page=Math.max(1,state.page-1);render();persist();break;
       case 'next':state.page=Math.min(20,state.page+1);render();persist();break;
@@ -265,8 +304,9 @@
     if(kind==='collection')q('.sz-collection-results').innerHTML=collectionRows(value);
     if(kind==='command')q('.sz-command-results').innerHTML=commandRows(value);symbols();if(['find','groups','chapters','comments'].includes(kind))persist();
   });
-  root.addEventListener('change',e=>{if(e.target.matches('[data-regex]')){state.regex=e.target.checked;render();persist();}if(e.target.matches('[data-linked]'))state.linked=e.target.checked;if(e.target.matches('.sz-page-number')){state.page=Math.max(1,Math.min(20,Number(e.target.value)||1));render();persist();}if(e.target.matches('.sz-zoom')){state.zoom=e.target.value;renderDocument();persist();}});
+  root.addEventListener('change',e=>{if(e.target.matches('[data-sidebar-mode]')){state.mode=e.target.value;state.filter='';render();persist();return;}if(e.target.matches('[data-regex]')){state.regex=e.target.checked;render();persist();}if(e.target.matches('[data-linked]'))state.linked=e.target.checked;if(e.target.matches('.sz-page-number')){state.page=Math.max(1,Math.min(20,Number(e.target.value)||1));render();persist();}if(e.target.matches('.sz-zoom')){state.zoom=e.target.value;renderDocument();persist();}});
   root.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&!q('.sz-group-picker').hidden){q('.sz-group-picker').hidden=true;q('.sz-tab-more').setAttribute('aria-expanded','false');q('.sz-tab-more').focus();return;}
     if(!q('.sz-overlay').hidden){if(e.key==='Escape'){e.preventDefault();closeOverlay();return;}if(e.key==='Tab'){const items=[...q('.sz-overlay').querySelectorAll('button,input,select,a')].filter(x=>!x.disabled&&x.getClientRects().length),first=items[0],last=items.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}if(e.key==='Enter'&&e.target.matches('[data-input=command]')){q('.sz-command-result')?.click();}return;}
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();q('[data-action=command]').click();}
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='f'){e.preventDefault();state.mode='find';state.pane=true;render();q('[data-input=find]').focus();}
@@ -276,6 +316,6 @@
   render();
   let measuredWidth=root.clientWidth;
   new ResizeObserver(()=>{const width=root.clientWidth;if(width!==measuredWidth){measuredWidth=width;render();}}).observe(root);
-  if(globalThis.Tweak){let appliedCondition=design.condition;const tweak=new Tweak({container:root,onChange:()=>{state.layout=design.layout;if(design.condition!==appliedCondition){state.missing=design.condition==='Original missing';state.version=design.condition==='Older version'?'2026.09.24':'latest';appliedCondition=design.condition;}render();persist();}});tweak.addSelect(design,'layout',{label:'Navigation alternative',options:[{label:'Vertical task rail',value:'rail'},{label:'Compact panel chooser',value:'chooser'}]});tweak.addSlider(design,'height',{label:'Reader content height',min:296,max:650,step:1,unit:'px'});tweak.addSelect(design,'condition',{label:'Document condition',options:['Linked original','Older version','Original missing']});}
+  if(globalThis.Tweak){let appliedCondition=design.condition;const tweak=new Tweak({container:root,onChange:()=>{if(design.condition!==appliedCondition){state.missing=design.condition==='Original missing';state.version=design.condition==='Older version'?'2026.09.24':'latest';appliedCondition=design.condition;}render();persist();}});tweak.addSlider(design,'height',{label:'Reader content height',min:296,max:650,step:1,unit:'px'});tweak.addSelect(design,'condition',{label:'Document condition',options:['Linked original','Older version','Original missing']});}
 })();
 </script>

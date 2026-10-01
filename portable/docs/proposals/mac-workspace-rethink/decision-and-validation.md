@@ -2,7 +2,19 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Latest revision: one reference-led compact tab system
+## Latest revision: single sidebar and document-first tab capacity
+
+1 October 2026. Following the user's acceptance of the tab direction and rejection of the double left panel, the permanent navigation rail was removed. One 240px sidebar contains a native labeled view selector with an icon, its current task content, and a close control. Chapters, Find, Comments (PDF only), History and Groups share this surface. Collection has a direct toolbar button. The old rail/chooser design alternative is removed. List rows are 32px with unchanged 12px text. Compared with the previous 104px rail plus 232px task pane, the document gains 96px of width.
+
+The last expanded group now has priority. Expanding a different group collapses the previous group without changing the document. Other group labels remain when there is spare room; otherwise they yield their space to document tabs and remain reachable through the group picker. After that, excess documents use a counted overflow control. The selected document stays among the displayed members of its expanded group. Compact tabs share available width, retaining 12px centered text, with full-title tooltips. Inactive tabs use the space normally reserved for the hidden close control; hover or keyboard focus reveals that control with symmetric title padding. The group picker also links to management; hiding a group there remains a separate persistent action.
+
+At 1248px content width, the General fixture shows six documents instead of the previous four, at approximately 145px per tab, without strip overflow. At 736px and 352px the checked group showed two and one respectively, keeping the same text size. Light and dark whole-reader views were inspected. Sidebar view changes preserve the Find query; History is reachable from the same selector; closing the sidebar returns all 240px to the viewer and exposes the reopen button. Browsing Hardware while reading Driver datasheet did not change the document. No browser console errors were observed. These remain prototype checks; native app and dist are unchanged.
+
+![Single sidebar and six visible documents](evidence/single-sidebar-dense-group.png)
+
+![Single sidebar in light appearance](evidence/single-sidebar-light.png)
+
+## Previous revision: one reference-led compact tab system
 
 1 October 2026. The user rejected all three alternatives below. They are historical evidence, not recommended options. The live prototype now contains one tab treatment; the Index/Tray/Outline picker was removed.
 

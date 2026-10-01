@@ -18,8 +18,8 @@ python3 "$SIDEBAR_VISUALIZE_RENDERER" reader-workspace.fragment.html prototype.h
 python3 -m http.server 61208 --bind 127.0.0.1
 ```
 
-The captured medium and compact fixtures change only `design.height` from
-594 to 418 and 296 respectively. Their browser viewports are 800×500 and
-560×380. The preview wrapper contributes a 16px margin around the mock window.
-The normal prototype exposes height and navigation alternatives through the
-host's design controls.
+The current proposal uses one 240px sidebar with a labeled view selector.
+The expanded group's documents get tab-strip space before other group labels.
+The preview wrapper contributes a 16px margin around the mock window. The
+design controls expose reader height and document condition; rejected tab
+variants and the former double-panel navigation are historical evidence only.
