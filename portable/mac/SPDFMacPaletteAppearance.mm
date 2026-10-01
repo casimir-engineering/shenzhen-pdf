@@ -87,9 +87,9 @@ NSView* SPDFPaletteContentView(NSSearchField* search,NSTableView* table,id targe
     search.translatesAutoresizingMaskIntoConstraints = NO;
     search.font = [NSFont systemFontOfSize:13];
     search.bordered = NO; search.bezeled = NO; search.drawsBackground = NO;
-    NSButton* close = SPDFCollectionButton(@"",target,NSSelectorFromString(@"closePalette:"),@"quiet");
-    close.image = [NSImage imageWithSystemSymbolName:@"xmark" accessibilityDescription:@"Close search"];
-    close.accessibilityLabel = @"Close search"; close.translatesAutoresizingMaskIntoConstraints = NO;
+    NSButton* close = SPDFCollectionButton(@"Esc",target,NSSelectorFromString(@"closePalette:"),@"quiet");
+    close.identifier = @"PaletteClose"; close.accessibilityLabel = @"Close search (Escape)";
+    close.toolTip = @"Close search (Escape)"; close.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:close]; [content addSubview:search];
     NSView* divider = SPDFCollectionDivider(); divider.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:divider];
@@ -100,14 +100,14 @@ NSView* SPDFPaletteContentView(NSSearchField* search,NSTableView* table,id targe
     [NSLayoutConstraint activateConstraints:@[
         [search.topAnchor constraintEqualToAnchor:content.topAnchor constant:12],
         [search.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:12],
-        [search.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-50],
+        [search.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-66],
         [search.heightAnchor constraintEqualToConstant:30],
         [scroll.topAnchor constraintEqualToAnchor:content.topAnchor constant:66],
         [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:12],
         [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-12],
         [scroll.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-12],
         [close.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-12],
-        [close.centerYAnchor constraintEqualToAnchor:search.centerYAnchor], [close.widthAnchor constraintEqualToConstant:30],
+        [close.centerYAnchor constraintEqualToAnchor:search.centerYAnchor], [close.widthAnchor constraintEqualToConstant:42],
         [divider.leadingAnchor constraintEqualToAnchor:content.leadingAnchor], [divider.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [divider.topAnchor constraintEqualToAnchor:content.topAnchor constant:54]]];
     return content;

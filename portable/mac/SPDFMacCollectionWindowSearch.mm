@@ -9,6 +9,24 @@ static NSString* DateLabel(NSDictionary* version) {
         [NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]]
         dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle] : @"No saved copy";
 }
+// Outline the actual page, not the aspect-fit container, so white previews
+// remain legible against the light window without adding a native photo bezel.
+@interface SPDFCollectionPagePreview : NSImageView
+@end
+@implementation SPDFCollectionPagePreview
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    NSSize size = self.image.size;
+    if (self.image.isTemplate || size.width<=0 || size.height<=0) return;
+    CGFloat scale = MIN(NSWidth(self.bounds)/size.width,NSHeight(self.bounds)/size.height);
+    NSRect page = NSMakeRect(NSMidX(self.bounds)-size.width*scale/2,NSMidY(self.bounds)-size.height*scale/2,
+        size.width*scale,size.height*scale);
+    [SPDFCollectionColor(@"line") setStroke];
+    NSBezierPath* outline = [NSBezierPath bezierPathWithRect:NSInsetRect(page,.5,.5)];
+    outline.lineWidth = 1; [outline stroke];
+}
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
+@end
 @interface SPDFCollectionResultRow : NSTableRowView
 @end
 @implementation SPDFCollectionResultRow
@@ -50,7 +68,7 @@ static NSString* DateLabel(NSDictionary* version) {
     NSStackView* meta = [NSStackView stackViewWithViews:@[metadata]]; meta.spacing = 8;
     meta.alignment = NSLayoutAttributeCenterY;
     meta.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:meta];
-    NSImageView* image = [NSImageView new]; image.translatesAutoresizingMaskIntoConstraints = NO;
+    NSImageView* image = [SPDFCollectionPagePreview new]; image.translatesAutoresizingMaskIntoConstraints = NO;
     image.imageScaling = NSImageScaleProportionallyUpOrDown;
     NSInteger page = [row[@"selectedPage"] integerValue];
     if (!page && [row[@"matches"] count]) page = [row[@"matches"][0][@"page"] integerValue];
