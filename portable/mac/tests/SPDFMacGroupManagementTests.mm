@@ -30,6 +30,7 @@ static NSArray* Groups(void) {
     }
     return groups;
 }
+#import "SPDFMacGroupManagementDragChecks.h"
 static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, NSString* output) {
     NSWindow* host = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width,height)
         styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
@@ -211,6 +212,7 @@ int main(void) {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_GROUP_MANAGEMENT_EVIDENCE_DIR"];
         if (evidence.length) [NSFileManager.defaultManager createDirectoryAtPath:evidence withIntermediateDirectories:YES attributes:nil error:nil];
+        CheckGroupDocumentDragging(); CheckGroupHeaderColors();
         CheckGroupScrolling(evidence);
         Render(176,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-minimum.png"] : nil);
         Render(220,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-220-minimum.png"] : nil);

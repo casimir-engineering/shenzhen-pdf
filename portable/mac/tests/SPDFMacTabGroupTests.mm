@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import "SPDFMacModels.h"
 #import "SPDFMacTabGroups.h"
+#import "SPDFMacCollectionTabIdentity.h"
 
 static int failures;
 static NSUInteger groupAllocations;
@@ -65,6 +66,20 @@ int main(void) {
             restoredSaved.readOnly && [restoredSaved.path isEqual:saved.path] &&
             [restoredSaved.group.displayName isEqual:@"Collection Backups"] &&
             restoredSaved.group == ((SPDFDocumentTab*)restoredCopies[2]).group);
+        saved.group.colorName = @"Blue";
+        Expect(@"backup color cannot be changed by setters",[saved.group.colorName isEqual:@"Orange"] &&
+            [saved.group.dictionary[@"color"] isEqual:@"Orange"]);
+        SPDFTabGroup* oldBackup = [SPDFTabGroup fromDictionary:@{@"id":@"collection-backups",@"color":@"Slate"}];
+        Expect(@"old and edited config colors normalize to Orange",[oldBackup.colorName isEqual:@"Orange"]);
+        saved.collectionVersionLabel = @"Collection copy · Read-only";
+        saved.group = source.group;
+        spdf_tab_group_collection_copy(backupTabs,saved);
+        Expect(@"moving a known backup into General survives another open",saved.group.general && SPDFTabIsCollectionCopy(saved));
+        NSArray* moved = RoundTrip(backupTabs);
+        SPDFDocumentTab* movedCopy = moved[1];
+        NSMutableArray* reloaded = [moved mutableCopy]; spdf_tab_group_collection_copy(reloaded,movedCopy);
+        Expect(@"moved copy provenance and group survive session restore",movedCopy.group.general &&
+            movedCopy.readOnly && SPDFTabIsCollectionCopy(movedCopy));
         SPDFTabGroup* purple = [SPDFTabGroup groupWithColor:@"Purple"];
         purple.name = @"Research";
         purple.lastUsedPath = @"/c.md";
@@ -135,7 +150,7 @@ int main(void) {
         SPDFTabGroup* malformed = [SPDFTabGroup fromDictionary:@{@"id": @"x", @"color": @13, @"collapsed": @[]}];
         Expect(@"malformed optional values use safe defaults", [malformed.colorName isEqualToString:@"Purple"]
             && !malformed.collapsed);
-        Expect(@"palette has ten choices", spdf_tab_group_colors().count == 10);
+        Expect(@"palette includes Orange", spdf_tab_group_colors().count == 11 && [spdf_tab_group_colors() containsObject:@"Orange"]);
         for (NSString* color in [spdf_tab_group_colors() arrayByAddingObject:@"Gray"]) {
             for (NSNumber* dark in @[@NO, @YES]) {
                 double fillLuminance = Luminance(spdf_tab_group_selected_fill(color, dark.boolValue));

@@ -155,6 +155,7 @@ static NSBitmapImageRep* render_strip(SPDFTabStripView* strip, NSAppearance* app
     return bitmap;
 }
 
+#import "SPDFMacCollectionTabOutlineChecks.h"
 static void check_group_reorder(BOOL useGeneral) {
     NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1200,42)
         styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
@@ -246,7 +247,8 @@ int main(void) {
         check_compact_workspace_tabs();
         check_group_reorder(YES);
         check_group_reorder(NO);
-        check_group_overflow();
+        check_group_overflow(); check_dense_group_controls();
+        check_collection_copy_outline();
         check_hidden_groups();
         check_group_creation_side();
         NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 900, 42)

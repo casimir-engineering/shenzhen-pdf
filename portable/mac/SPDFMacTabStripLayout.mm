@@ -21,7 +21,8 @@
             if (!NSIsEmptyRect(frame)) end=MAX(end,NSMaxX(frame));
         }
     } else for (NSNumber* index in [self visibleTabIndexes]) end=MAX(end,NSMaxX([self rectForTabAtIndex:index.integerValue]));
-    CGFloat x=MIN(end+8,MAX([self leftInset],NSWidth(self.bounds)-76));
+    // Six points between 28pt controls keeps their expanded hit targets disjoint.
+    CGFloat x=MIN(end+8,MAX([self leftInset],NSMinX([self overflowRectAssumingVisible])-34));
     return NSMakeRect(x,floor((NSHeight(self.bounds)-28)/2),28,28);
 }
 - (NSRect)overflowRectAssumingVisible {
@@ -30,7 +31,7 @@
 
 - (CGFloat)tabAreaRightWithOverflow:(BOOL)overflow {
     (void)overflow;
-    return MAX([self leftInset], NSWidth(self.bounds)-88);
+    return MAX([self leftInset], NSMinX([self overflowRectAssumingVisible])-42);
 }
 
 - (CGFloat)tabAreaWidthWithOverflow:(BOOL)overflow {

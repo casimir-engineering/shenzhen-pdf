@@ -814,3 +814,19 @@ The reported lower-half History click failure was investigated in the reader sid
 Added a focused button cell whose native hit test uses the full custom row bounds. Native button tracking remains responsible for release/drag cancellation; disabled and outside points return no hit. Rows also explicitly accept consecutive clicks. The regression tests exercise native cell hit areas and mouse events at five heights in six narrow/light/dark layouts, plus disabled controls and drag-out cancellation. The actual hidden reader probe checks full-height hit routing and History activation. The original implementation fails the new native-hit-area contract; the corrected implementation passes. This is a targeted correction of the confirmed mismatch, not a claim that the user's exact half-button symptom was reproduced. No app was launched, quit or captured.
 
 Rebuilt `dist/ShenzhenPDF.app` successfully with the sidebar hit-area correction. Strict deep signature verification and executable/source freshness checks passed. This local rebuild retains 26.10.2-4 metadata; the additional fix is recorded in the next-release notes. No running app was restarted and nothing was published.
+
+## 2 October — Group organization and Collection copy identity
+
+The requested design keeps the compact reader hierarchy: existing system typography, 36-point colored group headings and 26-point document rows. Group backgrounds reuse the tab strip accent at 16% opacity, over an opaque base so sticky headings conceal documents beneath them. Collection copy provenance is a separate pale-orange outline, not a replacement for destination-group color.
+
+Native table drag sessions temporarily hide document rows and ignore the search filter to expose every destination. The underlying query and expansion settings are retained. A workspace-local drag token rejects foreign payloads, and moves carry both source group and document path to disambiguate duplicate paths. Existing group movement and session persistence handle the actual transfer; no work is added to app launch. Cancellation restores the view; successful moves expand the destination.
+
+Collection Backups enforces Orange at the model boundary, including restored YAML and API recolor attempts. Copies use existing persisted archive metadata for their outline and to avoid being automatically moved back after a user relocates them. Painting does not access Collection storage. The creation dialog removes Keep Default while retaining Enter acceptance of its selected default. Crowded group allocation uses residual strip space and corrects an extra width charge that previously overflowed an exactly fitting tab.
+
+Headless tests cover native drag delegate callbacks, filter/cancel restoration, source-group/path disambiguation, rejection of foreign drags and replay, and pastel header painting in Aqua and Dark Aqua. Native drawing tests verify the archive rim remains distinct in an Orange group. The complete offscreen panel cache did not render its layer-backed list reliably, so it is not used as visual evidence; direct row painting checks validate the actual header colors instead. Naming and dense-layout regression tests fail against the previous implementation and pass after the changes. Updater (32 cases), launch-work policy, group model, interaction, integration and sidebar workspace suites pass.
+
+![Headless native tab-strip fixture: crowded groups fill the strip and Add Tab sits beside Group Management](evidence/group-dense-strip-2026-10-02.png)
+
+![Native header color fixtures in Aqua and Dark Aqua](evidence/group-header-colors-2026-10-02.png)
+
+The real sidebar action test also passes moves in both ordering directions, duplicate-path resolution, destination visibility, selection and YAML restoration of membership/order/reading position. Review found and fixed an adjacent issue where clicking a duplicate-path document could select the copy in another group.

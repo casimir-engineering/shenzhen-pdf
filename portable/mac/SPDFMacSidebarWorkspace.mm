@@ -85,9 +85,21 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     if (!group) return;
     if ([action isEqual:@"visibility"]) [self setTabGroup:group hidden:!group.hidden];
     else if ([action isEqual:@"rename"]) [self renameTabGroup:group name:value];
+    else if ([action isEqual:@"move-document"]) {
+        NSDictionary* source = [NSJSONSerialization JSONObjectWithData:[value dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+        if (![source isKindOfClass:NSDictionary.class]) return;
+        NSUInteger index = NSNotFound, destination = 0;
+        for (NSUInteger i=0;i<_tabs.count;i++) {
+            if ([_tabs[i].path isEqual:source[@"path"]] && [_tabs[i].group.identifier isEqual:source[@"source"]]) index = i;
+            if ([_tabs[i].group.identifier isEqual:identifier]) destination = i+1;
+        }
+        if (index == NSNotFound || [_tabs[index].group.identifier isEqual:identifier]) return;
+        group.hidden = NO;
+        [self moveTabAtIndex:index toGroup:group atIndex:destination];
+    }
     else if ([action isEqual:@"document"]) {
         [self setTabGroup:group hidden:NO];
-        for (NSUInteger i=0;i<_tabs.count;i++) if ([_tabs[i].path isEqual:value]) { [self selectTabAtIndex:i]; break; }
+        for (NSUInteger i=0;i<_tabs.count;i++) if ([_tabs[i].path isEqual:value] && [_tabs[i].group.identifier isEqual:identifier]) { [self selectTabAtIndex:i]; break; }
     } else [self jumpTabGroup:group];
     // Management remains open while its explicit group/document navigation runs.
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeGroups; _sidebarPreferredVisible = YES;

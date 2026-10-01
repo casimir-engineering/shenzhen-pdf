@@ -122,3 +122,37 @@ static void check_compact_workspace_tabs(void) {
     expect([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
         writeToFile:@"/tmp/spdf-compact-group-picker.png" atomically:YES],@"could not render group picker");
 }
+
+static void check_dense_group_controls(void) {
+    for (NSNumber* width in @[@620,@900,@1400]) {
+        SPDFTabGroup* group=[SPDFTabGroup groupWithColor:@"Purple"];
+        SPDFGroupTestStrip* strip=[[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,width.doubleValue,42)];
+        NSMutableArray* tabs=[NSMutableArray array];
+        for (NSUInteger i=0;i<40;i++) [tabs addObject:tab(@"Document",group)];
+        strip.tabs=(id)tabs; strip.selectedIndex=20;
+        NSRect groupFrame=[[strip.groupLayouts.firstObject valueForKey:@"frame"] rectValue];
+        NSRect plus=[strip plusRect], manager=[strip overflowRectAssumingVisible];
+        expect(fabs(NSMaxX(groupFrame)-[strip tabAreaRightWithOverflow:YES])<0.01,
+            @"dense group leaves unused width before trailing controls");
+        expect(fabs(NSMinX(plus)-NSMaxX(groupFrame)-8)<0.01 && fabs(NSMinX(manager)-NSMaxX(plus)-6)<0.01,
+            @"dense strip plus is not immediately beside group manager");
+        expect([strip.visibleTabIndexes containsObject:@20],@"filling dense group hides selected document");
+        for (NSNumber* index in strip.visibleTabIndexes)
+            expect(NSWidth([strip rectForTabAtIndex:index.integerValue])>=96,@"dense group made titles unreadably narrow");
+        expect(!NSIntersectsRect(spdf_tab_strip_control_interaction_rect(plus),spdf_tab_strip_control_interaction_rect(manager)),
+            @"adjacent utility control hit targets overlap");
+    }
+    SPDFTabGroup* exactGroup=[SPDFTabGroup groupWithColor:@"Coral"];
+    SPDFGroupTestStrip* exact=[[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,1000,42)];
+    exact.tabs=(id)@[tab(@"One",exactGroup),tab(@"Two",exactGroup),tab(@"Three",exactGroup)]; exact.selectedIndex=0;
+    CGFloat contentWidth=NSWidth([[exact.groupLayouts.firstObject valueForKey:@"frame"] rectValue]);
+    CGFloat trailing=NSWidth(exact.bounds)-[exact tabAreaRightWithOverflow:YES];
+    [exact setFrameSize:NSMakeSize([exact leftInset]+contentWidth+trailing,42)];
+    expect(exact.visibleTabIndexes.count==3 && !exact.groupedHasOverflow,
+        @"exactly fitting documents lose a tab to an unnecessary overflow button");
+    SPDFTabGroup* group=[SPDFTabGroup groupWithColor:@"Teal"];
+    SPDFGroupTestStrip* sparse=[[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,1400,42)];
+    sparse.tabs=(id)@[tab(@"One",group),tab(@"Two",group)]; sparse.selectedIndex=0;
+    expect(NSWidth([sparse rectForTabAtIndex:0])<=200 && NSMinX([sparse plusRect])<700,
+        @"sparse group unnecessarily stretches short document tabs");
+}

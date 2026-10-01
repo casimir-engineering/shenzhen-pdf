@@ -68,6 +68,42 @@ static NSDictionary* YAML(NSDictionary* value) {
     NSDictionary* result = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:decoded length:strlen(decoded)] options:0 error:nil];
     free(decoded); return result;
 }
+static void CheckDocumentMoveIntegration(void) {
+    for (NSNumber* sourceFirst in @[@NO,@YES]) {
+        WorkspaceProbe* reader=[WorkspaceProbe new];
+        SPDFTabGroup* other=[SPDFTabGroup groupWithColor:@"Blue"];
+        SPDFTabGroup* source=[SPDFTabGroup groupWithColor:@"Purple"];
+        SPDFTabGroup* destination=[SPDFTabGroup groupWithColor:@"Coral"]; destination.hidden=YES;
+        SPDFDocumentTab* duplicate=Tab(@"Shared.pdf"); duplicate.group=other;
+        SPDFDocumentTab* moved=Tab(@"Shared.pdf"); moved.group=source;
+        SPDFDocumentTab* peer=Tab(@"Source peer.pdf"); peer.group=source;
+        SPDFDocumentTab* first=Tab(@"Destination first.pdf"); first.group=destination;
+        SPDFDocumentTab* last=Tab(@"Destination last.pdf"); last.group=destination;
+        [reader seed:sourceFirst.boolValue ? @[duplicate,moved,peer,first,last] : @[duplicate,first,last,moved,peer]];
+        [reader performSidebarGroupAction:@"document" identifier:source.identifier value:moved.path];
+        Check(reader.selectedTab==moved,@"Groups document activation disambiguates duplicate paths using the clicked group");
+        NSData* payload=[NSJSONSerialization dataWithJSONObject:@{@"source":source.identifier,@"path":moved.path} options:0 error:nil];
+        [reader performSidebarGroupAction:@"move-document" identifier:destination.identifier
+            value:[[NSString alloc] initWithData:payload encoding:NSUTF8StringEncoding]];
+        NSArray* members=spdf_tab_group_members(reader.tabs,destination);
+        Check([members isEqual:@[first,last,moved]] && duplicate.group==other && peer.group==source,
+            @"production Groups drop resolves duplicate path by source group and inserts at target tail in both directions");
+        Check(reader.selectedTab==moved && !destination.hidden && reader.saves>0 &&
+            reader.navigation.spdf_selectedSidebarMode==SPDFSidebarModeGroups,
+            @"production Groups drop reveals destination, selects moved document, persists and retains manager mode");
+        NSMutableArray* snapshots=[NSMutableArray array];
+        for (SPDFDocumentTab* tab in reader.tabs) [snapshots addObject:spdf_dictionary_from_tab(tab,0)];
+        NSDictionary* session=YAML(@{@"tabs":snapshots,@"sidebar":reader.sidebarWorkspaceSnapshot});
+        NSMutableArray* restored=[NSMutableArray array];
+        for (NSDictionary* snapshot in session[@"tabs"]) [restored addObject:spdf_tab_from_dictionary(snapshot)];
+        spdf_tab_groups_normalize(restored);
+        NSUInteger movedIndex=[reader.tabs indexOfObjectIdenticalTo:moved];
+        SPDFDocumentTab* restoredMove=restored[movedIndex];
+        Check([restoredMove.group.identifier isEqual:destination.identifier] &&
+            [restoredMove.path isEqual:moved.path] && restoredMove.pageIndex==7 && restoredMove.scrollOrigin.y==132,
+            @"YAML retains transferred group, tab position and document reading position");
+    }
+}
 static void BenchmarkWorkspace(void) {
     for (NSNumber* countValue in @[@20,@200,@1000]) {
         NSUInteger count=countValue.unsignedIntegerValue;
@@ -99,6 +135,7 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         if (argc>1 && strcmp(argv[1],"--benchmark")==0) { BenchmarkWorkspace(); return 0; }
+        CheckDocumentMoveIntegration();
         WorkspaceProbe* reader = [WorkspaceProbe new]; [reader seed:@[Tab(@"Alpha.pdf"),Tab(@"Beta.md")]];
         Check(![reader showSidebarWorkspacePanel] && reader.collectionPanelChecks == 0,
             @"ordinary chapter sidebar starts no management or Collection work");

@@ -1,7 +1,10 @@
 #import "SPDFMacTabGroups.h"
 #import "SPDFMacModels.h"
+#import "SPDFMacCollectionTabIdentity.h"
 
 @implementation SPDFTabGroup
+@synthesize colorName = _colorName;
+- (NSString*)colorName { return self.collectionBackups ? @"Orange" : _colorName; }
 + (instancetype)generalGroup {
     SPDFTabGroup* group = [[self alloc] init];
     group.identifier = @"general";
@@ -12,7 +15,7 @@
     SPDFTabGroup* group = [[self alloc] init];
     group.identifier = @"collection-backups";
     group.name = @"Collection Backups";
-    group.colorName = @"Slate";
+    group.colorName = @"Orange";
     return group;
 }
 + (instancetype)groupWithColor:(NSString*)color {
@@ -58,7 +61,7 @@ NSArray<NSString*>* spdf_tab_group_colors(void) {
     static NSArray* colors;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ colors = @[@"Purple", @"Green", @"Blue", @"Teal", @"Rose", @"Coral",
-                                      @"Amber", @"Indigo", @"Plum", @"Slate"]; });
+                                      @"Amber", @"Indigo", @"Plum", @"Slate", @"Orange"]; });
     return colors;
 }
 static NSColor* RGB(unsigned rgb) {
@@ -69,7 +72,7 @@ NSColor* spdf_tab_group_accent(NSString* color) {
     NSArray* names = spdf_tab_group_colors();
     NSUInteger index = [names indexOfObject:color ?: @""];
     const unsigned values[] = {0xbca1dc, 0x95c8b4, 0x9bbfe0, 0x87c7cc, 0xdaa2bd,
-                               0xe4ad98, 0xd8bf86, 0xa5afe1, 0xc0a0c4, 0xa8bbc8};
+                               0xe4ad98, 0xd8bf86, 0xa5afe1, 0xc0a0c4, 0xa8bbc8, 0xe8b489};
     return RGB(index < names.count ? values[index] : 0xb5b5be);
 }
 NSImage* spdf_tab_group_swatch_image(NSString* color) {
@@ -86,9 +89,9 @@ NSColor* spdf_tab_group_selected_fill(NSString* color, BOOL dark) {
     // Aqua uses labelColor (black) for every tab title, so selected fills are
     // pale tints. Dark Aqua keeps the deep fills below for white labelColor.
     const unsigned light[] = {0xc9b7dd, 0xaecfc6, 0xb3cce4, 0xaecfc6, 0xddb6ca,
-                              0xddc5a5, 0xddd0a5, 0xbfc4e1, 0xd0b8d4, 0xb9cbd6};
+                              0xddc5a5, 0xddd0a5, 0xbfc4e1, 0xd0b8d4, 0xb9cbd6, 0xdfc3a3};
     const unsigned night[] = {0x625078, 0x44675e, 0x45627c, 0x44675e, 0x765065,
-                              0x705b40, 0x72633d, 0x545b7e, 0x6c5171, 0x506773};
+                              0x705b40, 0x72633d, 0x545b7e, 0x6c5171, 0x506773, 0x735b42};
     return RGB(index < spdf_tab_group_colors().count ? (dark ? night[index] : light[index])
                                                     : (dark ? 0x16161b : 0x41414a));
 }
@@ -162,7 +165,9 @@ void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* 
 }
 
 void spdf_tab_group_collection_copy(NSMutableArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* tab) {
-    if (!tab || tab.group.collectionBackups || ![tabs containsObject:tab]) return;
+    // Only first discovery chooses Backups. A known copy may have been moved by
+    // the reader; its saved membership must survive reopen, restore and reload.
+    if (!tab || SPDFTabIsCollectionCopy(tab) || tab.group.collectionBackups || ![tabs containsObject:tab]) return;
     SPDFTabGroup* group = nil;
     for (SPDFDocumentTab* candidate in tabs)
         if (candidate.group.collectionBackups) { group = candidate.group; break; }
