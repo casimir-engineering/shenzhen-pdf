@@ -13,7 +13,7 @@ make -C portable -f Makefile -f mac/tests/workspace-probe.mk -j4 \
 
 `SPDFMacWorkspaceProbe.mm` links the production reader and calls its actual window builder. It does not call the application entry point or launch delegate. It creates a private temporary state directory and a three-page PDF with outlines, supplies those pages to the real document canvas and map, and loads a Markdown document through the real session renderer. The fixture captures the view hierarchy with AppKit bitmap caching, never with a screenshot of the user's app. A fail-fast override rejects any attempt to order a window on screen. Disk persistence is stubbed at the delegate boundary.
 
-The evidence matrix covers light and dark appearances; 1280, 880 and 640-point windows; both side panels; hidden panels; presentation chrome; the real Find query/results panel; and the Markdown host. The native menu's Check for Updates item is located and validated. Its action must reach the updater as an explicit user request; the network entry point is replaced only during this assertion.
+The evidence matrix covers light and dark appearances; 1280, 880, 640 and 560-point windows; both side panels; hidden panels; presentation chrome; the real Find query/results panel; and the Markdown host. The native menu's Check for Updates item is located and validated. Its action must reach the updater as an explicit user request; the network entry point is replaced only during this assertion.
 
 The probe uses incremental objects under `portable/build/workspace-probe/`, allowing repeated visual checks without relinking the app bundle or disturbing `dist`. PNGs and geometry output are evidence, not a pixel-perfect baseline: platform font rendering can vary. Review alignment, title clipping, selected tabs, tool discoverability and header boundaries directly.
 
@@ -43,4 +43,25 @@ Check test exit codes. A printed success substring cannot substitute for the run
 
 ## Baseline, 1 October 2026
 
-Before completing the overhaul, `mac-updater-tests` and `release-pipeline-tests` exited 0. The updater reported 32 cases and release workflow reported 56 passed, 0 failed. The native workspace probe also exited 0 after integration: 14 light/dark PNGs, real PDF and Markdown hosts, real Find search results, presentation restore, updater menu routing, retained filename extensions, untruncated zoom labels and non-overlapping visible toolbar controls. Markdown capture waits for `navigationReady`, since Ready precedes the deferred viewport reveal. Repeat the remaining gates after the final production edits. No release was published and no running application was replaced by these checks.
+Before completing the overhaul, `mac-updater-tests` and `release-pipeline-tests` exited 0. The updater reported 32 cases and release workflow reported 56 passed, 0 failed. The native workspace probe also exited 0 after integration: 18 light/dark PNGs, real PDF and Markdown hosts, real Find search results, presentation restore, updater menu routing, retained filename extensions, untruncated zoom labels and non-overlapping visible toolbar controls. Markdown capture waits for `navigationReady`, since Ready precedes the deferred viewport reveal. Repeat the remaining gates after the final production edits. No release was published and no running application was replaced by these checks.
+
+
+## Review corrections and final evidence
+
+The extended probe caught an initial archived-version crash: the pill's width constraint was activated before it shared the toolbar's hierarchy. The production fix attaches it first and puts it in its own row, preserving page/zoom controls in narrow windows. A separate source review found that Markdown text-size controls had been removed without another reachable entry point. They remain direct controls for Markdown, hidden for PDF, and the probe asserts that boundary. Empty Find guidance now points to the field above it.
+
+After those corrections, the probe and updater/release gates exited 0. This checks the menu route without contacting the release server or installing an update. App launch, updater scheduling and the live update swap are covered by their focused suites rather than performed against the user's running reader.
+
+These are actual AppKit content views captured offscreen. The PDF fixture refills map thumbnails after native zoom invalidation because it intentionally has no background render service. The thumbnails come from the same fixture PDF. Window-server traffic lights are outside the captured content view.
+
+![Native light reader](evidence/native-reader-light-1280.png)
+
+![Native dark reader](evidence/native-reader-dark-1280.png)
+
+![Minimum-width reader with direct tools wrapped](evidence/native-reader-light-560.png)
+
+![Find with actual PDF matches](evidence/native-reader-light-find.png)
+
+![Older version with missing original at narrow width](evidence/native-reader-light-version.png)
+
+![Markdown with direct text-size controls](evidence/native-reader-light-markdown.png)

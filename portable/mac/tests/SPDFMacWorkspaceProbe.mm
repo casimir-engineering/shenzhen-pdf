@@ -6,6 +6,7 @@
 #import "SPDFMacTabGroups.h"
 #import "SPDFUpdater.h"
 #import "SPDFMacWorkspaceChrome.h"
+#import "SPDFMacCollectionReaderNavigation.h"
 #import <PDFKit/PDFKit.h>
 #import <objc/runtime.h>
 #undef main
@@ -13,6 +14,11 @@
 static NSUInteger failures;
 static void Check(BOOL ok, NSString* message) {
     if (!ok) { fprintf(stderr,"FAIL: %s\n",message.UTF8String); failures++; }
+}
+static void VisibleControls(NSView* view,NSMutableArray<NSControl*>* controls) {
+    if(view.hidden) return;
+    if([view isKindOfClass:NSControl.class]) { [controls addObject:(id)view]; return; }
+    for(NSView* child in view.subviews) VisibleControls(child,controls);
 }
 static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger other) {
     (void)object; (void)action; (void)place; (void)other;
@@ -29,11 +35,13 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
 - (void)updateTabStripFrame;
 @end
 @interface WorkspaceReaderProbe : ShenzhenMacDelegate
+@property PDFDocument* fixturePDF;
 - (void)prepare:(NSURL*)URL width:(CGFloat)width dark:(BOOL)dark;
 - (void)capture:(NSString*)path width:(CGFloat)width sidebar:(BOOL)sidebar map:(BOOL)map;
 - (void)prepareMarkdown:(NSURL*)URL;
 - (void)setProbePresentation:(BOOL)value;
 - (void)setProbeFind:(BOOL)value;
+- (void)setProbeVersion:(BOOL)value;
 @end
 @implementation WorkspaceReaderProbe
 // These are disk boundaries, not UI code. Keeping them inert makes the full
@@ -69,7 +77,7 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     _suppressToolbarOverflowUpdates=NO; _uiReady=YES;
     _window.appearance=[NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
     [_window setContentSize:NSMakeSize(width,780)];
-    PDFDocument* PDF=[[PDFDocument alloc] initWithURL:URL];
+    PDFDocument* PDF=[[PDFDocument alloc] initWithURL:URL]; self.fixturePDF=PDF;
     for (NSUInteger i=0;i<PDF.pageCount;i++) {
         PDFPage* original=[PDF pageAtIndex:i]; NSRect bounds=[original boundsForBox:kPDFDisplayBoxMediaBox];
         SPDFRenderedPage* page=[SPDFRenderedPage new]; page.pageIndex=i;
@@ -83,7 +91,7 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     [self rebuildSidebar]; [self updateControls];
 }
 - (void)prepareMarkdown:(NSURL*)URL {
-    _path=URL.path; _tabs[0].path=URL.path; _tabs[0].title=URL.lastPathComponent;
+    _selectedTabIndex=2; _path=URL.path; _tabs[2].path=URL.path; _tabs[2].title=URL.lastPathComponent;
     if (_doc) { spdf_close(_doc); _doc=NULL; }
     spdf_free_outline(&_outline);
     [self installMarkdownHostInDocumentContainer];
@@ -103,7 +111,13 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     Check(done && ready && session.navigationReady && session.pageCount>0,@"actual Markdown renderer populates the native reader host");
     [self rebuildSidebar]; [self updateControls];
 }
+- (void)setProbeVersion:(BOOL)value {
+    NSDictionary* info=value ? @{@"document":@{@"id":@"fixture",@"path":@"/missing/fixture.pdf",@"latestVersionID":@"latest"},
+        @"version":@{@"id":@"older",@"capturedAt":@1790812800}} : nil;
+    [self collectionSetVersionInfo:info forTab:_tabs[0]];
+}
 - (void)setProbeFind:(BOOL)value {
+    if(value) { _sidebarWidth=176; [self restoreSidebarWidth]; }
     _searchField.stringValue=value ? @"workspace" : @"";
     [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:NO];
     NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:10];
@@ -126,6 +140,14 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     _pageView.viewportWidthHint=clip.width; _pageView.viewportHeightHint=clip.height;
     [_pageView setFrameSize:[_pageView documentSizeForClipSize:clip]];
     [self updateMinimap];
+    if (![self isMarkdownActive]) for(SPDFRenderedPage* page in _renderedPages) {
+        // Real resize invalidates cached map images. The probe has no render
+        // service, so refill these fixtures from the same PDF before capture.
+        page.minimapImage=[[self.fixturePDF pageAtIndex:page.pageIndex]
+            thumbnailOfSize:NSMakeSize(140,198) forBox:kPDFDisplayBoxMediaBox];
+        page.minimapImageZoom=140/page.pageWidth; page.minimapImageScale=1;
+        [_minimapView noteThumbnailLoadedForPageIndex:page.pageIndex];
+    }
     [_window.contentView layoutSubtreeIfNeeded];
     Check(!_window.visible,@"reader window stays offscreen");
     Check(NSWidth(_pageScrollView.frame)>100 && NSHeight(_pageScrollView.frame)>100,@"document retains a usable viewport");
@@ -134,22 +156,30 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     else Check(self.activeMarkdownSession.pageCount>0,@"Markdown pages survive workspace resizing");
     Check(_sidebarVisible==sidebar && (sidebar || NSWidth(_sidebarContainer.frame)<=1),@"requested sidebar visibility is applied");
     if (!_presentationMode) {
+        Check([self isMarkdownActive] ? (!_markdownFontSizeSegments.hidden && [_markdownFontSizeSegments isDescendantOf:_toolbar]) : _markdownFontSizeSegments.hidden,
+            @"Markdown text size stays directly reachable and takes no toolbar space for PDF");
         CGFloat titleWidth=[_fitModePopup.titleOfSelectedItem sizeWithAttributes:@{NSFontAttributeName:_fitModePopup.font}].width;
         Check(NSWidth(_fitModePopup.frame)>=ceil(titleWidth)+18,@"zoom selection keeps its full readable title");
-        for(NSView* child in _toolbar.arrangedSubviews) if([child isKindOfClass:NSStackView.class]) {
-            NSStackView* row=(id)child; NSMutableArray<NSValue*>* controls=[NSMutableArray array];
-            for(NSView* control in row.arrangedSubviews) {
-                if(control.hidden || NSWidth(control.frame)<=0) continue;
-                NSRect rect=[control convertRect:control.bounds toView:_toolbar];
-                Check(NSMinX(rect)>=-.5 && NSMaxX(rect)<=NSWidth(_toolbar.bounds)+.5,@"direct toolbar controls stay inside the header");
-                if([control isKindOfClass:NSControl.class]) {
-                    for(NSValue* value in controls) Check(!NSIntersectsRect(NSInsetRect(value.rectValue,.5,.5),NSInsetRect(rect,.5,.5)),
-                        [NSString stringWithFormat:@"toolbar controls never overlap: %@ / %@",NSStringFromRect(value.rectValue),NSStringFromRect(rect)]);
-                    [controls addObject:[NSValue valueWithRect:rect]];
-                }
+        NSMutableArray<NSControl*>* controls=[NSMutableArray array]; VisibleControls(_toolbar,controls);
+        NSMutableArray<NSValue*>* bounds=[NSMutableArray array];
+        for(NSControl* control in controls) {
+            // AppKit frame extents include transparent bezel overdraw beyond
+            // constrained alignment rectangles; compare the painted control bounds.
+            NSRect rect=[_toolbar convertRect:[control alignmentRectForFrame:control.frame] fromView:control.superview];
+            Check(NSMinX(rect)>=-.5 && NSMaxX(rect)<=NSWidth(_toolbar.bounds)+.5,
+                @"direct toolbar controls stay inside the header");
+            for(NSValue* value in bounds) Check(!NSIntersectsRect(NSInsetRect(value.rectValue,.5,.5),NSInsetRect(rect,.5,.5)),
+                [NSString stringWithFormat:@"toolbar controls never overlap: %@ / %@",NSStringFromRect(value.rectValue),NSStringFromRect(rect)]);
+            [bounds addObject:[NSValue valueWithRect:rect]];
+        }
+        if(_sidebarModeControl.spdf_selectedSidebarMode==SPDFSidebarModeSearch) {
+            for(NSView* control in @[_searchField,_findRegexCheckbox,_findCountLabel,_findSegments]) {
+                if(control.hidden) continue;
+                NSRect rect=[control convertRect:control.bounds toView:_sidebarContainer];
+                Check(NSMinX(rect)>=0 && NSMaxX(rect)<=NSWidth(_sidebarContainer.bounds),@"Find controls fit in the minimum sidebar width");
             }
         }
-        Check([((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle isEqual:_tabs[0].title],@"sidebar retains the full document filename");
+        Check([((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle isEqual:_tabs[(NSUInteger)_selectedTabIndex].title],@"sidebar retains the full document filename");
     }
     NSView* view=_window.contentView;
     for (NSView* child in @[_tabStrip,_toolbar,_sidebarModeControl,_pageScrollView]) {
@@ -234,10 +264,14 @@ int main(int argc,const char* argv[]) {
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             CheckUpdaterMenu(reader);
-            for (NSNumber* width in @[@1280,@880,@640]) {
+            for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil width:width.doubleValue sidebar:YES map:YES];
             }
+            [reader setProbeVersion:YES];
+            [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-version.png" : @"reader-light-version.png"] : nil
+                width:640 sidebar:YES map:YES];
+            [reader setProbeVersion:NO];
             [reader setProbeFind:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-find.png" : @"reader-light-find.png"] : nil
                 width:1280 sidebar:YES map:YES];
