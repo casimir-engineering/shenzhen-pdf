@@ -57,6 +57,7 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
     NSString* _groupPreviewColor;
     NSTimeInterval _groupHoverBegan;
     NSInteger _groupHoverIndex;
+    NSArray<NSString*>* _displayTitles;
     NSMutableDictionary<NSNumber*,NSNumber*>* _preferredTabWidths;
     NSArray<NSNumber*>* _ungroupedVisibleIndexes;
     CGFloat _ungroupedLayoutWidth;

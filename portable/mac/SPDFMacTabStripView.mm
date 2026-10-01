@@ -83,6 +83,7 @@
     _preferredTabWidths = nil;
     _ungroupedVisibleIndexes = nil;
     _tabs = [tabs copy];
+    _displayTitles = nil;
     _accessibilityChildrenSnapshot = nil;
     NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
     [self setNeedsDisplay:YES];

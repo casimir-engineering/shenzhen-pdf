@@ -77,7 +77,11 @@
 
 NSString* spdf_display_label_without_extension(NSString* label) { return label ?: @""; }
 NSString* spdf_display_name_for_path(NSString* path) { return path.lastPathComponent ?: @""; }
-NSArray<NSString*>* spdf_disambiguated_display_names_for_paths(NSArray<NSString*>* paths) { return paths; }
+NSArray<NSString*>* spdf_disambiguated_display_names_for_paths(NSArray<NSString*>* paths) {
+    NSMutableArray* result=[NSMutableArray array];
+    for (NSString* path in paths) [result addObject:path.lastPathComponent.stringByDeletingPathExtension];
+    return result;
+}
 NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWindowNumber) {
     (void)tab, (void)sourceWindowNumber;
     return @{};
