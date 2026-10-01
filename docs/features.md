@@ -148,8 +148,15 @@ does not re-trigger the macOS access prompt.
   *paper* landscape, and the text stays upright.
 - **Presentation mode** (<kbd>F5</kbd> or <kbd>Cmd+Shift+F</kbd>) — chrome-free
   full screen, pure black surround, optional sleep prevention.
-- **Properties** (<kbd>Opt+I</kbd>) — title, author, producer, dates, page size,
-  encryption, file size.
+- **File → Properties** (<kbd>Opt+I</kbd> on Mac) — available for every open file,
+  including Markdown, source code, images and missing originals. Pictures show
+  pixel dimensions, megapixels, embedded resolution, color model/profile, bit
+  depth, transparency, orientation, frame count and camera metadata when present.
+  Text documents show live page, heading, language and word/character statistics;
+  vector artwork shows page dimensions without invented pixel resolution. PDFs
+  retain author, producer, dates, permissions, page and annotation statistics.
+  File size and location remain available for other formats. Metadata is read
+  only when Properties is opened.
 - **Auto-reload** — a document edited on disk refreshes in place, keeping your
   place. For Markdown the new render is prepared off-screen and swapped in
   complete, so nothing blanks or flashes.

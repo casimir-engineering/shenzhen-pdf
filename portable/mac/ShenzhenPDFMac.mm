@@ -14624,18 +14624,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     [self evictDistantRenderedPageImages];
 }
 
-- (void)showProperties:(id)sender {
-    (void)sender;
-    if (!_doc) return;
-    [SPDFPropertiesPanelController presentForDocument:_doc
-                                           sourcePath:_path
-                                          workingPath:_workingPath.length ? _workingPath : _path
-                                            pageIndex:_pageIndex
-                                         outlineCount:_outline.count
-                                      annotationCount:_comments.count
-                                         parentWindow:_window];
-}
-
 - (void)showDefaultPDFReaderStatus:(NSString*)message detail:(NSString*)detail {
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = message;
@@ -15387,7 +15375,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentPageAsPDF:)) return [self canCopyCurrentPageAsPDF];
     if (action == @selector(copyCurrentPageImage:)) return [self canCopyCurrentPageImage];
-    if (action == @selector(showProperties:)) return _doc != NULL;
+    if (action == @selector(showProperties:)) return [self selectedTab].path.length > 0;
     if (!hasDoc) return action == @selector(unimplementedMenuItem:);
 
     if (action == @selector(fitWidth:))

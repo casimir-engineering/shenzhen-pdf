@@ -2,6 +2,7 @@
 
 #import "SPDFMacPassword.h"
 #import "SPDFMacPropertiesFormat.h"
+#import "SPDFMacPropertiesModel.h"
 
 // Panel subclass so Escape and Cmd+W close the panel itself (Cmd+W would
 // otherwise fall through to the File > Close menu item and close the active
@@ -76,29 +77,10 @@ static NSMutableSet<SPDFPropertiesPanelController*>* spdf_properties_visible_con
     return controllers;
 }
 
-static NSString* spdf_properties_metadata(spdf_document* doc, const char* key) {
-    char buffer[4096];
-    if (!spdf_lookup_metadata(doc, key, buffer, sizeof(buffer))) return @"";
-    NSString* value = [NSString stringWithUTF8String:buffer] ?: @"";
-    return [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-}
-
-static NSString* spdf_properties_display_date(NSDate* date) {
-    if (!date) return @"";
-    NSDateFormatter* formatter = [[NSDateFormatter alloc] init];
-    formatter.dateStyle = NSDateFormatterMediumStyle;
-    formatter.timeStyle = NSDateFormatterShortStyle;
-    return [formatter stringFromDate:date] ?: @"";
-}
-
 static NSString* spdf_properties_grouped(NSUInteger value) {
     NSNumberFormatter* formatter = [[NSNumberFormatter alloc] init];
     formatter.numberStyle = NSNumberFormatterDecimalStyle;
     return [formatter stringFromNumber:@(value)] ?: [NSString stringWithFormat:@"%lu", (unsigned long)value];
-}
-
-static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value) {
-    return [NSMutableDictionary dictionaryWithDictionary:@{@"label" : label, @"value" : value}];
 }
 
 + (void)presentForDocument:(spdf_document*)doc
@@ -107,8 +89,9 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
                  pageIndex:(NSInteger)pageIndex
               outlineCount:(NSInteger)outlineCount
            annotationCount:(NSInteger)annotationCount
+                  textInfo:(NSDictionary*)textInfo
               parentWindow:(NSWindow*)parentWindow {
-    if (!doc) return;
+    if (!sourcePath.length) return;
 
     // One properties panel at a time: a fresh open replaces (and cancels) the
     // previous one so the panel always reflects the active tab at open time.
@@ -116,121 +99,16 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
         [controller close];
 
     SPDFPropertiesPanelController* controller = [[SPDFPropertiesPanelController alloc] init];
-    [controller buildSectionsForDocument:doc
-                              sourcePath:sourcePath
-                               pageIndex:pageIndex
-                            outlineCount:outlineCount
-                         annotationCount:annotationCount];
+    controller->_sections = SPDFPropertiesSections(doc,sourcePath,workingPath,pageIndex,outlineCount,annotationCount,textInfo);
+    for (NSDictionary* section in controller->_sections) for (NSMutableDictionary* row in section[@"rows"])
+        if ([row[@"label"] isEqual:@"Text"]) controller->_textStatsRow = row;
     [controller buildPanelWithSourcePath:sourcePath parentWindow:parentWindow];
     [spdf_properties_visible_controllers() addObject:controller];
-    [controller startWordCountForPath:workingPath.length ? workingPath : sourcePath sourcePath:sourcePath];
-}
-
-- (void)buildSectionsForDocument:(spdf_document*)doc
-                      sourcePath:(NSString*)sourcePath
-                       pageIndex:(NSInteger)pageIndex
-                    outlineCount:(NSInteger)outlineCount
-                 annotationCount:(NSInteger)annotationCount {
-    NSMutableArray<NSDictionary*>* sections = [NSMutableArray array];
-
-    // Document metadata (rows with empty values are omitted).
-    NSMutableArray* documentRows = [NSMutableArray array];
-    NSDictionary<NSString*, NSString*>* metadataRows = @{
-        @"Title" : @"info:Title",
-        @"Author" : @"info:Author",
-        @"Subject" : @"info:Subject",
-        @"Keywords" : @"info:Keywords",
-        @"Creator" : @"info:Creator",
-        @"Producer" : @"info:Producer",
-    };
-    for (NSString* label in @[ @"Title", @"Author", @"Subject", @"Keywords", @"Creator", @"Producer" ]) {
-        NSString* value = spdf_properties_metadata(doc, metadataRows[label].UTF8String);
-        if (value.length) [documentRows addObject:spdf_properties_row(label, value)];
+    [controller->_panel makeKeyAndOrderFront:nil];
+    if (controller->_textStatsRow) {
+        if (textInfo[@"text"]) [controller startWordCountForText:textInfo[@"text"]];
+        else [controller startWordCountForPath:workingPath.length ? workingPath : sourcePath sourcePath:sourcePath];
     }
-    NSString* encryption = spdf_properties_metadata(doc, "encryption");
-    if ([encryption isEqualToString:@"None"]) encryption = @"";
-    if (encryption.length && spdf_is_password_protected(doc))
-        encryption = [encryption stringByAppendingString:@" (password protected)"];
-    NSString* security =
-        spdf_properties_security_summary(encryption, spdf_has_permission(doc, 'p'), spdf_has_permission(doc, 'c'),
-                                         spdf_has_permission(doc, 'e'), spdf_has_permission(doc, 'n'));
-    [documentRows addObject:spdf_properties_row(@"Security", security)];
-    [sections addObject:@{@"title" : @"Document", @"rows" : documentRows}];
-
-    // Dates: PDF metadata dates first; on-disk dates appear when there is no
-    // PDF counterpart or when they differ meaningfully (> 60 s).
-    NSDictionary* fileAttributes = sourcePath.length
-                                       ? [NSFileManager.defaultManager attributesOfItemAtPath:sourcePath error:nil]
-                                       : nil;
-    NSMutableArray* dateRows = [NSMutableArray array];
-    NSString* rawCreated = spdf_properties_metadata(doc, "info:CreationDate");
-    NSString* rawModified = spdf_properties_metadata(doc, "info:ModDate");
-    NSDate* pdfCreated = spdf_properties_parse_pdf_date(rawCreated);
-    NSDate* pdfModified = spdf_properties_parse_pdf_date(rawModified);
-    if (pdfCreated) {
-        NSMutableDictionary* row = spdf_properties_row(@"Created", spdf_properties_display_date(pdfCreated));
-        row[@"tooltip"] = rawCreated;
-        [dateRows addObject:row];
-    } else if (rawCreated.length) {
-        [dateRows addObject:spdf_properties_row(@"Created", rawCreated)];  // unparseable: show verbatim
-    }
-    if (pdfModified) {
-        NSMutableDictionary* row = spdf_properties_row(@"Modified", spdf_properties_display_date(pdfModified));
-        row[@"tooltip"] = rawModified;
-        [dateRows addObject:row];
-    } else if (rawModified.length) {
-        [dateRows addObject:spdf_properties_row(@"Modified", rawModified)];
-    }
-    NSDate* fileCreated = fileAttributes[NSFileCreationDate];
-    NSDate* fileModified = fileAttributes[NSFileModificationDate];
-    if (fileCreated && (!pdfCreated || fabs([fileCreated timeIntervalSinceDate:pdfCreated]) > 60.0))
-        [dateRows addObject:spdf_properties_row(@"Created (on disk)", spdf_properties_display_date(fileCreated))];
-    if (fileModified && (!pdfModified || fabs([fileModified timeIntervalSinceDate:pdfModified]) > 60.0))
-        [dateRows addObject:spdf_properties_row(@"Modified (on disk)", spdf_properties_display_date(fileModified))];
-    if (dateRows.count) [sections addObject:@{@"title" : @"Dates", @"rows" : dateRows}];
-
-    // File.
-    NSMutableArray* fileRows = [NSMutableArray array];
-    if (sourcePath.length) {
-        NSMutableDictionary* pathRow = spdf_properties_row(@"Location", sourcePath);
-        pathRow[@"tooltip"] = sourcePath;
-        pathRow[@"middleTruncate"] = @YES;
-        [fileRows addObject:pathRow];
-    }
-    unsigned long long fileSize = [fileAttributes[NSFileSize] unsignedLongLongValue];
-    if (fileAttributes) [fileRows addObject:spdf_properties_row(@"Size", spdf_properties_format_file_size(fileSize))];
-    NSString* format = spdf_properties_metadata(doc, "format");
-    if (!format.length) format = sourcePath.pathExtension.uppercaseString;
-    if (format.length) [fileRows addObject:spdf_properties_row(@"Format", format)];
-    if (fileRows.count) [sections addObject:@{@"title" : @"File", @"rows" : fileRows}];
-
-    // Statistics.
-    NSMutableArray* statsRows = [NSMutableArray array];
-    NSInteger pageCount = spdf_page_count(doc);
-    [statsRows addObject:spdf_properties_row(@"Pages", spdf_properties_grouped((NSUInteger)MAX(0, pageCount)))];
-    if (pageIndex >= 0 && pageIndex < pageCount) {
-        float pageWidth = 0, pageHeight = 0;
-        char err[256];
-        if (spdf_page_size(doc, (int)pageIndex, &pageWidth, &pageHeight, err, sizeof(err))) {
-            NSString* size = spdf_properties_format_page_size_pt(pageWidth, pageHeight);
-            if (size.length) {
-                NSString* label = [NSString stringWithFormat:@"Page %ld size", (long)pageIndex + 1];
-                [statsRows addObject:spdf_properties_row(label, size)];
-            }
-        }
-    }
-    NSString* toc = outlineCount > 0
-                        ? [NSString stringWithFormat:@"%@ entries", spdf_properties_grouped((NSUInteger)outlineCount)]
-                        : @"None";
-    [statsRows addObject:spdf_properties_row(@"Table of contents", toc)];
-    NSString* annotations =
-        annotationCount > 0 ? spdf_properties_grouped((NSUInteger)annotationCount) : @"None";
-    [statsRows addObject:spdf_properties_row(@"Annotations", annotations)];
-    _textStatsRow = spdf_properties_row(@"Text", @"Counting…");
-    [statsRows addObject:_textStatsRow];
-    [sections addObject:@{@"title" : @"Statistics", @"rows" : statsRows}];
-
-    _sections = sections;
 }
 
 - (NSTextField*)valueFieldForRow:(NSDictionary*)row {
@@ -424,7 +302,6 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
     } else {
         [_panel center];
     }
-    [_panel makeKeyAndOrderFront:nil];
 }
 
 - (NSString*)headerSubtitle {
@@ -506,6 +383,19 @@ static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value
                                                              spdf_properties_grouped(chars)];
           dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf finishWordCountWithValue:value]; });
       }
+    });
+}
+
+- (void)startWordCountForText:(NSString*)text {
+    NSString* snapshot = [text copy];
+    __weak SPDFPropertiesPanelController* weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
+        if (!weakSelf || weakSelf.wordCountCancelled) return;
+        NSUInteger words = 0, characters = 0;
+        spdf_properties_count_text(snapshot,&words,&characters);
+        NSString* value = [NSString stringWithFormat:@"%@ words · %@ characters",
+            spdf_properties_grouped(words),spdf_properties_grouped(characters)];
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf finishWordCountWithValue:value]; });
     });
 }
 
