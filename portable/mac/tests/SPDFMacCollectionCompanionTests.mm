@@ -19,6 +19,10 @@ int main(void) {
         Expect(@"ordinary launch does not instantiate or show Collection",
             [launch rangeOfString:@"SPDFCollectionCompanionHost alloc"].location==NSNotFound &&
             [launch rangeOfString:@"showCollectionManager"].location==NSNotFound);
+        NSString* runtime=[NSString stringWithContentsOfFile:[mac stringByAppendingPathComponent:@"SPDFMacCollectionCompanionRuntime.mm"] encoding:NSUTF8StringEncoding error:nil];
+        NSString* host=[NSString stringWithContentsOfFile:[mac stringByAppendingPathComponent:@"SPDFMacCollectionCompanionHost.mm"] encoding:NSUTF8StringEncoding error:nil];
+        Expect(@"Return to reader uses the existing companion activation channel",
+            [runtime containsString:@"returnHandler"] && [runtime containsString:@"activateReader"] && [host containsString:@"activateReader"]);
         NSPipe* outgoing=[NSPipe pipe], *incoming=[NSPipe pipe];
         SPDFCollectionPipe* parent=[[SPDFCollectionPipe alloc] initWithReader:incoming.fileHandleForReading
                                                                       writer:outgoing.fileHandleForWriting];

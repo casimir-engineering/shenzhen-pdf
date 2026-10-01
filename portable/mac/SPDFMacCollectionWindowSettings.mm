@@ -14,12 +14,12 @@
         [pane.topAnchor constraintEqualToAnchor:self.contentHost.topAnchor],[pane.bottomAnchor constraintEqualToAnchor:self.contentHost.bottomAnchor]]];
     NSScrollView* scroll = [NSScrollView new]; scroll.hasVerticalScroller = YES; scroll.drawsBackground = NO;
     scroll.translatesAutoresizingMaskIntoConstraints = NO; [pane addSubview:scroll];
-    [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:pane.leadingAnchor constant:25],
-        [scroll.trailingAnchor constraintEqualToAnchor:pane.trailingAnchor constant:-25],
+    [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:pane.leadingAnchor constant:14],
+        [scroll.trailingAnchor constraintEqualToAnchor:pane.trailingAnchor constant:-14],
         [scroll.topAnchor constraintEqualToAnchor:pane.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:pane.bottomAnchor]]];
     NSStackView* stack = [SPDFCollectionSettingsStack stackViewWithViews:@[]];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeLeading;
-    stack.spacing = 11; stack.edgeInsets = NSEdgeInsetsMake(20,0,20,0);
+    stack.spacing = 11; stack.edgeInsets = NSEdgeInsetsMake(14,0,14,0);
     stack.frame = NSMakeRect(0,0,710,660); scroll.documentView = stack;
     NSLayoutConstraint* width = [stack.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor]; width.priority = NSLayoutPriorityDefaultHigh; width.active = YES;
     [stack.widthAnchor constraintLessThanOrEqualToConstant:710].active = YES;
@@ -27,16 +27,15 @@
     void (^add)(NSView*) = ^(NSView* view) { [stack addArrangedSubview:view]; [view.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES; };
     void (^section)(NSString*) = ^(NSString* title) { add(SPDFCollectionText(title,13,NSFontWeightSemibold,NO)); };
     void (^divider)(void) = ^{ NSView* line = SPDFCollectionDivider(); add(line); [stack setCustomSpacing:19 afterView:line]; };
-    NSTextField* title = SPDFCollectionText(@"Settings",17,NSFontWeightSemibold,NO); add(title); [stack setCustomSpacing:20 afterView:title];
-    section(@"Collection");
-    self.enabled = [NSButton checkboxWithTitle:@"Keep local copies and history" target:self action:@selector(changeEnabled:)];
+    NSTextField* title = SPDFCollectionText(@"Local copies and history",13,NSFontWeightSemibold,NO); add(title); [stack setCustomSpacing:20 afterView:title];
+    self.enabled = [NSButton checkboxWithTitle:@"Keep Collection enabled" target:self action:@selector(changeEnabled:)];
     self.enabled.font = [NSFont systemFontOfSize:13]; self.enabled.state = self.store.isEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [stack addArrangedSubview:self.enabled];
     NSTextField* captureHelp = SPDFCollectionText(@"You continue using the originals. Turning this off stops new copies; existing history remains available.",12,NSFontWeightRegular,YES);
     add(captureHelp); [stack setCustomSpacing:19 afterView:captureHelp]; divider();
     section(@"Storage");
     NSStackView* cap = [NSStackView stackViewWithViews:@[]]; cap.spacing = 6; cap.distribution = NSStackViewDistributionFill;
-    [cap addArrangedSubview:SPDFCollectionText(@"Storage limit",13,NSFontWeightRegular,NO)];
+    [cap addArrangedSubview:SPDFCollectionText(@"Storage cap",12,NSFontWeightRegular,NO)];
     [cap addArrangedSubview:[NSView new]];
     self.limitPicker = SPDFCollectionPopUp(); [self.limitPicker addItemsWithTitles:@[@"Unlimited (default)",@"Custom limit"]];
     [self.limitPicker selectItemAtIndex:[self.store.settings[@"storageLimitBytes"] unsignedLongLongValue] ? 1 : 0];

@@ -5,6 +5,7 @@ typedef void (^SPDFCollectionNavigateHandler)(NSDictionary* document, NSDictiona
                                              NSUInteger page, NSString* query, BOOL history);
 @interface SPDFMacCollectionWindow : NSWindowController <NSTableViewDataSource, NSTableViewDelegate>
 @property(nonatomic, copy) SPDFCollectionNavigateHandler navigateHandler;
+@property(nonatomic, copy) void (^returnHandler)(void);
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store open:(SPDFCollectionOpenHandler)open;
 - (void)showDocumentID:(NSString*)documentID query:(NSString*)query;
 @end

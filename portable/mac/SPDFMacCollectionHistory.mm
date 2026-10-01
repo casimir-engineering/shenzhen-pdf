@@ -19,7 +19,7 @@
 @implementation SPDFHistoryVersionRow
 - (void)drawSelectionInRect:(NSRect)dirtyRect {
     (void)dirtyRect;
-    [[NSColor.controlAccentColor colorWithAlphaComponent:.14] setFill];
+    [SPDFCollectionColor(@"selected") setFill];
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,2,1) xRadius:6 yRadius:6] fill];
 }
 @end
@@ -40,18 +40,22 @@
     NSUInteger _previewGeneration;
     BOOL _restoringSelection;
     NSStackView* _recoveryActions;
+    BOOL _showsDocumentTitle;
 }
+@synthesize showsDocumentTitle = _showsDocumentTitle;
+- (void)setShowsDocumentTitle:(BOOL)value { _showsDocumentTitle = value; _title.hidden = !value; }
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store documentID:(NSString*)documentID
                          open:(SPDFCollectionOpenHandler)open {
     if (!(self = [super initWithNibName:nil bundle:nil])) return nil;
-    _store = store; _documentID = documentID.copy; _open = [open copy]; _versions = @[];
+    _store = store; _documentID = documentID.copy; _open = [open copy]; _versions = @[]; _showsDocumentTitle = YES;
     return self;
 }
 - (void)loadView {
     self.view = [[NSView alloc] initWithFrame:NSMakeRect(0,0,280,650)];
     _title = [NSTextField labelWithString:@"Loading…"];
+    _title.identifier = @"HistoryDocumentTitle";
     _title.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
-    _title.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    _title.lineBreakMode = NSLineBreakByTruncatingMiddle; _title.hidden = !_showsDocumentTitle;
     _status = [NSTextField wrappingLabelWithString:@"Saved versions are read-only."];
     _status.font = [NSFont systemFontOfSize:11];
     _status.textColor = NSColor.secondaryLabelColor;
@@ -66,17 +70,15 @@
     NSScrollView* scroll = [NSScrollView new]; scroll.documentView = _table;
     scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.drawsBackground = NO;
     scroll.identifier = @"HistoryVersionsViewport";
-    _compareButton = [NSButton buttonWithTitle:@"Compare with Latest" target:self action:@selector(compareCurrent:)];
-    _compareButton.bezelStyle = NSBezelStyleRounded; _compareButton.controlSize = NSControlSizeSmall;
-    _compareButton.font = [NSFont systemFontOfSize:11];
-    _keepButton = [NSButton checkboxWithTitle:@"Keep" target:self action:@selector(keep:)];
-    _keepButton.controlSize = NSControlSizeSmall; _keepButton.font = [NSFont systemFontOfSize:11];
+    _compareButton = SPDFCollectionButton(@"Compare with Latest",self,@selector(compareCurrent:),@"normal");
+    _keepButton = SPDFCollectionButton(@"Keep",self,@selector(keep:),@"quiet");
+    _keepButton.buttonType = NSButtonTypePushOnPushOff;
     _keepButton.accessibilityLabel = @"Keep selected version";
     _keepButton.toolTip = @"Keep this version during automatic Collection cleanup.";
-    _actionsMenu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:YES];
+    _actionsMenu = SPDFCollectionPopUp(); _actionsMenu.pullsDown = YES;
     _actionsMenu.identifier = @"HistoryVersionActions";
     _actionsMenu.controlSize = NSControlSizeSmall; _actionsMenu.font = [NSFont systemFontOfSize:11];
-    _actionsMenu.bezelStyle = NSBezelStyleRounded; _actionsMenu.accessibilityLabel = @"Version actions";
+    _actionsMenu.accessibilityLabel = @"Version actions";
     _actionsMenu.menu.autoenablesItems = NO;
     [_actionsMenu addItemWithTitle:@"Actions"];
     NSArray* titles = @[@"Compare with Previous",@"Save a Copy…",@"Manage Collection…"];

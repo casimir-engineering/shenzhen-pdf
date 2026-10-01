@@ -21,13 +21,14 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
 }
 @implementation SPDFMacCollectionWindow
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store open:(SPDFCollectionOpenHandler)open {
-    NSWindow* window = [[SPDFCollectionManagerWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 690)
-        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
+    NSWindow* window = [[SPDFCollectionManagerWindow alloc] initWithContentRect:NSMakeRect(0, 0, 850, 590)
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView
         backing:NSBackingStoreBuffered defer:NO];
     if (!(self = [super initWithWindow:window])) return nil;
     _store = store; _openHandler = [open copy]; _rows = @[]; _documents = @[];
+    window.titleVisibility = NSWindowTitleHidden; window.titlebarAppearsTransparent = YES;
     window.title = @"Collection"; window.releasedWhenClosed = NO;
-    window.minSize = NSMakeSize(940, 560); [window setFrameAutosaveName:@"CollectionManager"];
+    window.minSize = NSMakeSize(680, 460); [window setFrameAutosaveName:@"CollectionManager"];
     NSDictionary* preferences = store.settings;
     _initialBrowseState = [preferences[@"managerBrowseState"] isKindOfClass:NSDictionary.class] ? preferences[@"managerBrowseState"] : @{};
     NSArray* expanded = [_initialBrowseState[@"expanded"] isKindOfClass:NSArray.class] ? _initialBrowseState[@"expanded"] : @[];
@@ -104,7 +105,8 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
             [self reloadGrid];
             [self restoreBrowseSelectionAndScroll:browseState];
             self.reloadingResults = NO;
-            self.resultSummary.stringValue = [NSString stringWithFormat:@"%lu %@",(unsigned long)rows.count,query.length ? (rows.count==1 ? @"matching document" : @"matching documents") : (rows.count==1 ? @"document" : @"documents")];
+            self.resultSummary.stringValue = query.length ? @"No matching documents." : @"Documents you open will appear here when Collection is enabled.";
+            self.resultSummary.hidden = rows.count > 0;
             self.locationField.stringValue = self.store.rootURL.path;
             [self updateStoragePolicy];
             self.enabled.state = self.store.isEnabled ? NSControlStateValueOn : NSControlStateValueOff;
