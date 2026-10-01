@@ -5,4 +5,5 @@
 @property(nonatomic, copy) void (^stateHandler)(NSDictionary* state);
 - (void)updateGroups:(NSArray<NSDictionary*>*)groups state:(NSDictionary*)state;
 - (NSDictionary*)viewState;
+- (void)revealSelectedDocument;
 @end

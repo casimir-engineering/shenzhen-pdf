@@ -1,4 +1,5 @@
 #import "SPDFMacTabStripViewPrivate.h"
+#import "SPDFMacTabTitleDrawing.h"
 #include <math.h>
 
 @implementation SPDFTabStripView (Drawing)
@@ -55,7 +56,7 @@
     NSRectClip(titleRect);
     CGContextRef graphics = NSGraphicsContext.currentContext.CGContext;
     if (hovered) CGContextBeginTransparencyLayer(graphics, NULL);
-    [title drawWithRect:titleRect options:NSStringDrawingUsesLineFragmentOrigin attributes:titleAttrs];
+    SPDFDrawTabTitle(title, titleRect, titleAttrs);
     // The glyph geometry never changes on hover. Fade only the trailing region
     // into this tab's actual fill, then overlay the close control.
     if (hovered) {
@@ -99,9 +100,7 @@
     [[NSColor clearColor] setFill];
     NSRectFill(self.bounds);
 
-    NSMutableParagraphStyle* tabTitleStyle = [[NSMutableParagraphStyle alloc] init];
-    tabTitleStyle.alignment = NSTextAlignmentCenter;
-    tabTitleStyle.lineBreakMode = NSLineBreakByClipping;
+    NSParagraphStyle* tabTitleStyle = SPDFTabTitleParagraphStyle();
     NSDictionary* attrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightRegular],
         NSForegroundColorAttributeName : NSColor.labelColor,

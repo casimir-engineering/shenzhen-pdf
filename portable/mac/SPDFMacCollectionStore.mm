@@ -1,4 +1,5 @@
 #import "SPDFMacCollectionStorePrivate.h"
+#import "SPDFMacSearchFileCache.h"
 
 NSError* SPDFCollectionError(NSInteger code, NSString* message) {
     return [NSError errorWithDomain:@"SPDFCollection" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -188,9 +189,7 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
     NSString* filename=version[@"indexFile"];
     if (![filename isKindOfClass:NSString.class] || ![filename isEqual:filename.lastPathComponent]) return @{};
     NSURL* URL=[[self.rootURL URLByAppendingPathComponent:@"indexes"] URLByAppendingPathComponent:filename];
-    NSData* bytes=[NSData dataWithContentsOfURL:URL];
-    id value=bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
-    return [value isKindOfClass:NSDictionary.class] ? value : @{};
+    return SPDFSearchCachedJSON(URL.path) ?: @{};
 }
 - (unsigned long long)storageUsedBytes {
     return [self retainedBytesInManifest:[self readManifest]];

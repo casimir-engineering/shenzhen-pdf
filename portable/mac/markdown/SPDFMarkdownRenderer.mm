@@ -1,3 +1,4 @@
+#import "../SPDFSearchSnippet.h"
 #import "SPDFMarkdownRenderer.h"
 
 #import "SPDFMarkdownDecorations.h"
@@ -232,12 +233,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
                    matches:(NSMutableArray<SPDFMarkdownSearchMatch*>*)matches {
     SPDFMarkdownRenderedBlock* owner = [self blockContainingLocation:found.location];
     NSInteger headingIndex = [self headingIndexAtLocation:found.location];
-    NSUInteger contextStart = found.location > 48 ? found.location - 48 : 0;
-    NSUInteger contextEnd = MIN(canonical.length, NSMaxRange(found) + 48);
-    NSRange contextRange = [canonical rangeOfComposedCharacterSequencesForRange:
-        NSMakeRange(contextStart, contextEnd - contextStart)];
-    NSString* context = [[canonical substringWithRange:contextRange]
-        stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    NSString* context = SPDFSearchSnippet(canonical,found,24,72)[@"title"];
     [matches addObject:[[SPDFMarkdownSearchMatch alloc] initWithRange:found
                                                            blockIndex:owner ? owner.blockIndex : NSNotFound
                                                          headingIndex:headingIndex

@@ -514,8 +514,6 @@
 - (void)deleteComment:(id)sender;
 - (NSNumber*)commentIndexForSidebarRow:(NSInteger)row;
 - (BOOL)documentArrowKeyDown:(NSEvent*)event;
-- (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
-- (BOOL)documentEscapeKeyDown:(NSEvent*)event;
 - (void)goToAdjacentPagePreservingRelativePosition:(NSInteger)delta;
 - (void)installPresentationEventMonitor;
 - (void)removePresentationEventMonitor;
@@ -577,7 +575,6 @@
 - (void)showSearchSidebarForFind;
 - (NSArray<NSValue*>*)rangesOfPaletteQuery:(NSString*)query inString:(NSString*)text limit:(NSUInteger)limit;
 - (NSRange)paletteSnippetRangeInLine:(NSString*)line matchRange:(NSRange)matchRange;
-- (NSString*)findContextForQuery:(NSString*)query lines:(const spdf_text_lines*)lines matchRect:(NSRect)matchRect;
 - (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender;
 - (void)activateSidebarRow:(id)sender;
 - (void)scrollToPageRect:(NSRect)targetRect pageIndex:(NSInteger)pageIndex;
@@ -615,6 +612,8 @@
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacUIReaderConformance) <SPDFMacDocumentViewReader>
+- (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
+- (BOOL)documentEscapeKeyDown:(NSEvent*)event;
 @end
 
 // Implemented in SPDFMacLinkNavigation.mm: instant, reversible in-document link

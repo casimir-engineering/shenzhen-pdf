@@ -63,6 +63,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SPDFMacCollectionStore (Search)
 - (NSArray<NSDictionary*>*)search:(NSString*)query titlesOnly:(BOOL)titlesOnly
                  excludingPaths:(NSSet<NSString*>*)paths limit:(NSUInteger)limit;
+- (NSArray<NSDictionary*>*)search:(NSString*)query titlesOnly:(BOOL)titlesOnly
+                 excludingPaths:(NSSet<NSString*>*)paths limit:(NSUInteger)limit progress:(nullable NSProgress*)progress;
 // Explicit invocation only. Enumerates user-provided roots, skips archive, symlinks/packages.
 - (NSArray<NSDictionary*>*)locateCandidatesForDocumentID:(NSString*)documentID
             roots:(NSArray<NSURL*>*)roots cancelled:(BOOL (^)(void))cancelled error:(NSError**)error;

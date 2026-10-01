@@ -625,3 +625,23 @@ The full Markdown/Collection UI suite, tab-strip interactions, tab-group interac
 ![EPUB content rendered by the reader core](../../proposals/mac-workspace-rethink/evidence/formats/book.epub.png)
 
 Packaging completed in `dist/ShenzhenPDF.app`. Strict deep signature validation passed; the built file associations match the source plist and the executable is newer than the production native sources. File-size checks passed after extracting drop routing from the coordinator. This is a local build, not a published release; the running app was left untouched.
+
+
+## 2 October — search context, navigation and palette latency
+
+The screenshot exposed a real context error: PDF search chose a nearby line intersecting the match rectangle, which could return `/docs` for a match in `/images`. Context now comes from an actual query occurrence, associated with the hit geometry. PDF and Markdown results carry explicit highlight ranges through whitespace normalization and narrow-sidebar cropping. Cards wrap context instead of silently tail-truncating it before the match. Markdown page layout and margins are unchanged.
+
+A separate interaction agent restored type-to-search from passive controls, while leaving text editors and input composition alone. Escape clears Find and returns to the panel and visibility from which it was entered, including fullscreen. An intentional panel or document switch prevents stale restoration. Tab titles again use middle ellipsis with stable geometry when the close button appears. Offscreen pixel checks verify that both title ends survive and that changes in the hidden middle do not change the raster.
+
+The group-navigation agent made entry into Groups reveal the current document without recentering subsequent refreshes. Group headers float within their section and are pushed away by the next group in either scroll direction. Existing filtering, saved collapse preferences and YAML scroll state are preserved. The rendered example below deliberately captures a boundary transition, where the departing header is partially clipped beneath the search area.
+
+The performance agent removed the command palette's120ms debounce and separated immediate document/group names from asynchronous text work. Lazy bounded caches retain session metadata, Collection manifests/index text and extracted open-document text. File identity, size and nanosecond timestamps invalidate stale entries; Markdown image dependencies invalidate pagination when needed. Cancellation and generation guards reject obsolete results. This adds no launch indexing. On the retained128-document/8MiB fixture, cold cache population measured17.75ms, a warm early match0.86ms and a complete warm no-match scan24.39ms. These are cache/search measurements, not end-to-end palette latency; uncached document extraction still completes asynchronously.
+
+Independent review caught three additional PDF parity cases before packaging: line-anchored regexes, repeated whitespace and multiline wildcard rewriting. Added regressions cover all three. The existing core multiline rewrite was extracted unchanged into a shared helper so context follows the same lazy wildcard and trailing-wildcard bounds. Tests also cover adjacent lines, repeated occurrences, Unicode, wrapped phrases, sidebar widths, fullscreen Escape, title pixels, group boundary behavior, cache replacement/deletion and cancelled publication.
+
+The full Markdown/Collection UI suite and focused Collection, Find, group, tab, sidebar, launch-work, core render/selection and updater regressions passed with exit0. All32 updater cases passed. The file-size policy and diff whitespace checks passed. Native views were rendered offscreen; no running user window was launched, quit or captured.
+
+![Actual matched text remains visible and highlighted](../../proposals/mac-workspace-rethink/evidence/native-find-context-corrected.png)
+![Group header push-off at a section boundary](../../proposals/mac-workspace-rethink/evidence/native-groups-sticky-transition.png)
+
+Rebuilt `dist/ShenzhenPDF.app` with the final sources and verified its strict deep signature. This is a local development build, not a published release.

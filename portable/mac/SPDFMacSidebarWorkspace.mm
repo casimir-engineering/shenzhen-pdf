@@ -110,6 +110,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     BOOL emptySearch = mode == SPDFSidebarModeSearch && ![self hasSearchSidebar];
     SPDFGroupManagementController* controller = objc_getAssociatedObject(self,&groupsControllerKey);
     NSView* searchView = objc_getAssociatedObject(self,&emptySearchKey);
+    BOOL enteringGroups = groups && (!controller || controller.view.hidden || !_sidebarVisible);
     controller.view.hidden = !groups; searchView.hidden = !emptySearch;
     if (!groups && !emptySearch) return NO;
     if (!_sidebarPreferredVisible) { [self setSidebarActuallyVisible:NO]; return YES; }
@@ -135,6 +136,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
             objc_setAssociatedObject(self,&groupsControllerKey,controller,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         controller.view.hidden = NO; [self refreshSidebarWorkspacePanel];
+        if (enteringGroups) [controller revealSelectedDocument];
     } else if (!searchView) {
         NSTextField* title = [NSTextField labelWithString:@"Find in this document"];
         title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];

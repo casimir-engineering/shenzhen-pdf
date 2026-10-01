@@ -41,6 +41,31 @@ int main(void) {
             Check([body isEqual:matched] && body.pointSize==12,@"highlighting does not alter weight or text geometry");
             Check([cell.toolTip containsString:item[@"title"]],@"full context remains available when visually truncated");
         }
+        NSString* breadcrumb=@"Breadcrumbs\r\n\t\t2. /docs\u2028\t3. /images\n4. /portable";
+        NSRange image=[breadcrumb rangeOfString:@"ima"];
+        NSDictionary* brokenCase=@{@"kind":@"findResult",@"title":breadcrumb,@"subtitle":@"Page 6 · match 3 of 5",
+            @"query":@"im[a-z]+",@"matchRanges":@[[NSValue valueWithRange:image]]};
+        for (NSNumber* width in @[@176,@240,@400]) {
+            NSWindow* host=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,width.doubleValue,64)
+                styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+            host.releasedWhenClosed=NO;
+            NSTableCellView* result=SPDFSidebarFindCell(table,brokenCase,@[]);
+            host.contentView=result; [result layoutSubtreeIfNeeded];
+            NSString* visible=result.textField.stringValue;
+            NSRange actual=[visible rangeOfString:@"ima"];
+            Check(actual.location!=NSNotFound && actual.location<=13,@"breadcrumb result includes its hit near the start");
+            Check([visible containsString:@"images"] && ![visible containsString:@"\t"],@"context is real matched text with normalized indentation");
+            Check([result.textField.attributedStringValue attribute:NSBackgroundColorAttributeName atIndex:actual.location effectiveRange:nil]!=nil,
+                @"actual regex occurrence is highlighted even though pattern itself is absent");
+            NSParagraphStyle* style=[result.textField.attributedStringValue attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:nil];
+            Check(style.lineBreakMode==NSLineBreakByWordWrapping,@"attributed paragraph does not override wrapping with truncation");
+            NSString* evidence=NSProcessInfo.processInfo.environment[@"SPDF_FIND_CONTEXT_EVIDENCE"];
+            if (evidence.length && width.integerValue==240) {
+                NSBitmapImageRep* bitmap=[result bitmapImageRepForCachingDisplayInRect:result.bounds];
+                [result cacheDisplayInRect:result.bounds toBitmapImageRep:bitmap];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:evidence atomically:YES];
+            }
+        }
         NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,300,200)];
         scroll.hasVerticalScroller = YES; scroll.hasHorizontalScroller = NO;
         NSTableView* resizingTable = [[NSTableView alloc] initWithFrame:NSMakeRect(0,0,400,200)];

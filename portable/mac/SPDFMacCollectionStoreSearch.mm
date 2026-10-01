@@ -1,12 +1,23 @@
 #import "SPDFMacCollectionStorePrivate.h"
+#import "SPDFMacSearchFileCache.h"
 
 @implementation SPDFMacCollectionStore (Search)
 - (NSArray*)search:(NSString*)query titlesOnly:(BOOL)titlesOnly excludingPaths:(NSSet<NSString*>*)paths
              limit:(NSUInteger)limit {
+    return [self search:query titlesOnly:titlesOnly excludingPaths:paths limit:limit progress:nil];
+}
+- (NSArray*)search:(NSString*)query titlesOnly:(BOOL)titlesOnly excludingPaths:(NSSet<NSString*>*)paths
+             limit:(NSUInteger)limit progress:(NSProgress*)progress {
+    if (progress.cancelled) return @[];
     query=[query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSMutableArray* matches=[NSMutableArray array];
     NSStringCompareOptions flags=NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch;
-    for (NSDictionary* doc in [self documents]) {
+    NSString* manifestPath = [[self.rootURL URLByAppendingPathComponent:@"manifest.json"] path];
+    NSDictionary* manifest = SPDFSearchCachedJSON(manifestPath);
+    NSArray* documents = [manifest[@"documents"] isKindOfClass:NSDictionary.class]
+        ? [manifest[@"documents"] allValues] : @[];
+    for (NSDictionary* doc in documents) {
+        if (progress.cancelled) return @[];
         if ((!([doc[@"sourceReplaced"] boolValue]) && [paths containsObject:doc[@"path"]]) || ![doc[@"versions"] count]) continue;
         NSDictionary* version=[doc[@"versions"] lastObject]; NSString* title=doc[@"title"] ?: @"";
         if (titlesOnly) {
@@ -20,6 +31,7 @@
             [matches addObject:row];
         } else if (query.length && ![version[@"encrypted"] boolValue]) {
             for (NSDictionary* page in [self textIndexForVersion:version][@"textPages"]) {
+                if (progress.cancelled) return @[];
                 NSString* text=page[@"text"]; NSRange range=[text rangeOfString:query options:flags];
                 if (range.location==NSNotFound) continue;
                 NSUInteger start=range.location>70 ? range.location-70 : 0;

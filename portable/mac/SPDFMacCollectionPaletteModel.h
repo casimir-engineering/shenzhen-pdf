@@ -21,3 +21,6 @@ NSArray<NSDictionary*>* spdf_collection_palette_rows(BOOL collectionOnly, NSStri
                                                       NSArray<NSDictionary*>* collectionNames,
                                                       NSArray<NSDictionary*>* collectionText,
                                                       BOOL showAll);
+
+BOOL spdf_collection_palette_can_publish(NSProgress* progress, NSUInteger generation,
+                                         NSUInteger currentGeneration, BOOL visible);

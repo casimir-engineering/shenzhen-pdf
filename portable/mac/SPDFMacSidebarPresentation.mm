@@ -1,4 +1,5 @@
 #import "SPDFMacSidebarPresentation.h"
+#import "SPDFSearchSnippet.h"
 #import "SPDFMacCollectionStyle.h"
 
 @interface SPDFWorkspaceSidebarRow : NSTableRowView
@@ -75,11 +76,17 @@ NSTableCellView* SPDFSidebarFindCell(NSTableView* table, NSDictionary* item, NSA
     }
     NSString* title = item[@"title"] ?: @"";
     if (result) {
-        NSMutableParagraphStyle* paragraph = [NSMutableParagraphStyle new]; paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
-        NSMutableAttributedString* context = [[NSMutableAttributedString alloc] initWithString:title attributes:@{
+        NSArray* anchored = item[@"matchRanges"] ?: matches;
+        // A two-line card must show the occurrence before any trailing context.
+        // Normalize tabs/paragraph separators so list indentation cannot hide it.
+        NSDictionary* snippet=anchored.count ? SPDFSearchSnippet(title,[anchored.firstObject rangeValue],12,72) : nil;
+        NSString* display=snippet ? snippet[@"title"] : title;
+        NSArray* highlights=snippet ? snippet[@"matchRanges"] : anchored;
+        NSMutableParagraphStyle* paragraph = [NSMutableParagraphStyle new]; paragraph.lineBreakMode = NSLineBreakByWordWrapping;
+        NSMutableAttributedString* context = [[NSMutableAttributedString alloc] initWithString:display attributes:@{
             NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightRegular],
             NSForegroundColorAttributeName:SPDFCollectionColor(@"text"),NSParagraphStyleAttributeName:paragraph}];
-        for (NSValue* value in matches) {
+        for (NSValue* value in highlights) {
             NSRange range = value.rangeValue;
             if (range.location <= context.length && range.length <= context.length-range.location)
                 [context addAttribute:NSBackgroundColorAttributeName value:SPDFCollectionColor(@"highlight") range:range];

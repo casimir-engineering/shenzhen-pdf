@@ -165,6 +165,13 @@ static void TestCapturedPDF(NSURL* root) {
     NSURL* txt = [root.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Plain.txt"];
     [@"A needle without rendered pagination" writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
     [store capturePath:txt.path reason:@"Opened" error:nil];
+    Expect(@"cached palette manifest sees newly captured document immediately",
+        [store search:@"Plain" titlesOnly:YES excludingPaths:NSSet.set limit:5].count == 1);
+    Expect(@"newly captured text is searchable after warming old index",
+        [store search:@"without rendered" titlesOnly:NO excludingPaths:NSSet.set limit:5].count == 1);
+    NSProgress* cancelled = [NSProgress progressWithTotalUnitCount:1]; [cancelled cancel];
+    Expect(@"cancelled Collection query returns no stale hits",
+        [store search:@"needle" titlesOnly:NO excludingPaths:NSSet.set limit:5 progress:cancelled].count == 0);
     rows = VersionRows([store searchGroups:@"without rendered" allVersions:YES]);
     Expect(@"plain-text index does not invent a page number",rows.count == 1 &&
         [rows.firstObject[@"matches"][0][@"page"] integerValue] == 0);
