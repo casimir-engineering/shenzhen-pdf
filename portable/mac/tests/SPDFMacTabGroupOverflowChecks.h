@@ -96,6 +96,9 @@ static void check_compact_workspace_tabs(void) {
         tab(@"Power review",purple),tab(@"Notes",general),tab(@"Private",hidden)];
     strip.selectedIndex=0;
     NSRect selected=[strip rectForTabAtIndex:0];
+    NSRect neighbor=[strip rectForTabAtIndex:1];
+    expect([strip tabIndexAtPoint:NSMakePoint(NSMinX(neighbor)+1,NSMidY(neighbor))]==1,
+        @"compact tab hit slop overlaps its neighbor's title");
     expect(NSHeight(selected)==24 && NSWidth(selected)<=200,@"compact document tab geometry regressed");
     expect(NSHeight([[layout_for_group(strip,purple) valueForKey:@"header"] rectValue])==20,
         @"group label is not visually smaller than document tabs");

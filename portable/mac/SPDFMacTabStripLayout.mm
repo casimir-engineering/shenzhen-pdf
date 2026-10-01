@@ -113,7 +113,7 @@
 
 - (NSRect)interactionRectForTabRect:(NSRect)tabRect {
     if (NSIsEmptyRect(tabRect)) return NSZeroRect;
-    NSRect rect = NSInsetRect(tabRect, -6.0, -10.0);
+    NSRect rect = NSInsetRect(tabRect, -kTabGap/2, -10.0);
     rect.origin.y = NSMinY(self.bounds);
     rect.size.height = NSHeight(self.bounds);
     return rect;
@@ -138,8 +138,13 @@
     if (index < 0 || index >= (NSInteger)self.tabs.count) return @"";
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
     if (tab.collectionVersionLabel.length) return tab.collectionVersionLabel;
-    NSString* name = tab.path.length ? tab.path.lastPathComponent : tab.title;
-    return name.pathExtension.length ? name.stringByDeletingPathExtension : name ?: @"";
+    if (!tab.path.length) return spdf_display_label_without_extension(tab.title);
+    if (!_displayTitles) {
+        NSMutableArray<NSString*>* paths=[NSMutableArray arrayWithCapacity:self.tabs.count];
+        for (SPDFDocumentTab* item in self.tabs) [paths addObject:item.path ?: @""];
+        _displayTitles=spdf_disambiguated_display_names_for_paths(paths);
+    }
+    return index<(NSInteger)_displayTitles.count ? _displayTitles[(NSUInteger)index] : spdf_display_name_for_path(tab.path);
 }
 - (CGFloat)preferredWidthForTabAtIndex:(NSInteger)index {
     if (_preferredTabWidths[@(index)]) return _preferredTabWidths[@(index)].doubleValue;
