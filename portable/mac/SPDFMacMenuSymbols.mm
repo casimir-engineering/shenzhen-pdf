@@ -9,4 +9,3 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
         item.image = image;
     }
 }
-
