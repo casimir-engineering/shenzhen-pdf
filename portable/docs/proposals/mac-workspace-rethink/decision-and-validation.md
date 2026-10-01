@@ -4,6 +4,8 @@
 
 ## Latest revision: lean document tabs and direct sidebar icons
 
+Tab titles now keep identical text, bounds, font, and padding when the close button appears. Leading padding is 6px; the close button overlays a trailing text fade on hover or keyboard focus, without reallocating title space. Browser measurements confirmed identical 157×16px title bounds before and during the shared hover/focus treatment. [Visual verification](evidence/stable-tab-title-fade.png).
+
 Follow-up: Groups now occupies its own workspace section, separated from the document-panel icons by a 1px divider and 17px between button surfaces. Both sections retain direct activation and hover labels. Browser checks confirmed Groups/Chapters switching and no header overflow in the compact sidebar.
 
 1 October 2026. Removed the sidebar dropdown, replacing it with directly accessible Groups, Chapters, Find, Comments and History icons in the existing header. Each has an accessible name, hover helper text and selected state. Comments remains absent for Markdown. No extra navigation column or menu is introduced.

@@ -115,7 +115,7 @@
 #sz-workspace .sz-browser-tab.selected .sz-tab{font-weight:600}
 #sz-workspace .sz-tab span{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
 #sz-workspace .sz-tab-close{position:absolute;right:2px;top:2px;display:flex;justify-content:center;width:24px;height:24px;min-height:24px;padding:5px;border-radius:5px;margin:0;color:var(--sz-text);opacity:0}
-#sz-workspace .sz-browser-tab.selected .sz-tab-close,#sz-workspace .sz-browser-tab:hover .sz-tab-close,#sz-workspace .sz-browser-tab:focus-within .sz-tab-close{opacity:1}
+#sz-workspace .sz-browser-tab:hover .sz-tab-close,#sz-workspace .sz-browser-tab:focus-within .sz-tab-close{opacity:1;pointer-events:auto}
 #sz-workspace .sz-tab-close svg{display:block;width:14px;height:14px}
 #sz-workspace .sz-tab-close:hover{background:color-mix(in srgb,var(--sz-text) 12%,transparent)}
 #sz-workspace .sz-group-overflow{font-size:12px;line-height:16px;height:28px;min-height:28px;flex-shrink:0;padding:6px}
@@ -142,8 +142,6 @@
 #sz-workspace .sz-list{padding:0 6px 10px}
 #sz-workspace .sz-browser-group.is-expanded{flex:0 1 var(--group-width);max-width:var(--group-width,none)}
 #sz-workspace .sz-browser-tab{flex:1 1 144px;width:144px;max-width:220px}
-#sz-workspace .sz-browser-tab:not(.selected) .sz-tab{padding-left:12px;padding-right:12px}
-#sz-workspace .sz-browser-tab:not(.selected):is(:hover,:focus-within) .sz-tab{padding-left:28px;padding-right:28px}
 #sz-workspace .sz-tabs{gap:8px}
 #sz-workspace .sz-tab-drag-space{flex:1;min-width:12px}
 #sz-workspace .sz-tab-more{width:32px}
@@ -173,10 +171,10 @@
 /* Lean document surfaces and direct, one-click sidebar modes. */
 #sz-workspace .sz-browser-group.is-expanded{flex:0 1 auto;max-width:none}
 #sz-workspace .sz-browser-tab{flex:0 1 var(--tab-width);width:var(--tab-width);max-width:200px;height:24px;border-radius:6px}
-#sz-workspace .sz-browser-tab .sz-tab{height:24px;min-height:24px;padding:4px 22px;border-radius:6px}
-#sz-workspace .sz-browser-tab:not(.selected) .sz-tab{padding-left:10px;padding-right:10px}
-#sz-workspace .sz-browser-tab:not(.selected):is(:hover,:focus-within) .sz-tab{padding-left:22px;padding-right:22px}
-#sz-workspace .sz-tab-close{width:20px;height:20px;min-height:20px;padding:3px;top:2px;right:2px;border-radius:4px}
+#sz-workspace .sz-browser-tab .sz-tab{height:24px;min-height:24px;padding:4px 6px;border-radius:6px}
+#sz-workspace .sz-browser-tab .sz-tab span{width:100%;text-overflow:clip;mask-image:none}
+#sz-workspace .sz-browser-tab:is(:hover,:focus-within) .sz-tab span{mask-image:linear-gradient(to right,#000 calc(100% - 34px),transparent calc(100% - 18px))}
+#sz-workspace .sz-tab-close{pointer-events:none;width:20px;height:20px;min-height:20px;padding:3px;top:2px;right:2px;border-radius:4px}
 #sz-workspace .sz-pane-head{padding:0 8px;gap:4px}
 #sz-workspace .sz-pane-modes{display:flex;align-items:center;gap:4px;min-width:0;flex:1}
 #sz-workspace .sz-pane-workspace{display:flex;align-items:center;padding-right:8px;margin-right:4px;border-right:1px solid var(--sz-line)}
@@ -196,7 +194,7 @@
   state.closedTabs=state.closedTabs||[];state.tabExpanded=state.tabExpanded||[docs[state.doc]?.group||'Hardware'];
   const openDocs=()=>docs.map((d,i)=>({...d,i})).filter(d=>!state.closedTabs.includes(d.i));
   const tabMeasure=document.createElement('canvas').getContext('2d');
-  function preferredTabWidth(doc){tabMeasure.font=`${doc.i===state.doc?600:400} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;return Math.min(200,Math.max(96,Math.ceil(tabMeasure.measureText(doc.title).width)+(doc.i===state.doc?44:20)));}
+  function preferredTabWidth(doc){tabMeasure.font=`${doc.i===state.doc?600:400} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;return Math.min(200,Math.max(96,Math.ceil(tabMeasure.measureText(doc.title).width)+12));}
   let barGroups=new Set();
   function visibleTabCounts(){
     const available=q('.sz-tabs').clientWidth;
