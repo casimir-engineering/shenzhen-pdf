@@ -46,7 +46,8 @@ CORE_SELECTION_SUPPORT_OBJ := $(BUILD)/spdf_selection_support.o
 CORE_RECOLOR_SRC := core/spdf_recolor.c
 CORE_RECOLOR_HDR := core/spdf_recolor.h
 CORE_RECOLOR_OBJ := $(BUILD)/spdf_recolor.o
-CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ) $(CORE_RECOLOR_OBJ)
+CORE_IMAGE_PROPERTIES_OBJ := $(BUILD)/spdf_image_properties.o
+CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERTIES_OBJ)
 YAML_SRC := core/spdf_yaml.c
 YAML_HDR := core/spdf_yaml.h
 YAML_OBJ := $(BUILD)/spdf_yaml.o
@@ -139,6 +140,9 @@ $(BUILD):
 
 $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
+
+$(CORE_IMAGE_PROPERTIES_OBJ): core/spdf_image_properties.c core/spdf_image_properties.h Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
 
 $(CORE_SELECTION_OBJ): $(CORE_SELECTION_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SELECTION_SRC)" -o "$(CORE_SELECTION_OBJ)"
@@ -716,3 +720,15 @@ mac-find-interaction-tests: | $(BUILD)
 mac-find-context-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacFindContextTests.mm mac/SPDFMacFindContext.mm -framework Cocoa -o "$(BUILD)/SPDFMacFindContextTests"
 	"$(BUILD)/SPDFMacFindContextTests"
+
+.PHONY: mac-image-properties-tests
+mac-image-properties-tests: $(BUILD)/SPDFMacImagePropertiesTests
+	"$<"
+
+$(BUILD)/SPDFMacImagePropertiesTests: mac/tests/SPDFMacImagePropertiesTests.mm mac/SPDFMacImageProperties.mm mac/SPDFMacImageProperties.h $(CORE_IMAGE_PROPERTIES_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacImagePropertiesTests.mm mac/SPDFMacImageProperties.mm $(CORE_IMAGE_PROPERTIES_OBJ) $(MUPDF_LIBS) -framework Foundation -framework ImageIO -framework CoreGraphics -lm -o "$@"
+
+.PHONY: mac-properties-model-tests
+mac-properties-model-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERTIES_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPropertiesModelTests.mm mac/SPDFMacPropertiesModel.mm mac/SPDFMacPropertiesPanel.mm mac/SPDFMacPropertiesFormat.mm mac/SPDFMacImageProperties.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERTIES_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework ImageIO -lm -o "$(BUILD)/SPDFMacPropertiesModelTests"
+	"$(BUILD)/SPDFMacPropertiesModelTests" "$(abspath ..)"

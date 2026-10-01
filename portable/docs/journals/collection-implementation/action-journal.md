@@ -686,3 +686,19 @@ The full Markdown/Collection UI integration suite passed, including retained enc
 ![One document list retains page previews and highlighted context](../../proposals/mac-workspace-rethink/evidence/native-collection-list-only.png)
 
 Rebuilt the reader and Collection helper in `dist/ShenzhenPDF.app`; strict deep signature verification passed and the executable is newer than the final native sources. This is a local build, not a published release. The running app was left untouched.
+
+
+## 2 October — file properties for every supported format
+
+File → Properties (Option+I) and the document context menu now work for every selected file, including text-rendered and missing-file tabs. The File menu entry already existed; its loaded-core-document gate incorrectly disabled it for Markdown and source files. Extracted the routing and format model from the coordinator and panel rather than expanding their size caps.
+
+Properties now describes the actual format. Raster images show stored pixel dimensions, megapixels, embedded DPI, color model/profile, bit depth, transparency, orientation, multiple frames and available EXIF camera settings. ImageIO reads metadata without creating a decoded bitmap; formats it cannot identify fall back to MuPDF's image object, without requesting a rendered pixmap. The fallback may read compressed file bytes. Absent DPI and depth are omitted instead of showing MuPDF defaults. SVG retains vector page dimensions and is not presented as a pixel image. Markdown and source files use a snapshot of their current rendered text for asynchronous word/character counts and show live page dimensions, headings and language. PDF metadata, security, annotation and page statistics remain intact.
+
+All added inspection is invoked by opening Properties. Non-images return before file access in the image reader, non-regular files are rejected, and pictures never start a whole-document text scan. Focused tests cover tagged and untagged PNG/JPEG, EXIF, animated GIF, MuPDF PPM fallback, text, vector, PDF and missing originals, plus File/context-menu routing. The panel construction and text-count completion are checked offscreen. Native build, property-format tests, launch-work policy and all 32 updater tests passed. No running app window was launched, quit or captured.
+
+![Image properties: native offscreen panel with source dimensions and color metadata](../../proposals/mac-workspace-rethink/evidence/native-properties-image.png)
+![Text properties: native offscreen panel with live page and text statistics](../../proposals/mac-workspace-rethink/evidence/native-properties-text.png)
+
+These are hidden AppKit panel renders over an explicit window background, using small generated fixtures. Missing metadata is omitted; the PNG fixture has no embedded DPI. No screenshot of the running application was taken.
+
+Final local packaging updated `dist/ShenzhenPDF.app` and its Collection helper. Strict deep signature verification passed, and the reader executable is newer than every native production source. No publication or app restart was performed.

@@ -138,7 +138,7 @@
     NSMenuItem* properties = [menu addItemWithTitle:@"Properties..."
                                              action:@selector(showProperties:)
                                       keyEquivalent:@""];
-    properties.enabled = !markdown && _doc != NULL;
+    properties.enabled = [self selectedTab].path.length > 0;
     spdf_apply_system_icons_to_menu(menu);
     return menu;
 }
