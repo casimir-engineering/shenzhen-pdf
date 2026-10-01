@@ -46,56 +46,11 @@
 #sz-workspace .sz-revision-controls{display:flex;align-items:center;gap:8px;min-width:0}#sz-workspace .sz-return-latest{font-size:11px;white-space:nowrap}#sz-workspace .sz-compare-pane{height:380px;overflow:auto}#sz-workspace .sz-minimap{width:38px;flex-shrink:0;background:var(--sz-bg);border-left:1px solid var(--sz-line);padding:8px 5px;overflow:auto}#sz-workspace .sz-minimap button{width:26px;height:32px;min-height:32px;padding:0;justify-content:center;border:1px solid var(--sz-line);border-radius:2px;background:var(--sz-page);margin-bottom:5px;font-size:9px;color:var(--sz-muted)}#sz-workspace .sz-minimap button[aria-current=page]{outline:1px solid var(--sz-blue);background:var(--sz-active)}#sz-workspace .sz-minimap button.sz-map-hit{border-right:3px solid var(--sz-blue)}
 @container sz-reader (max-width:650px){#sz-workspace .sz-rail{display:none}#sz-workspace .sz-panel-toggle{display:inline-flex;font-size:12px}#sz-workspace .sz-pane{position:absolute;inset:0 auto 0 0;z-index:3;width:230px;box-shadow:8px 0 20px #00000020}#sz-workspace .sz-command{width:auto}#sz-workspace .sz-command span{display:none}#sz-workspace .sz-tabs .sz-group-collapsed{display:none}#sz-workspace .sz-titlebar{gap:8px}#sz-workspace .sz-source{max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#sz-workspace .sz-collection-nav{width:106px}#sz-workspace .sz-comparing{flex-direction:column}#sz-workspace .sz-mode-label{max-width:58px;overflow:hidden;text-overflow:ellipsis}#sz-workspace .sz-zoom{max-width:83px}#sz-workspace .sz-readingbar{gap:3px;padding:5px}#sz-workspace .sz-tools-trigger span{display:none}#sz-workspace .sz-readingbar{height:auto;min-height:44px;flex-wrap:wrap}#sz-workspace .sz-revision-controls{order:10;width:100%;justify-content:space-between;padding:2px 4px 4px}#sz-workspace .sz-version-state{max-width:none;flex-shrink:0}#sz-workspace .sz-collection-layout{flex-direction:column}#sz-workspace .sz-collection-nav{width:auto;display:flex;border-right:0;border-bottom:1px solid var(--sz-line)}#sz-workspace .sz-collection-nav button{width:auto}#sz-workspace .sz-col-item{gap:8px}#sz-workspace .sz-overlay{padding:12px}#sz-workspace .sz-group-strip .sz-tab{max-width:170px}#sz-workspace .sz-pane-head{padding-top:9px}}
 @container sz-reader (max-width:420px){#sz-workspace .sz-lights{gap:4px;margin:0}#sz-workspace .sz-titlebar{padding:0 9px}#sz-workspace .sz-command kbd{display:none}#sz-workspace .sz-readingbar{height:auto;min-height:44px;flex-wrap:wrap}#sz-workspace .sz-group-strip .sz-tab:not(.selected){display:none}#sz-workspace .sz-version-state{order:8;max-width:100%}#sz-workspace .sz-zoom{font-size:11px}#sz-workspace .sz-paper{padding:22px}#sz-workspace .sz-paper h1{font-size:23px}}
-/* Brave-style horizontal strip: individual tabs, compact group labels, shared underline. */
-#sz-workspace .sz-titlebar{height:44px;gap:6px;background:light-dark(#e8e8ec,#1e1f23);border-bottom:0;padding:0 10px}
-#sz-workspace .sz-lights{margin-right:10px}
-#sz-workspace .sz-tabs{align-items:center;gap:7px;height:100%;overflow:hidden}
-#sz-workspace .sz-browser-group{--group:light-dark(#8063ad,#ba9ae3);--group-label:light-dark(#e0d4ef,#4b3c5f);display:flex;align-items:center;gap:3px;position:relative;height:100%;min-width:0;flex:0 1 auto;padding:4px 0 6px}
-#sz-workspace .sz-browser-group[data-color=general]{--group:light-dark(#767b86,#aeb3bf);--group-label:light-dark(#d3d6dd,#42454d)}
-#sz-workspace .sz-browser-group[data-color=research]{--group:light-dark(#b8793b,#e2ae7b);--group-label:light-dark(#efddc8,#594632)}
-#sz-workspace .sz-browser-group[data-color=teal]{--group:light-dark(#398a80,#82c5ba);--group-label:light-dark(#cde8e2,#304e48)}
-#sz-workspace .sz-browser-group.is-expanded{flex:1 1 380px;max-width:550px}
-#sz-workspace .sz-browser-group.is-expanded::after{content:"";position:absolute;bottom:1px;left:2px;right:2px;height:2px;border-radius:2px;background:var(--group)}
-#sz-workspace .sz-browser-group.is-collapsed{flex-shrink:0}
-#sz-workspace .sz-group-label{min-height:23px;height:23px;max-width:100px;flex-shrink:0;border-radius:5px;background:var(--group-label);padding:2px 8px;font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#sz-workspace .sz-group-label:hover{background:var(--group-label);filter:brightness(1.12)}
-#sz-workspace .sz-browser-tab{display:flex;align-items:center;position:relative;height:32px;min-width:0;flex:1 1 200px;max-width:220px;border-radius:8px;background:color-mix(in srgb,var(--group) 7%,transparent)}
-#sz-workspace .sz-browser-tab:not(.selected)::after{content:"";position:absolute;right:-2px;top:9px;height:14px;width:1px;background:var(--sz-line)}
-#sz-workspace .sz-browser-tab.selected{background:light-dark(#fff,#414249);box-shadow:0 1px 3px #00000020}
-#sz-workspace .sz-browser-tab.selected .sz-tab{font-weight:600}
-#sz-workspace .sz-browser-tab:hover{background:light-dark(#f4f4f7,#35363d)}
-#sz-workspace .sz-browser-tab.selected:hover{background:light-dark(#fff,#414249)}
-#sz-workspace .sz-browser-tab .sz-tab{flex:1;min-width:0;height:32px;padding:5px 7px;gap:7px;background:transparent;white-space:nowrap;font-size:12px}
-#sz-workspace .sz-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
-#sz-workspace .sz-browser-tab .sz-tab svg{width:14px;height:14px;color:var(--group)}
-#sz-workspace .sz-tab-close{width:23px;height:23px;min-height:23px;padding:4px;flex-shrink:0;margin-right:4px;border-radius:5px}
-#sz-workspace .sz-tab-close svg{width:13px;height:13px}
-#sz-workspace .sz-tab-close:hover{background:light-dark(#dedfe5,#555760)}
-#sz-workspace .sz-group-overflow{font-size:11px;flex-shrink:0;padding:4px;min-height:25px}
-#sz-workspace .sz-new-tab,#sz-workspace .sz-tab-more{width:28px;min-height:28px;height:28px;flex-shrink:0;padding:6px;margin:0}
-#sz-workspace .sz-tab-drag-space{flex:1;min-width:5px}
-#sz-workspace .sz-command{width:28px;height:28px;min-height:28px;padding:6px;border:0;background:transparent}
-#sz-workspace .sz-command kbd{display:none}
-#sz-workspace .sz-overlay{top:44px}
-@container sz-reader (max-width:780px){#sz-workspace .sz-browser-group.is-collapsed:not(.is-current-group){display:none}#sz-workspace .sz-browser-group.is-expanded{flex-basis:260px}#sz-workspace .sz-tab-drag-space{display:none}}
-@container sz-reader (max-width:500px){#sz-workspace .sz-browser-tab:not(.selected){display:none}#sz-workspace .sz-browser-group.is-expanded:not(.is-current-group){display:none}#sz-workspace .sz-group-label{font-size:10px;max-width:66px;padding:2px 5px}#sz-workspace .sz-lights{margin-right:3px}#sz-workspace .sz-tabs{gap:3px}#sz-workspace .sz-new-tab{display:none}}
-@container sz-reader (max-width:360px){#sz-workspace .sz-browser-tab .sz-tab svg{display:none}#sz-workspace .sz-titlebar{gap:3px;padding:0 7px}#sz-workspace .sz-group-label{max-width:52px}#sz-workspace .sz-tab-close{margin-right:1px}}
 #sz-workspace .sz-readingbar:has(.sz-revision-controls:not([hidden])){height:auto;flex-wrap:wrap}
 #sz-workspace .sz-readingbar .sz-revision-controls{order:10;width:100%;justify-content:space-between}
 #sz-workspace .sz-readingbar .sz-version-state{order:0}
 /* One window grid owns the pane headers, reading controls and footer. */
 #sz-workspace{--sz-rail-width:104px;--sz-pane-width:232px;--sz-map-width:38px}
-#sz-workspace .sz-titlebar{display:grid;grid-template-columns:92px minmax(0,1fr) 32px;height:44px;gap:0;padding:0 12px}
-#sz-workspace .sz-lights{margin:0;gap:8px;padding-left:4px}
-#sz-workspace .sz-tabs{gap:8px}
-#sz-workspace .sz-browser-group{height:44px;padding:6px 0;gap:4px}
-#sz-workspace .sz-browser-group.is-expanded::after{bottom:2px}
-#sz-workspace .sz-group-label{height:24px;min-height:24px;font-size:12px;line-height:16px;padding:4px 8px}
-#sz-workspace .sz-browser-tab .sz-tab{height:32px;min-height:32px;line-height:16px;padding:8px;gap:8px}
-#sz-workspace .sz-browser-tab .sz-tab svg{width:16px;height:16px;display:block}
-#sz-workspace .sz-tab-close{height:24px;min-height:24px;width:24px;padding:5px;margin-right:4px}
-#sz-workspace .sz-tab-close svg{display:block;width:14px;height:14px}
-#sz-workspace .sz-command,#sz-workspace .sz-tab-more,#sz-workspace .sz-new-tab{height:32px;min-height:32px;width:32px;padding:8px;justify-content:center}
 #sz-workspace .sz-shell{display:grid;position:relative;grid-template-columns:var(--sz-rail-width) var(--sz-pane-width) minmax(0,1fr) var(--sz-map-width);grid-template-rows:auto minmax(0,1fr) 28px;gap:0}
 #sz-workspace .sz-main,#sz-workspace .sz-content{display:contents}
 #sz-workspace .sz-shell:has(.sz-pane[hidden]){--sz-pane-width:0px}
@@ -130,110 +85,42 @@
 @container sz-reader (max-width:650px){#sz-workspace .sz-titlebar{grid-template-columns:64px minmax(0,1fr) 32px;padding:0 8px}#sz-workspace .sz-shell{--sz-rail-width:0px;--sz-pane-width:0px}#sz-workspace .sz-readingbar{grid-column:1/-1;height:auto;min-height:44px;flex-wrap:wrap;padding:6px 8px;gap:4px}#sz-workspace .sz-pane{position:absolute;grid-column:1/-1;grid-row:2/3;inset:0 auto 0 0;z-index:3;width:240px;max-width:calc(100% - 38px);box-shadow:8px 0 20px #00000020}#sz-workspace .sz-pane-head{height:44px;padding:0 12px 0 16px}#sz-workspace .sz-revision-controls{padding:0;width:100%;gap:4px}#sz-workspace .sz-readingbar .sz-version-state,#sz-workspace .sz-readingbar .sz-return-latest{font-size:10px;padding:6px;height:28px;min-height:28px}#sz-workspace .sz-readingbar .sz-panel-toggle{width:32px;padding:8px;flex-shrink:0}#sz-workspace .sz-mode-label{display:none}#sz-workspace .sz-readingbar .sz-tools-trigger{width:32px;padding:8px}#sz-workspace .sz-tools-trigger svg:last-child{display:none}#sz-workspace .sz-zoom{max-width:88px}#sz-workspace .sz-pane-subtitle{padding-top:12px}}
 @container sz-reader (max-width:420px){#sz-workspace .sz-titlebar{grid-template-columns:52px minmax(0,1fr) 28px;padding:0 6px}#sz-workspace .sz-lights{gap:5px;padding:0}#sz-workspace .sz-tabs{gap:4px}#sz-workspace .sz-group-label{max-width:52px;padding:4px;font-size:11px}#sz-workspace .sz-browser-tab .sz-tab svg{display:none}#sz-workspace .sz-command,#sz-workspace .sz-tab-more{width:28px;padding:6px}#sz-workspace .sz-tab-close{margin-right:0;width:20px;padding:3px}#sz-workspace .sz-zoom{max-width:82px}#sz-workspace .sz-readingbar{gap:2px;padding:6px}#sz-workspace .sz-status{padding:0 12px}}
 #sz-workspace .sz-readingbar:has(.sz-revision-controls:not([hidden])){height:auto;flex-wrap:wrap}
-/* Compact tab surfaces, unchanged type and inter-tab spacing. */
-#sz-workspace .sz-titlebar{padding-bottom:4px}
-#sz-workspace .sz-browser-group{height:40px;padding:6px 0;gap:4px}
-#sz-workspace .sz-browser-group.is-expanded::after{bottom:0}
+/* Compact desktop tabs. Geometry follows Brave's compact mode (issue 40044),
+   with centered, icon-free document titles and Shenzhen's group accents. */
+#sz-workspace .sz-titlebar{display:grid;grid-template-columns:92px minmax(0,1fr) 32px;align-items:center;height:44px;padding:0 12px;gap:0;border:0;background:light-dark(#e8e8eb,#202125)}
+#sz-workspace .sz-lights{display:flex;gap:8px;margin:0;padding-left:4px}
+#sz-workspace .sz-tabs{display:flex;align-items:center;height:44px;min-width:0;gap:12px;overflow:hidden}
+#sz-workspace .sz-browser-group{--group:light-dark(#8060a6,#b69ad6);--group-soft:light-dark(#e2dbea,#302b37);--group-selected:light-dark(#c9b7dd,#625078);display:flex;align-items:center;gap:4px;height:44px;min-width:0;position:relative;flex:0 1 auto;padding:0}
+#sz-workspace .sz-browser-group[data-color=general]{--group:light-dark(#7b7e87,#a6aab4);--group-soft:light-dark(#e2e2e5,#292b30);--group-selected:light-dark(#c6c8ce,#50535c)}
+#sz-workspace .sz-browser-group[data-color=research]{--group:light-dark(#a7753d,#d0ad7e);--group-soft:light-dark(#eae1d5,#332e28);--group-selected:light-dark(#ddc5a5,#705b40)}
+#sz-workspace .sz-browser-group[data-color=teal]{--group:light-dark(#428278,#86beb3);--group-soft:light-dark(#dce8e4,#283330);--group-selected:light-dark(#aecfc6,#44675e)}
+#sz-workspace .sz-browser-group.is-expanded{flex:0 1 auto}
+#sz-workspace .sz-browser-group.is-expanded::after{content:"";position:absolute;left:0;right:0;bottom:4px;height:2px;border-radius:2px;background:var(--group);pointer-events:none}
+#sz-workspace .sz-browser-group.is-collapsed{flex-shrink:0}
+#sz-workspace .sz-group-label{flex-shrink:0;height:20px;min-height:20px;max-width:100px;padding:2px 7px;border-radius:4px;background:var(--group-soft);font-size:12px;line-height:16px;font-weight:500;white-space:nowrap;color:var(--sz-text)}
 #sz-workspace .sz-browser-group.is-expanded .sz-group-label{margin-right:8px}
-#sz-workspace .sz-browser-tab{height:28px;border-radius:6px}
-#sz-workspace .sz-browser-tab .sz-tab{height:28px;min-height:28px;padding:6px 8px;font-size:12px;line-height:16px;gap:0}
-#sz-workspace .sz-browser-tab:not(.selected)::after{top:7px}
-/* Three tab-only alternatives. Append after the corrected Brave baseline.
-   All reuse the reader's palette and geometry; no changes below the title bar. */
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-group {
-  height:40px; padding:6px 0; gap:4px;
-}
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-group-label {
-  margin-right:8px; color:var(--sz-text);
-}
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab {
-  height:28px;
-}
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab .sz-tab {
-  height:28px; min-height:28px; padding:6px 8px;
-  font-size:12px; line-height:16px; color:var(--sz-text); background:transparent;
-}
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab .sz-tab svg {
-  display:none;
-}
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab:not(.selected)::after {
-  content:none;
-}
-#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-tab-close {
-  width:24px; height:24px; min-height:24px; margin-right:4px;
-}
-
-/* 1. Index: a quiet continuous group rail, with the current document's
-   short underline sitting inside its own tab instead of a raised card. */
-#sz-workspace[data-tab-design="index"] .sz-browser-group.is-expanded::after {
-  bottom:0; height:1px; background:color-mix(in srgb,var(--group) 65%,transparent);
-}
-#sz-workspace[data-tab-design="index"] .sz-browser-tab {
-  border-radius:4px; background:color-mix(in srgb,var(--group) 5%,transparent);
-  box-shadow:none;
-}
-#sz-workspace[data-tab-design="index"] .sz-browser-tab:hover {
-  background:color-mix(in srgb,var(--group) 12%,transparent);
-}
-#sz-workspace[data-tab-design="index"] .sz-browser-tab.selected,
-#sz-workspace[data-tab-design="index"] .sz-browser-tab.selected:hover {
-  background:color-mix(in srgb,var(--group) 19%,var(--sz-surface));
-  box-shadow:inset 0 -2px 0 var(--group);
-}
-#sz-workspace[data-tab-design="index"] .sz-group-label {
-  border-radius:4px; background:color-mix(in srgb,var(--group) 15%,transparent);
-}
-
-/* 2. Tray: membership is one low-contrast rounded enclosure; selection is
-   a stronger same-hue surface. Inner 6px / outer 8px radii share 2px inset. */
-#sz-workspace[data-tab-design="tray"] .sz-browser-group.is-expanded::after {
-  content:none;
-}
-#sz-workspace[data-tab-design="tray"] .sz-browser-group.is-expanded::before {
-  content:""; position:absolute; inset:4px 0; border-radius:8px;
-  background:color-mix(in srgb,var(--group) 9%,transparent);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--group) 27%,transparent);
-  pointer-events:none;
-}
-#sz-workspace[data-tab-design="tray"] .sz-browser-group > * { position:relative; }
-#sz-workspace[data-tab-design="tray"] .sz-browser-tab {
-  border-radius:6px; background:color-mix(in srgb,var(--group) 9%,transparent);
-  box-shadow:none;
-}
-#sz-workspace[data-tab-design="tray"] .sz-browser-tab:hover {
-  background:color-mix(in srgb,var(--group) 17%,transparent);
-}
-#sz-workspace[data-tab-design="tray"] .sz-browser-tab.selected,
-#sz-workspace[data-tab-design="tray"] .sz-browser-tab.selected:hover {
-  background:color-mix(in srgb,var(--group) 34%,var(--sz-surface));
-  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--group) 70%,transparent);
-}
-#sz-workspace[data-tab-design="tray"] .sz-group-label {
-  border-radius:5px; background:var(--group-label);
-}
-
-/* 3. Outline: one crisp selected perimeter instead of a raised surface;
-   a left group spine and shared baseline retain the membership signal. */
-#sz-workspace[data-tab-design="outline"] .sz-browser-group.is-expanded::after {
-  bottom:0; height:2px; background:color-mix(in srgb,var(--group) 45%,transparent);
-}
-#sz-workspace[data-tab-design="outline"] .sz-group-label {
-  border-radius:4px; background:transparent;
-  box-shadow:inset 3px 0 0 var(--group);
-}
-#sz-workspace[data-tab-design="outline"] .sz-browser-tab {
-  border-radius:6px; background:color-mix(in srgb,var(--group) 7%,transparent);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sz-line) 65%,transparent);
-}
-#sz-workspace[data-tab-design="outline"] .sz-browser-tab:hover {
-  background:color-mix(in srgb,var(--group) 14%,transparent);
-}
-#sz-workspace[data-tab-design="outline"] .sz-browser-tab.selected,
-#sz-workspace[data-tab-design="outline"] .sz-browser-tab.selected:hover {
-  background:color-mix(in srgb,var(--group) 21%,var(--sz-surface));
-  box-shadow:inset 0 0 0 2px var(--group);
-}
-
+#sz-workspace .sz-group-label:hover{background:color-mix(in srgb,var(--group) 24%,var(--group-soft))}
+#sz-workspace .sz-browser-tab{position:relative;flex:0 1 220px;width:220px;min-width:0;height:28px;border-radius:8px;background:color-mix(in srgb,var(--group) 6%,transparent)}
+#sz-workspace .sz-browser-tab:hover{background:color-mix(in srgb,var(--group) 16%,transparent)}
+#sz-workspace .sz-browser-tab.selected{background:var(--group-selected);box-shadow:0 1px 2px #00000018}
+#sz-workspace .sz-browser-tab.selected:hover{background:var(--group-selected)}
+#sz-workspace .sz-browser-tab .sz-tab{display:flex;justify-content:center;width:100%;height:28px;min-height:28px;gap:0;padding:6px 28px;border-radius:8px;background:transparent;font-size:12px;line-height:16px;color:var(--sz-text);font-weight:400}
+#sz-workspace .sz-browser-tab.selected .sz-tab{font-weight:600}
+#sz-workspace .sz-tab span{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+#sz-workspace .sz-tab-close{position:absolute;right:2px;top:2px;display:flex;justify-content:center;width:24px;height:24px;min-height:24px;padding:5px;border-radius:5px;margin:0;color:var(--sz-text);opacity:0}
+#sz-workspace .sz-browser-tab.selected .sz-tab-close,#sz-workspace .sz-browser-tab:hover .sz-tab-close,#sz-workspace .sz-browser-tab:focus-within .sz-tab-close{opacity:1}
+#sz-workspace .sz-tab-close svg{display:block;width:14px;height:14px}
+#sz-workspace .sz-tab-close:hover{background:color-mix(in srgb,var(--sz-text) 12%,transparent)}
+#sz-workspace .sz-group-overflow{font-size:12px;line-height:16px;height:28px;min-height:28px;flex-shrink:0;padding:6px}
+#sz-workspace .sz-command,#sz-workspace .sz-tab-more,#sz-workspace .sz-new-tab{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;min-height:28px;padding:6px;margin:0;background:transparent;border:0;color:var(--sz-text)}
+#sz-workspace .sz-command:hover,#sz-workspace .sz-tab-more:hover,#sz-workspace .sz-new-tab:hover{background:var(--sz-hover)}
+#sz-workspace .sz-command kbd{display:none}
+#sz-workspace .sz-tab-drag-space{flex:1;min-width:32px}
+#sz-workspace .sz-overlay{top:44px}
+@container sz-reader (max-width:780px){#sz-workspace .sz-browser-group.is-collapsed:not(.is-current-group){display:none}#sz-workspace .sz-tabs{gap:8px}#sz-workspace .sz-tab-drag-space{min-width:12px}}
+@container sz-reader (max-width:650px){#sz-workspace .sz-titlebar{grid-template-columns:64px minmax(0,1fr) 32px;padding:0 8px}}
+@container sz-reader (max-width:500px){#sz-workspace .sz-browser-group.is-expanded:not(.is-current-group){display:none}#sz-workspace .sz-group-label{max-width:70px;overflow:hidden;text-overflow:ellipsis}#sz-workspace .sz-new-tab{display:none}#sz-workspace .sz-tab-drag-space{display:none}#sz-workspace .sz-tabs{gap:4px}}
+@container sz-reader (max-width:420px){#sz-workspace .sz-titlebar{grid-template-columns:52px minmax(0,1fr) 28px;padding:0 6px}#sz-workspace .sz-lights{gap:5px;padding:0}#sz-workspace .sz-browser-group.is-expanded .sz-group-label{margin-right:2px}#sz-workspace .sz-group-label{max-width:60px;padding:2px 5px}#sz-workspace .sz-browser-tab .sz-tab{padding-left:26px;padding-right:26px}}
 </style>
 <script>
 (() => {
@@ -247,8 +134,22 @@
   const state={layout:'rail',mode:'chapters',pane:true,doc:0,page:1,version:'latest',missing:false,compare:false,map:true,zoom:'Fit width',query:'',groupQuery:'',filter:'',expanded:['Hardware'],hidden:[],kept:[],memories:{},paneScrolls:{},revisionLocations:{},linked:true,...(window.openai?.widgetState?.privateContent||{}),...saved};
   state.closedTabs=state.closedTabs||[];state.tabExpanded=state.tabExpanded||[docs[state.doc]?.group||'Hardware'];
   const openDocs=()=>docs.map((d,i)=>({...d,i})).filter(d=>!state.closedTabs.includes(d.i));
+  function visibleTabCounts(){
+    const width=root.clientWidth,strip=q('.sz-tabs').clientWidth,current=docs[state.doc]?.group;
+    const visible=groupData.filter(([name])=>!state.hidden.includes(name)&&openDocs().some(d=>d.group===name))
+      .filter(([name])=>width>780||state.tabExpanded.includes(name)||name===current)
+      .filter(([name])=>width>500||name===current);
+    const expanded=visible.filter(([name])=>state.tabExpanded.includes(name));
+    const counts=new Map(expanded.map(([name])=>[name,1]));
+    // Reserve the group labels, group gutters, utility buttons and window-drag area.
+    const labels=visible.reduce((sum,[name])=>sum+Math.min(100,name.length*7+14)+12,0);
+    let spare=Math.floor((strip-labels-(width>500?120:32)-expanded.length*32)/156)-expanded.length;
+    const priority=[...expanded].sort((a,b)=>(a[0]===current?-1:b[0]===current?1:a[0]==='General'?1:b[0]==='General'?-1:0));
+    while(spare>0){let used=false;for(const [name] of priority){if(spare<=0)break;const total=openDocs().filter(d=>d.group===name).length;if(counts.get(name)<total){counts.set(name,counts.get(name)+1);spare--;used=true;}}if(!used)break;}
+    return counts;
+  }
   if(state.archiveOpened)docs.push({title:'Bench measurements.pdf',group:'General',format:'pdf'});
-  const design={tabDesign:state.tabDesign||'baseline',layout:state.layout,condition:'Linked original',height:594}; let timer;
+  const design={layout:state.layout,condition:'Linked original',height:594}; let timer;
   function remember(){state.memories[state.doc]={page:state.page,query:state.query,regex:state.regex||false,filter:state.filter,version:state.version,kept:[...state.kept],zoom:state.zoom,missing:state.missing,canvasScroll:q('.sz-canvas')?.scrollTop||0};}
   function persist(){remember();window.openai?.setWidgetState({modelContent:{layout:state.layout,mode:state.mode,doc:state.doc,page:state.page,version:state.version,pane:state.pane,missing:state.missing},privateContent:state}).catch(()=>{});}
   function symbols(){if(window.lucide)lucide.createIcons({attrs:{width:16,height:16}});}
@@ -262,14 +163,14 @@
     const paneOwner=state.mode==='groups'?'groups':state.mode+':'+state.doc;
     const focused=document.activeElement,focusAttr=focused?.getAttributeNames?.().find(a=>a.startsWith('data-'));
     const focusValue=focusAttr?focused.getAttribute(focusAttr):null;
-    root.dataset.tabDesign=design.tabDesign;state.tabDesign=design.tabDesign;
     q('.sz-shell').style.height=design.height+'px';
     root.classList.toggle('sz-compact',state.layout==='chooser'||design.height<370);
     groupData.forEach(g=>g[1]=openDocs().filter(d=>d.group===g[0]).length);
     q('.sz-rail').innerHTML=`<label>Workspace</label>${navButton('groups','panels-top-left','Groups')}<button data-action="collection">${icon('library')}Collection</button><label class="sz-doc-section">Document</label>${modes().map(x=>navButton(...x)).join('')}<button class="sz-rail-bottom" data-action="panel">${icon(state.pane?'panel-left-close':'panel-left-open')}${state.pane?'Hide pane':'Show pane'}</button>`;
     const d=docs[state.doc];
+    const tabCounts=visibleTabCounts();
     q('.sz-tabs').innerHTML=groupData.filter(g=>g[1]&&!state.hidden.includes(g[0])).map(([name,count])=>{
-      const expanded=state.tabExpanded.includes(name),members=openDocs().filter(v=>v.group===name),selected=members.find(v=>v.i===state.doc),shown=selected?[selected,...members.filter(v=>v.i!==state.doc).slice(0,1)].sort((a,b)=>a.i-b.i):members.slice(0,2);
+      const expanded=state.tabExpanded.includes(name),members=openDocs().filter(v=>v.group===name),selected=members.find(v=>v.i===state.doc),limit=tabCounts.get(name)||1,shown=selected?[selected,...members.filter(v=>v.i!==state.doc).slice(0,limit-1)].sort((a,b)=>a.i-b.i):members.slice(0,limit);
       return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
     }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-mode="groups" aria-label="Show all ${openDocs().length} open documents" data-tooltip="All open documents">${icon('chevron-down')}</button>`;
     q('.sz-mode-label').textContent=state.mode==='groups'?'Groups':modes().find(x=>x[0]===state.mode)?.[2]||'Chapters';
@@ -373,6 +274,8 @@
   });
   window.addEventListener('openai:set_globals',e=>{const incoming=e.detail?.globals?.widgetState?.modelContent;if(incoming){Object.assign(state,e.detail.globals.widgetState.privateContent||{},incoming);render();}});
   render();
-  if(globalThis.Tweak){let appliedCondition=design.condition;const tweak=new Tweak({container:root,onChange:()=>{state.layout=design.layout;if(design.condition!==appliedCondition){state.missing=design.condition==='Original missing';state.version=design.condition==='Older version'?'2026.09.24':'latest';appliedCondition=design.condition;}render();persist();}});tweak.addSelect(design,'tabDesign',{label:'Tab design',options:[{label:'Corrected Brave',value:'baseline'},{label:'1 · Index',value:'index'},{label:'2 · Group tray',value:'tray'},{label:'3 · Outline',value:'outline'}]});tweak.addSelect(design,'layout',{label:'Navigation alternative',options:[{label:'Vertical task rail',value:'rail'},{label:'Compact panel chooser',value:'chooser'}]});tweak.addSlider(design,'height',{label:'Reader content height',min:296,max:650,step:1,unit:'px'});tweak.addSelect(design,'condition',{label:'Document condition',options:['Linked original','Older version','Original missing']});}
+  let measuredWidth=root.clientWidth;
+  new ResizeObserver(()=>{const width=root.clientWidth;if(width!==measuredWidth){measuredWidth=width;render();}}).observe(root);
+  if(globalThis.Tweak){let appliedCondition=design.condition;const tweak=new Tweak({container:root,onChange:()=>{state.layout=design.layout;if(design.condition!==appliedCondition){state.missing=design.condition==='Original missing';state.version=design.condition==='Older version'?'2026.09.24':'latest';appliedCondition=design.condition;}render();persist();}});tweak.addSelect(design,'layout',{label:'Navigation alternative',options:[{label:'Vertical task rail',value:'rail'},{label:'Compact panel chooser',value:'chooser'}]});tweak.addSlider(design,'height',{label:'Reader content height',min:296,max:650,step:1,unit:'px'});tweak.addSelect(design,'condition',{label:'Document condition',options:['Linked original','Older version','Original missing']});}
 })();
 </script>
