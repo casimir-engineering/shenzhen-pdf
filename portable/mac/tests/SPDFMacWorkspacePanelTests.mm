@@ -8,6 +8,9 @@
 #pragma clang diagnostic pop
 @interface PanelProbe : ShenzhenMacDelegate
 @property NSUInteger changes;
+@property NSUInteger sidebarApplications;
+@property NSUInteger mapApplications;
+@property NSUInteger chromeRefreshes;
 @property NSMutableDictionary* workspace;
 - (void)seed;
 - (void)resize:(CGFloat)width;
@@ -17,19 +20,32 @@
 - (void)seed {
     self.workspace = [NSMutableDictionary dictionary];
     _splitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0,0,1280,780)];
+    _sidebarContainer = [NSView new]; _documentContainer = [NSView new];
+    _minimapView = (id)[NSView new]; _minimapDividerView = (id)[NSView new];
+    _minimapWidthConstraint = [_minimapView.widthAnchor constraintEqualToConstant:126.5];
+    _pageScrollFullWidthConstraint = [_documentContainer.widthAnchor constraintEqualToConstant:1280];
+    _pageScrollToMinimapConstraint = [_documentContainer.heightAnchor constraintEqualToConstant:780];
+    _pageScrollToMinimapConstraint.active = YES;
     _sidebarWidth=284; _minimapWidth=126.5;
     _sidebarPreferredVisible=YES; _minimapPreferredVisible=YES;
     _sidebarVisible=YES; _minimapVisible=YES; _allowSidebarWidthPersistence=YES;
 }
 - (NSMutableDictionary*)sidebarWorkspaceState { return self.workspace; }
+- (void)syncToolbarState { self.chromeRefreshes++; }
+- (void)updateControls {}
 - (BOOL)hasActiveDocument { return YES; }
 - (CGFloat)clampedSidebarWidth { return MAX(176,MIN(_sidebarWidth,floor(NSWidth(_splitView.bounds)*.34))); }
 - (void)setWorkspaceSidebarVisibleWithoutPolicy:(BOOL)visible {
+    self.sidebarApplications++;
     if (_sidebarVisible != visible) self.changes++;
     _sidebarVisible=visible;
     if (_allowSidebarWidthPersistence && !visible) _sidebarWidth=190; // catches accidental persistence during suppression
 }
 - (void)setWorkspaceMapVisibleWithoutPolicy:(BOOL)visible {
+    self.mapApplications++;
+    _minimapWidthConstraint.constant = visible ? _minimapWidth : 0;
+    _pageScrollFullWidthConstraint.active = !visible;
+    _pageScrollToMinimapConstraint.active = visible;
     if (_minimapVisible != visible) self.changes++;
     _minimapVisible=visible;
 }
@@ -60,7 +76,11 @@ int main(void) { @autoreleasepool {
     Check([p.snapshot[@"sidebarWidth"] isEqual:@284],"restored sidebar width remains the requested 284 points");
     [p setSidebarActuallyVisible:NO]; [p resize:560]; Check(![p.snapshot[@"sidebar"] boolValue] && [p.snapshot[@"map"] boolValue],"explicitly hidden sidebar stays hidden");
     [p resize:1280]; Check(![p.snapshot[@"sidebar"] boolValue],"enlarging cannot revive a hidden sidebar");
-    NSUInteger changes=p.changes; for(int i=0;i<1000;i++) [p applyWorkspacePanelPolicy];
+    NSUInteger changes=p.changes, sidebarApplications=p.sidebarApplications, mapApplications=p.mapApplications;
+    NSUInteger chrome=p.chromeRefreshes;
+    for(int i=0;i<1000;i++) { [p applyWorkspacePanelPolicy]; [p setSidebarActuallyVisible:NO]; [p setMinimapActuallyVisible:YES]; }
     Check(p.changes==changes,"unchanged policy produces no repeated visibility transitions");
+    Check(p.sidebarApplications==sidebarApplications && p.mapApplications==mapApplications,"redundant requests never invoke raw layout/render setters");
+    Check(p.chromeRefreshes>chrome,"redundant caller requests retain lightweight toolbar-state refresh");
     puts(failures ? "Workspace panel tests failed" : "Workspace panel tests passed"); return failures ? 1 : 0;
 } }
