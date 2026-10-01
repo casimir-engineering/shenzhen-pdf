@@ -1,5 +1,7 @@
+#import "SPDFMacFindContext.h"
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacWorkspaceChrome.h"
+#import "SPDFMacFindInteraction.h"
 #import "SPDFMacWorkspacePanels.h"
 #import "SPDFMacCollectionCompanion.h"
 #import "SPDFMacSidebarWorkspace.h"
@@ -9352,7 +9354,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             stringWithFormat:@"Page %ld - match %ld of %ld", (long)page + 1, (long)i + 1, (long)_findMatches.count];
         [_sidebarItems addObject:@{
             @"kind" : @"findResult",
-            @"title" : context,
+            @"title" : context, @"matchRanges":match[@"matchRanges"] ?: @[],
             @"subtitle" : subtitle,
             @"query" : query,
             @"page" : @(page),
@@ -9953,47 +9955,6 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _keyScrollKeyCode = 0;
 }
 
-// Escape in the normal viewer clears the active search entirely: query, in-page
-// highlights, match counter, scrollbar markers, the search-results sidebar, and
-// the per-tab remembered query (startFindForCurrentQuery with an empty field
-// resets tab.searchText). Returns NO — letting the event keep its default
-// meaning — when Escape has a higher-priority job: presentation mode (exit,
-// handled before this in documentArrowKeyDown:), system full screen (exit full
-// screen), or when there is no active search to clear. The search field's own
-// editor handles Escape separately in control:textView:doCommandBySelector:.
-- (BOOL)documentEscapeKeyDown:(NSEvent*)event {
-    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
-    if (![self hasActiveDocument] || _presentationMode) return NO;
-    if (_window.styleMask & NSWindowStyleMaskFullScreen) return NO;
-    BOOL hasActiveSearch = _searchField.stringValue.length > 0 || _findSearchInProgress || _findMatches.count > 0;
-    if (!hasActiveSearch) return NO;
-    _searchField.stringValue = @"";
-    [self startFindForCurrentQuery];
-    [self clearFindFieldFocus];
-    return YES;
-}
-
-- (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event {
-    if (![self hasActiveDocument] || _presentationMode || !_searchField) return NO;
-    if (event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption |
-                               NSEventModifierFlagFunction))
-        return NO;
-    id firstResponder = _window.firstResponder;
-    if ([firstResponder isKindOfClass:[NSTextView class]] || firstResponder == _searchField ||
-        firstResponder == _pageField || firstResponder == _paletteSearchField || firstResponder == _sidebarFilterField)
-        return NO;
-    NSString* typed = event.characters ?: @"";
-    if (typed.length == 0 || [typed rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location != NSNotFound)
-        return NO;
-    [self revealWorkspaceFind];
-    [_window makeFirstResponder:_searchField];
-    _searchField.stringValue = typed;
-    [_searchField.currentEditor setSelectedRange:NSMakeRange(typed.length, 0)];
-    [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:YES];
-    return YES;
-}
-
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event {
     if ([self isMarkdownActive]) return NO;
     if (!_doc) return NO;
@@ -10250,41 +10211,6 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [self invalidateFindMarkers];
 }
 
-- (NSString*)findContextForQuery:(NSString*)query lines:(const spdf_text_lines*)lines matchRect:(NSRect)matchRect {
-    if (!lines || lines->count <= 0) return @"";
-
-    NSString* bestLine = @"";
-    CGFloat bestDistance = CGFLOAT_MAX;
-    CGFloat matchCenterY = NSMidY(matchRect);
-    for (int i = 0; i < lines->count; ++i) {
-        const char* rawLine = lines->items[i].text;
-        if (!rawLine || !*rawLine) continue;
-        NSString* line = [NSString stringWithUTF8String:rawLine] ?: @"";
-        line = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (line.length == 0) continue;
-
-        spdf_rect bounds = lines->items[i].bounds;
-        NSRect lineRect = NSMakeRect(bounds.x0, bounds.y0, bounds.x1 - bounds.x0, bounds.y1 - bounds.y0);
-        if (NSIntersectsRect(NSInsetRect(lineRect, -2.0, -2.0), matchRect)) {
-            bestLine = line;
-            break;
-        }
-
-        CGFloat distance = fabs(NSMidY(lineRect) - matchCenterY);
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestLine = line;
-        }
-    }
-
-    if (bestLine.length == 0) return @"";
-    NSArray<NSValue*>* ranges = [self rangesOfPaletteQuery:query inString:bestLine limit:1];
-    if (ranges.count == 0) return bestLine;
-    NSRange snippetRange = [self paletteSnippetRangeInLine:bestLine matchRange:ranges[0].rangeValue];
-    NSString* snippet = snippetRange.length > 0 ? [bestLine substringWithRange:snippetRange] : bestLine;
-    return [snippet stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-}
-
 // Index into _findMatches of the match closest to the current viewport:
 // nearest by page distance from the visible page range, tie-broken by vertical
 // distance from the viewport center (see spdf_nearest_find_match_index).
@@ -10425,14 +10351,16 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
               spdf_text_lines lines;
               memset(&lines, 0, sizeof(lines));
               BOOL hasTextLines = spdf_extract_page_text_lines(doc, (int)page, &lines, err, sizeof(err));
+              SPDFMacFindContext* contexts=[[SPDFMacFindContext alloc] initWithLines:hasTextLines ? &lines : NULL
+                  query:query regex:useRegex multiline:useRegexMultiline];
               for (int i = 0; i < count; ++i) {
                   NSRect r = NSMakeRect(rects[i].x0, rects[i].y0, rects[i].x1 - rects[i].x0, rects[i].y1 - rects[i].y0);
                   [values addObject:[NSValue valueWithRect:r]];
-                  NSString* context = hasTextLines ? [self findContextForQuery:query lines:&lines matchRect:r] : @"";
+                  NSDictionary* context = [contexts contextForMatchRect:r];
                   [matches addObject:@{
                       @"page" : @(page),
                       @"rect" : [NSValue valueWithRect:r],
-                      @"context" : context ?: @""
+                      @"context" : context[@"title"], @"matchRanges":context[@"matchRanges"]
                   }];
               }
               if (hasTextLines) spdf_free_text_lines(&lines);
@@ -12124,10 +12052,13 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     NSMutableArray<NSDictionary*>* candidates = [NSMutableArray array];
     for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
         NSArray<NSString*>* paths = [controller openTabPaths];
+        NSMutableDictionary* titles = [[controller openDocumentPaletteTitlesByStandardizedPath] mutableCopy];
+        for (SPDFDocumentTab* tab in controller->_tabs)
+            if (tab.collectionVersionLabel.length) titles[tab.path.stringByStandardizingPath] = tab.collectionVersionLabel;
         for (NSUInteger i = 0; i < paths.count; ++i) {
             NSString* path = paths[i];
             if (!path.length) continue;
-            NSString* title = [controller displayNameForPathConsideringOpenTabs:path];
+            NSString* title = titles[path.stringByStandardizingPath];
             [candidates addObject:@{@"path" : path, @"title" : title ?: @""}];
         }
     }
@@ -12414,6 +12345,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 - (void)closePalette:(id)sender {
+    [self cancelCollectionPaletteSearch];
     (void)sender;
     if (_paletteEventMonitor) {
         [NSEvent removeMonitor:_paletteEventMonitor];
@@ -15081,11 +15013,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     (void)textView;
     if (control == _searchField) {
         if (commandSelector == @selector(cancelOperation:)) {
-            if (_searchField.stringValue.length > 0) {
-                _searchField.stringValue = @"";
-                [self startFindForCurrentQuery];
-            }
-            [self clearFindFieldFocus];
+            [self dismissWorkspaceFind];
             return YES;
         }
         if (commandSelector == @selector(insertNewline:) ||

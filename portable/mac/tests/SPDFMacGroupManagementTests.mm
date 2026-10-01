@@ -132,11 +132,79 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     }
     Check(!host.visible,"group management tests never show app window");
 }
+static void CheckGroupScrolling(NSString* evidence) {
+    NSWindow* host = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,280,340)
+        styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    host.releasedWhenClosed = NO;
+    SPDFGroupManagementController* manager = [SPDFGroupManagementController new];
+    NSMutableArray* groups = [NSMutableArray array];
+    for (NSUInteger groupIndex=0;groupIndex<3;groupIndex++) {
+        NSMutableArray* documents = [NSMutableArray array];
+        for (NSUInteger index=0;index<18;index++) {
+            NSString* name = [NSString stringWithFormat:@"Document %lu.pdf",index];
+            [documents addObject:@{@"title":name,@"path":[@"/" stringByAppendingString:name],
+                @"selected":@(groupIndex==1 && index==12)}];
+        }
+        [groups addObject:@{@"id":[NSString stringWithFormat:@"g%lu",groupIndex],
+            @"name":[NSString stringWithFormat:@"Group %lu",groupIndex],@"color":@"Blue",
+            @"selected":@(groupIndex==1),@"documents":documents}];
+    }
+    [manager updateGroups:groups state:@{@"expandedGroups":@[@"g0",@"g2"],@"groupScroll":@0}];
+    host.contentView = [[GroupSurface alloc] initWithFrame:NSMakeRect(0,0,280,340)];
+    manager.view.frame = host.contentView.bounds;
+    manager.view.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
+    [host.contentView addSubview:manager.view];
+    [host.contentView layoutSubtreeIfNeeded];
+    NSTableView* table = (id)Find(manager.view,NSTableView.class);
+    NSScrollView* scroll = table.enclosingScrollView;
+    Check(table.floatsGroupRows,"native section headers float while their documents scroll");
+    Check(scroll.wantsLayer && scroll.layer.masksToBounds,"departing headers clip at the list edge, below search");
+    [manager revealSelectedDocument]; [host.contentView layoutSubtreeIfNeeded];
+    Check([manager.viewState[@"expandedGroups"] containsObject:@"g1"],"entering Groups expands active document's group");
+    NSRect selected = [table rectOfRow:table.selectedRow];
+    NSRect viewport = scroll.contentView.bounds;
+    Check(NSMinY(selected)>=NSMinY(viewport)+36 && NSMaxY(selected)<=NSMaxY(viewport),
+        "entering Groups reveals active document below its pinned header");
+    Check([manager tableView:table isGroupRow:19] && ![manager tableView:table isGroupRow:20],
+        "only group headings pin, never document rows");
+    CGFloat boundary = NSMinY([table rectOfRow:19]);
+    for (NSNumber* position in @[@180,@(boundary-18),@(boundary+100),@(boundary-18),@180]) {
+        [scroll.contentView scrollToPoint:NSMakePoint(0,position.doubleValue)];
+        [scroll reflectScrolledClipView:scroll.contentView]; [table layoutSubtreeIfNeeded];
+        [table displayIfNeeded];
+        NSInteger heading = position.doubleValue >= boundary ? 19 : 0;
+        NSTableRowView* row = [table rowViewAtRow:heading makeIfNecessary:YES];
+        NSRect floating = [row convertRect:row.bounds toView:table];
+        CGFloat expected = heading == 0 ? MIN(position.doubleValue,boundary-NSHeight(floating)) : position.doubleValue;
+        fprintf(stdout,"Pinned header scroll=%.0f actual=%.0f expected=%.0f height=%.0f\n",position.doubleValue,NSMinY(floating),expected,NSHeight(floating));
+        Check(fabs(NSMinY(floating)-expected)<3,"header pins and yields at the next section in both scroll directions");
+    }
+    [scroll.contentView scrollToPoint:NSMakePoint(0,boundary-18)];
+    [scroll reflectScrolledClipView:scroll.contentView]; [table layoutSubtreeIfNeeded];
+    CGFloat manualScroll = scroll.contentView.bounds.origin.y;
+    __block NSString* actionGroup = nil;
+    manager.actionHandler = ^(NSString* action,NSString* group,NSString* value) {
+        (void)action; (void)value; actionGroup = group;
+    };
+    NSView* pinnedContent = [table viewAtColumn:0 row:19 makeIfNecessary:YES];
+    [Button(pinnedContent,@"Hide Group 1 from tab bar") performClick:nil];
+    Check([actionGroup isEqual:@"g1"],"pinned group controls keep their correct action target");
+    [manager updateGroups:groups state:manager.viewState];
+    Check(fabs(scroll.contentView.bounds.origin.y-manualScroll)<1,"ordinary refresh preserves manual scroll position");
+    if (evidence.length) {
+        NSBitmapImageRep* bitmap = [host.contentView bitmapImageRepForCachingDisplayInRect:host.contentView.bounds];
+        [host.contentView cacheDisplayInRect:host.contentView.bounds toBitmapImageRep:bitmap];
+        [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+            writeToFile:[evidence stringByAppendingPathComponent:@"groups-sticky.png"] atomically:YES];
+    }
+    Check(!host.visible,"scroll checks never display the native app");
+}
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_GROUP_MANAGEMENT_EVIDENCE_DIR"];
         if (evidence.length) [NSFileManager.defaultManager createDirectoryAtPath:evidence withIntermediateDirectories:YES attributes:nil error:nil];
+        CheckGroupScrolling(evidence);
         Render(176,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-minimum.png"] : nil);
         Render(220,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-220-minimum.png"] : nil);
         Render(240,640,YES,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-default-dark.png"] : nil);

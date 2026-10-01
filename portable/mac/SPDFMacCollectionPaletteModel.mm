@@ -170,3 +170,8 @@ NSArray<NSDictionary*>* spdf_collection_palette_rows(BOOL collectionOnly, NSStri
                           @"subtitle":query ?: @"", @"query":query ?: @""}];
     return rows;
 }
+
+BOOL spdf_collection_palette_can_publish(NSProgress* progress, NSUInteger generation,
+                                         NSUInteger currentGeneration, BOOL visible) {
+    return !progress.cancelled && generation == currentGeneration && visible;
+}

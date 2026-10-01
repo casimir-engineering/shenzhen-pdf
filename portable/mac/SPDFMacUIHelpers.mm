@@ -374,17 +374,15 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 - (void)sendEvent:(NSEvent*)event {
     if (spdf_page_wheel_handle_window_scroll(self, event)) return;  // Option + wheel pages, wherever the pointer is
     spdf_window_activate_for_click_event(self, event);  // any click in the window focuses it, before any handler
-    // AppKit hands over key/main status only while super processes the very
-    // press that arrives while the window is not key. Consuming tab-strip
-    // clicks before super saw them left the window permanently keyless -- grey
-    // traffic lights over a window the server considered main, unrepairable
-    // because -makeKeyWindow is refused while AppKit waits for that mouse-down.
-    // Give super the press first; the handlers still run after it.
+    // Let AppKit establish key status before consuming the first tab-strip click.
     BOOL keyHandshake = spdf_window_event_needs_key_handshake(self, event);
     if (keyHandshake) [super sendEvent:event];
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader handleWindowArrangementShortcutEvent:event]) return;
+    if (event.type == NSEventTypeKeyDown && !self.attachedSheet && ![self.firstResponder isKindOfClass:NSText.class] &&
+        self.reader && ((event.keyCode == 53 && [self.reader documentEscapeKeyDown:event]) ||
+                        [self.reader documentTypeToSearchKeyDown:event])) return;
     if ([self routeInactiveMagnifyEvent:event]) return;
     if (keyHandshake) return;  // super already had this press
     [super sendEvent:event];

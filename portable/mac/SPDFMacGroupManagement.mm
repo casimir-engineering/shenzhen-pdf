@@ -21,8 +21,32 @@
 }
 @end
 @interface SPDFGroupManagementRow : NSTableRowView
+@property(nonatomic, weak) NSTableView* ownerTable;
+@property(nonatomic) NSInteger nextSectionRow;
 @end
 @implementation SPDFGroupManagementRow
+- (NSRect)sectionConstrainedFrame:(NSRect)frame {
+    // Native floating rows otherwise overlap the next heading. Clamp each
+    // placement at its section boundary, including AppKit's scroll updates.
+    if (!self.groupRowStyle || !self.superview || !self.ownerTable || self.nextSectionRow < 0) return frame;
+    NSRect inTable = [self.superview convertRect:frame toView:self.ownerTable];
+    CGFloat limit = NSMinY([self.ownerTable rectOfRow:self.nextSectionRow])-NSHeight(inTable);
+    if (NSMinY(inTable) > limit) {
+        inTable.origin.y = limit;
+        frame = [self.superview convertRect:inTable fromView:self.ownerTable];
+    }
+    return frame;
+}
+- (void)setFrame:(NSRect)frame { [super setFrame:[self sectionConstrainedFrame:frame]]; }
+- (void)setFrameOrigin:(NSPoint)origin {
+    NSRect frame = self.frame; frame.origin = origin;
+    [super setFrameOrigin:[self sectionConstrainedFrame:frame].origin];
+}
+- (void)drawBackgroundInRect:(NSRect)dirtyRect {
+    // A floating section must cover documents scrolling beneath its controls.
+    if (self.groupRowStyle) { [NSColor.windowBackgroundColor setFill]; NSRectFill(dirtyRect); }
+    else [super drawBackgroundInRect:dirtyRect];
+}
 - (void)drawSelectionInRect:(NSRect)dirtyRect {
     (void)dirtyRect;
     NSRect rect = NSInsetRect(self.bounds,3,1);
@@ -71,6 +95,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     CGFloat _savedScroll;
     BOOL _pendingScrollRestore;
     BOOL _hasSnapshot;
+    BOOL _pendingSelectedReveal;
 }
 - (void)loadView {
     self.view = [NSView new];
@@ -82,6 +107,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     _table = [SPDFGroupManagementTable new]; _table.headerView = nil; _table.dataSource = self; _table.delegate = self;
     _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStylePlain; _table.intercellSpacing = NSMakeSize(0,2);
     _table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
+    _table.floatsGroupRows = YES;
     _table.target = self; _table.action = @selector(activateRow:);
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"group"];
     [_table addTableColumn:column]; _table.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
@@ -89,6 +115,9 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     [_table setAccessibilityHelp:@"Select with the arrow keys, then press Return to open a group or document."];
     NSMenu* menu = [NSMenu new]; menu.delegate = self; _table.menu = menu;
     _scroll = [NSScrollView new]; _scroll.documentView = _table; _scroll.hasVerticalScroller = YES;
+    // Floating headers live outside the clip view; section push-off must still
+    // clip at the list edge instead of painting across its search field.
+    _scroll.wantsLayer = YES; _scroll.layer.masksToBounds = YES;
     _scroll.drawsBackground = NO; _scroll.automaticallyAdjustsContentInsets = NO; _scroll.contentInsets = NSEdgeInsetsZero; _scroll.contentView.postsBoundsChangedNotifications = YES;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(scrolled:)
         name:NSViewBoundsDidChangeNotification object:_scroll.contentView];
@@ -171,7 +200,8 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     _summary.stringValue = _search.stringValue.length ? [NSString stringWithFormat:@"%lu of %lu groups",matched,_groups.count] :
         [NSString stringWithFormat:@"%lu %@ · %lu hidden",_groups.count,_groups.count==1 ? @"group" : @"groups",hidden];
     _empty.stringValue = _groups.count ? @"No matching groups or documents.\nTry another name." : @"Open a document to start organizing your groups.";
-    _empty.hidden = rows.count > 0; [_table reloadData];
+    _empty.hidden = rows.count > 0;
+    [_table reloadData];
     NSInteger selected = -1;
     for (NSUInteger index=0;index<rows.count;index++) {
         NSDictionary* row = rows[index];
@@ -179,6 +209,18 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         if (!row[@"document"] && [row[@"group"][@"selected"] boolValue]) selected = index;
     }
     [_table selectRowIndexes:selected >= 0 ? [NSIndexSet indexSetWithIndex:selected] : [NSIndexSet indexSet] byExtendingSelection:NO];
+}
+- (void)revealSelectedDocument {
+    (void)self.view;
+    for (NSDictionary* group in _groups) {
+        if (![group[@"selected"] boolValue]) continue;
+        if (![_expanded containsObject:group[@"id"]]) {
+            [_expanded addObject:group[@"id"]]; [self rebuildRows];
+        }
+        break;
+    }
+    _pendingSelectedReveal = YES;
+    [self.view layoutSubtreeIfNeeded]; [self restoreScrollIfReady];
 }
 - (void)viewDidLayout {
     [super viewDidLayout];
@@ -190,15 +232,34 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     [self restoreScrollIfReady];
 }
 - (void)restoreScrollIfReady {
-    if (!_pendingScrollRestore || !self.view.window || NSHeight(_scroll.contentView.bounds) <= 1 || NSWidth(_scroll.contentView.bounds) <= 1) return;
+    if ((!_pendingScrollRestore && !_pendingSelectedReveal) || !self.view.window || NSHeight(_scroll.contentView.bounds) <= 1 || NSWidth(_scroll.contentView.bounds) <= 1) return;
     BOOL wasRestoring = _restoring; _restoring = YES;
     NSRect bounds = _scroll.contentView.bounds; bounds.origin = NSMakePoint(0,_savedScroll);
+    if (_pendingSelectedReveal && _table.selectedRow >= 0) {
+        // Center the active document below its floating header. Do not re-center
+        // during ordinary model refreshes, which would fight manual scrolling.
+        NSRect row = [_table rectOfRow:_table.selectedRow];
+        bounds.origin.y = MAX(0,NSMidY(row)-(NSHeight(bounds)+38)/2);
+    }
     bounds = [_scroll.contentView constrainBoundsRect:bounds];
     [_scroll.contentView scrollToPoint:bounds.origin]; [_scroll reflectScrolledClipView:_scroll.contentView];
-    _savedScroll = MAX(0,bounds.origin.y); _pendingScrollRestore = NO; _restoring = wasRestoring;
+    _savedScroll = MAX(0,bounds.origin.y); _pendingScrollRestore = NO;
+    BOOL revealed = _pendingSelectedReveal; _pendingSelectedReveal = NO; _restoring = wasRestoring;
+    if (revealed) [self publishState];
+}
+- (BOOL)tableView:(NSTableView*)table isGroupRow:(NSInteger)row {
+    (void)table; return !_rows[row][@"document"];
+}
+- (BOOL)tableView:(NSTableView*)table shouldSelectRow:(NSInteger)row {
+    (void)table; (void)row; return YES;
 }
 - (NSTableRowView*)tableView:(NSTableView*)table rowViewForRow:(NSInteger)row {
-    (void)table; (void)row; return [SPDFGroupManagementRow new];
+    SPDFGroupManagementRow* view = [SPDFGroupManagementRow new];
+    view.ownerTable = table; view.nextSectionRow = -1;
+    if (!_rows[row][@"document"]) for (NSUInteger index=row+1;index<_rows.count;index++) {
+        if (!_rows[index][@"document"]) { view.nextSectionRow = index; break; }
+    }
+    return view;
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _rows.count; }
 - (CGFloat)tableView:(NSTableView*)table heightOfRow:(NSInteger)row { (void)table; return _rows[row][@"document"] ? 26 : 36; }

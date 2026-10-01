@@ -1,4 +1,5 @@
 #import "SPDFMacMarkdownSidebarModel.h"
+#import "SPDFSearchSnippet.h"
 
 #import "markdown/SPDFMarkdownPaginator.h"
 
@@ -82,11 +83,13 @@ static NSDictionary<NSString*, id>* SPDFMarkdownSidebarItem(NSString* kind, NSSt
             previousChapter = chapter;
         }
 
-        NSString* context = match.context.length ? match.context : query;
+        NSDictionary* snippet=SPDFSearchSnippet(self.renderedDocument.attributedString.string,match.range,24,72);
+        NSString* context = snippet[@"title"];
         NSString* subtitle = [NSString stringWithFormat:@"Page %ld - match %lu of %lu", (long)matchPage + 1,
                                                         (unsigned long)index + 1, (unsigned long)matches.count];
-        [items addObject:SPDFMarkdownSidebarItem(@"findResult", context, subtitle, query, matchPage, (NSInteger)index,
-                                                 0, match.range)];
+        NSMutableDictionary* result=[SPDFMarkdownSidebarItem(@"findResult",context,subtitle,query,matchPage,
+            (NSInteger)index,0,match.range) mutableCopy];
+        result[@"matchRanges"]=snippet[@"matchRanges"]; [items addObject:result];
     }
     return [items copy];
 }

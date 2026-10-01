@@ -14,6 +14,7 @@
 - (NSArray*)favoriteResultsForQuery:(NSString*)query prefix:(NSString*)prefix;
 - (NSArray*)collectionPaletteSupplementaryRowsForQuery:(NSString*)query excludingOpenPaths:(NSSet*)paths;
 - (void)refreshPaletteResults;
+- (void)cancelCollectionPaletteSearch;
 - (BOOL)openCollectionPaletteResult:(NSDictionary*)result;
 - (void)collectionNavigateResult:(NSDictionary*)result path:(NSString*)path attempts:(NSInteger)attempts;
 @end

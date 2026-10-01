@@ -89,7 +89,8 @@ does not re-trigger the macOS access prompt.
 <p align="center"><img src="images/portable/macos-multi-window.webp" alt="Two windows side by side, each with its own tabs, one showing a Markdown document and one a PDF" width="880"></p>
 
 - **Compact tab strip** — every tab outlined, same-named files disambiguated by
-  their folder, overflow into a "…" menu.
+  their folder, overflow into a "…" menu. Long titles keep their beginning and
+  ending visible with a middle ellipsis; hovering reveals the close button without moving the title.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
   **reattach**. A detached tab keeps its page, zoom, scroll and search.
 - **Read-only dot** — a tab opened from a read-only source is marked.
@@ -144,11 +145,16 @@ does not re-trigger the macOS access prompt.
 ## <a id="search"></a>Search
 
 - **Cmd+K on Mac:** open document names, group names, first five open-text results, first five Collection names (excluding open documents), then first five Collection-text results. `col:` searches Collection names and text directly.
+- **Responsive palette:** document and group names appear immediately. Text
+  results arrive asynchronously from lazy, bounded caches; changed files invalidate
+  cached text, and superseded queries cannot overwrite newer results. No indexing
+  work is added to launch.
 - **Cmd+Backspace on Mac:** return to the previous active document, including a recently closed tab; press twice to switch back. Editable text controls retain their normal shortcut behavior.
 
 <p align="center"><img src="images/portable/macos-search-highlights.webp" alt="A search with in-page highlights, chapter-grouped results and a current / total counter" width="880"></p>
 
-- **Type anywhere to search** — no need to focus a field first.
+- **Type anywhere to search** — typing outside text fields opens Find. Escape
+  clears Find and restores the preceding panel and its visibility, including in fullscreen.
 - **Live match count** — a running "current / total" as you type, with every
   match highlighted in the page.
 - **Find next / previous** (<kbd>Enter</kbd> / <kbd>Shift+Enter</kbd>,
@@ -178,7 +184,11 @@ does not re-trigger the macOS access prompt.
 
 <p align="center"><img src="images/portable/macos-chapters.webp" alt="Nested chapters with disclosure arrows, the filter field and the expand / collapse all button" width="320"></p>
 
-- **Three modes in one panel** — Chapters, Comments, and search results.
+- **One document panel** — Chapters, Find, Comments and History, with a separate
+  Groups control. Unavailable document tools retain their capability checks.
+- **Group navigation** — entering Groups reveals the active document. Group
+  headers stay visible while scrolling their documents, giving way at the next
+  group boundary. Normal refreshes preserve your browsing position.
 - **Nested chapters** **mac** — a PDF's outline and a Markdown document's
   headings both fold, with the traditional disclosure arrows on every parent.
 - **One expand / collapse all button** at the end of the filter row, showing the
@@ -187,7 +197,8 @@ does not re-trigger the macOS access prompt.
   file, across launches.
 - **Filter field** — filter chapters or comments as you type.
 - **Chapter-grouped search results** — every match with a snippet, grouped under
-  its chapter heading; click to jump.
+  its chapter heading; click to jump. Context includes and highlights the actual
+  matched occurrence, including regex matches and text spanning lines.
 - **Per-document panel preference**, with a default for newly opened documents.
 
 ## <a id="markdown"></a>Markdown **mac**

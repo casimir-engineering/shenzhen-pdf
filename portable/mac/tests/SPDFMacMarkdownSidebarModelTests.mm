@@ -127,6 +127,9 @@ int main(void) {
             assert([item[@"findIndex"] unsignedIntegerValue] == resultCount);
             assert(NSEqualRanges([item[@"range"] rangeValue], match.range));
             assert([item[@"title"] isEqualToString:match.context]);
+            NSArray* exact=item[@"matchRanges"];
+            assert(exact.count==1);
+            assert([[item[@"title"] substringWithRange:[exact[0] rangeValue]] isEqualToString:@"needle"]);
             assert([item[@"page"] integerValue] >= 0);
             ++resultCount;
         }

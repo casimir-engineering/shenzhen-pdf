@@ -1,5 +1,6 @@
 #import "SPDFMacChromeColors.h"
 #import "SPDFMacWorkspaceChrome.h"
+#import "SPDFMacFindInteraction.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarWorkspace.h"
@@ -250,6 +251,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     [self rebuildSidebar]; [self syncWorkspaceChrome]; [self rememberSidebarWorkspaceMode];
 }
 - (void)revealWorkspaceFind {
+    [self rememberPanelBeforeFind];
     [self prioritizeWorkspaceSidebar];
     if (!_sidebarModeControl) return;
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;

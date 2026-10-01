@@ -5,6 +5,8 @@ static int failures;
 static void Expect(NSString* name, BOOL success) {
     if (!success) { fprintf(stderr, "FAIL %s\n", name.UTF8String); failures++; }
 }
+#import "SPDFMacPaletteCacheChecks.h"
+
 static NSArray* HeaderNames(NSArray* rows) {
     NSMutableArray* names = [NSMutableArray array];
     for (NSDictionary* row in rows) if ([row[@"kind"] isEqual:@"header"]) [names addObject:row[@"title"]];
@@ -12,6 +14,7 @@ static NSArray* HeaderNames(NSArray* rows) {
 }
 int main(void) {
     @autoreleasepool {
+        CheckPaletteSearchCache();
         NSDictionary* group = @{@"id":@"g", @"name":@"Research", @"color":@"Teal",
                                 @"lastUsedPath":@"/tmp/last.pdf"};
         NSDictionary* session = @{@"windows":@[

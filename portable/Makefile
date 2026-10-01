@@ -137,7 +137,7 @@ mupdf-libs:
 $(BUILD):
 	mkdir -p "$(BUILD)"
 
-$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) Makefile | $(BUILD)
+$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
 
 $(CORE_SELECTION_OBJ): $(CORE_SELECTION_SRC) $(CORE_SELECTION_HDR) $(CORE_HDR) Makefile | $(BUILD)
@@ -706,3 +706,13 @@ mac-document-format-tests: mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacDocumentFormatsTests.mm mac/SPDFMacSupport.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -framework PDFKit -framework ImageIO -lm -o "$(BUILD)/SPDFMacDocumentFormatsTests"
 	@fixture_dir=$$(mktemp -d); trap 'rm -rf "$$fixture_dir"' EXIT; \
 	python3 mac/tests/make-format-fixtures.py "$$fixture_dir" && "$(BUILD)/SPDFMacDocumentFormatsTests" "$$fixture_dir" "$(abspath ..)"
+
+.PHONY: mac-find-interaction-tests
+mac-find-interaction-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacFindInteractionTests.mm mac/SPDFMacFindInteraction.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm -framework Cocoa -o "$(BUILD)/SPDFMacFindInteractionTests"
+	"$(BUILD)/SPDFMacFindInteractionTests"
+
+.PHONY: mac-find-context-tests
+mac-find-context-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacFindContextTests.mm mac/SPDFMacFindContext.mm -framework Cocoa -o "$(BUILD)/SPDFMacFindContextTests"
+	"$(BUILD)/SPDFMacFindContextTests"
