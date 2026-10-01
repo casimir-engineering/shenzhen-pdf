@@ -1,6 +1,8 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
 #import "SPDFMacContextPage.h"
+#import "SPDFMacPagePDFCopy.h"
+#import <objc/runtime.h>
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFMacMarkdownEditor.h"
 #import "SPDFMacMarkdownPrinting.h"
@@ -24,10 +26,14 @@
     return SPDFMacPageIndexForActionSender(sender, _contextPageIndex, self.activeMarkdownSession.currentPageIndex);
 }
 
+- (BOOL)canCopyPageAsPDFAtIndex:(NSInteger)pageIndex {
+    if ([self isMarkdownActive]) return [self markdownSessionCanCopyPageAtIndex:pageIndex];
+    return _doc != NULL && _path.length > 0 && pageIndex >= 0 && pageIndex < spdf_page_count(_doc);
+}
+
 - (BOOL)canCopyCurrentPageAsPDF {
-    if ([self isMarkdownActive])
-        return [self markdownSessionCanCopyPageAtIndex:self.activeMarkdownSession.currentPageIndex];
-    return _doc != NULL && _path.length > 0;
+    NSInteger page = [self isMarkdownActive] ? self.activeMarkdownSession.currentPageIndex : _pageIndex;
+    return [self canCopyPageAsPDFAtIndex:page];
 }
 
 - (BOOL)canCopyCurrentPageImage {
@@ -176,34 +182,47 @@
         NSBeep();
         return;
     }
-    NSString* base = _path.lastPathComponent.stringByDeletingPathExtension;
-    NSString* fileName =
-        [NSString stringWithFormat:@"%@ - page %ld.pdf", base.length ? base : @"Page", (long)(pageIndex + 1)];
-    NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ShenzhenPDF-copy"];
-    [NSFileManager.defaultManager createDirectoryAtPath:directory
-                            withIntermediateDirectories:YES
-                                             attributes:nil
-                                                  error:nil];
-    NSString* tempPath = [directory stringByAppendingPathComponent:fileName];
-
-    char err[1024];
-    if (!spdf_save_single_page_pdf(_doc, (int)pageIndex, tempPath.fileSystemRepresentation, err, sizeof(err))) {
-        [self showError:@"Could not copy page"
-                 detail:[NSString stringWithFormat:@"%s", err[0] ? err : "The page could not be written as a PDF."]];
-        return;
-    }
-
     NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
-    [pasteboard clearContents];
-    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
-    NSData* pdfData = [NSData dataWithContentsOfFile:tempPath];
-    if (pdfData) [item setData:pdfData forType:NSPasteboardTypePDF];
-    [item setString:[NSURL fileURLWithPath:tempPath].absoluteString forType:NSPasteboardTypeFileURL];
-    if (![pasteboard writeObjects:@[ item ]]) {
-        NSBeep();
+    if ([_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
+        NSError* error = nil;
+        SPDFMacPagePDFCopy* copy = SPDFCreatePagePDFCopy(_doc, pageIndex, _path, &error);
+        if (!copy) { [self showError:@"Could not copy page" detail:error.localizedDescription]; return; }
+        if (!SPDFWritePagePDFCopy(copy, pasteboard)) { NSBeep(); return; }
+        _statusLabel.stringValue = @"Page copied.";
         return;
     }
-    _statusLabel.stringValue = @"Page copied.";
+    // Image/EPUB/etc exports must not block interaction or borrow the live
+    // document across threads. Capture the context page now, then own a new
+    // MuPDF document on the worker. Original colours/alpha remain intact.
+    NSString* path = [_path copy];
+    NSString* source = [_workingPath.length ? _workingPath : _path copy];
+    NSInteger clipboardChange = pasteboard.changeCount;
+    static char generationKey;
+    NSUInteger generation = [objc_getAssociatedObject(self, &generationKey) unsignedIntegerValue] + 1;
+    objc_setAssociatedObject(self, &generationKey, @(generation), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak ShenzhenMacDelegate* weakSelf = self;
+    _statusLabel.stringValue = @"Copying page as PDF…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            char message[1024] = {};
+            spdf_document* document = spdf_open(source.fileSystemRepresentation, message, sizeof(message));
+            NSError* error = nil;
+            SPDFMacPagePDFCopy* copy = document ? SPDFCreatePagePDFCopy(document, pageIndex, path, &error) : nil;
+            if (document) spdf_close(document);
+            NSString* failure = error.localizedDescription ?: @(message);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                ShenzhenMacDelegate* owner = weakSelf;
+                if (!owner || [objc_getAssociatedObject(owner, &generationKey) unsignedIntegerValue] != generation ||
+                    pasteboard.changeCount != clipboardChange) {
+                    if (copy) [NSFileManager.defaultManager removeItemAtURL:copy.fileURL.URLByDeletingLastPathComponent error:nil];
+                    return;
+                }
+                if (!copy) { [owner showError:@"Could not copy page" detail:failure]; return; }
+                if (!SPDFWritePagePDFCopy(copy, pasteboard)) { NSBeep(); return; }
+                owner->_statusLabel.stringValue = @"Page copied.";
+            });
+        }
+    });
 }
 
 @end

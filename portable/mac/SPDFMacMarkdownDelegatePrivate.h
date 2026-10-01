@@ -177,6 +177,7 @@ NS_ASSUME_NONNULL_BEGIN
 // permission, and a rendered page; Markdown tabs need the session's live
 // pagination plan with a valid target page.
 - (BOOL)canCopyCurrentPageAsPDF;
+- (BOOL)canCopyPageAsPDFAtIndex:(NSInteger)pageIndex;
 - (BOOL)canCopyCurrentPageImage;
 @end
 

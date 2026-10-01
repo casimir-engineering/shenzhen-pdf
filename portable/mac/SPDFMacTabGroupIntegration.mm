@@ -1,3 +1,4 @@
+#import "SPDFMacUnsavedImageClose.h"
 #import "SPDFMacTabGroupIntegration.h"
 #import "SPDFMacTabDetach.h"
 #import "SPDFMacSidebarWorkspace.h"
@@ -173,11 +174,14 @@
 }
 - (void)closeTabGroup:(SPDFTabGroup*)group {
     NSArray* members = spdf_tab_group_members(_tabs, group);
-    // Identity snapshots survive the normalization/selection each close runs.
-    for (SPDFDocumentTab* tab in [members reverseObjectEnumerator]) {
-        NSUInteger index = [_tabs indexOfObjectIdenticalTo:tab];
-        if (index != NSNotFound) [self closeTabAtIndex:(NSInteger)index];
-    }
+    void (^closeMembers)(void) = ^{
+        for (SPDFDocumentTab* tab in [members reverseObjectEnumerator]) {
+            NSUInteger index = [self->_tabs indexOfObjectIdenticalTo:tab];
+            if (index != NSNotFound) [self closeTabAtIndex:(NSInteger)index];
+        }
+    };
+    if ([self deferClosingImageTabs:members action:closeMembers]) return;
+    closeMembers();
 }
 - (void)moveTabGroup:(SPDFTabGroup*)group toIndex:(NSInteger)index {
     NSArray* members = spdf_tab_group_members(_tabs, group);

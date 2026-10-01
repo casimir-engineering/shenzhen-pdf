@@ -55,7 +55,10 @@ TIFF and JPEG clipboard pictures. Pasting inside a text field keeps its normal
 behavior. Clipboard pictures have a red unsaved dot and survive session restoration
 in app-owned storage. **Save As** offers the original image format or PDF and opens
 the saved file. Image copies preserve the original bytes, including transparency,
-metadata and animation; PDF includes every page exposed by the reader.
+metadata and animation; PDF includes every page exposed by the reader. **Copy as
+PDF** copies the selected image page. Closing an unsaved image offers Save,
+Don’t Save or Cancel, including group close and quitting; pending saves finish
+before closing.
 
 The bundled build does not include JPEG XR or RAR decoders, nor native HEIC/WebP,
 legacy Office `.doc`/`.xls`/`.ppt`, or DRM removal. These are not advertised as
