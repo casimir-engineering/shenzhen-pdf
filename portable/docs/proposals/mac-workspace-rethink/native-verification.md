@@ -65,3 +65,21 @@ These are actual AppKit content views captured offscreen. The PDF fixture refill
 ![Older version with missing original at narrow width](evidence/native-reader-light-version.png)
 
 ![Markdown with direct text-size controls](evidence/native-reader-light-markdown.png)
+
+
+## Critic correction loops, 1 October 2026
+
+Three review rounds now supersede the baseline above. Baseline critics scored similarity **7.7/10** and UX **7.8/10**. The first correction pass reached **8.9/10 / 8.8/10** under a fresh independent critic. That review found clipped outline selection/page numbers and an incorrect original-file footer on saved versions. After correction, the independent final review scores **9.2/10 similarity and 9.1/10 UX**, with no major or medium interface findings remaining. These are critic judgments about the native chrome, not a numeric pixel comparison or a claim of identical document rendering. See [ranked independent review](critic-loop-independent.md), [initial similarity findings](critic-loop-similarity.md), and [initial UX findings](critic-loop-ux.md).
+
+The accepted native details now include 32-point outline rows, regular 12-point text, right-aligned page numbers, inset rounded selection, a chapter summary, 30-point rounded search fields, consistent direct icons, metadata above highlighted Find context, filename extensions sourced from real paths, and a non-contradictory saved-version footer. Collection Apply is directly below Storage cap, before help and Location. The command palette uses an Esc close affordance; Collection thumbnails retain a subtle actual-page boundary.
+
+The full production-window probe now seeds extensionless tab titles, so it can detect the real filename bug rather than passing on conveniently full titles. It checks sidebar/table clipping, actual narrow-window map/sidebar toggles, preserved preferred widths, real two-version Collection history, PDF/Markdown rendering hosts, and updater menu routing. PDFKit fixtures refill document and map images after native cache invalidation; the probe intentionally does not start the app render service. All windows remain offscreen. The final probe exited 0, as did the full Markdown/Collection UI runner and the focused regression matrix (including 32 updater cases and 56 release-workflow cases).
+
+Compact windows temporarily show one side panel when both would leave less than 320 points for reading. The last explicitly requested panel wins, both return when space allows, and preferred widths, visibility and compact-panel choice persist through YAML. This changes chrome layout only; document margins and map behavior remain intact.
+
+![Actual History with captured versions and Latest badge](evidence/native-reader-light-history.png)
+![Collection Settings: Apply directly under the storage cap](evidence/native-collection-settings-light.png)
+![Dark Collection Settings](evidence/native-collection-settings-dark.png)
+
+
+The final performance follow-up makes repeated panel-policy evaluation a no-op for raw layout/render setters. A 1,000-request counter test verifies this, and the complete production-window probe passed again after the optimization (`/tmp/sz-workspace-validated.log`). Source-size ratcheting also passed; the main coordinator is reduced from15,730 to15,559 lines through the focused sidebar extraction.

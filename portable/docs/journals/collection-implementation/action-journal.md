@@ -561,3 +561,22 @@ Follow-up proposal correction: grouped document tabs are fused with the title ba
 The user rejected the component-focused balance pass. A new whole-interface study separates workspace navigation, current-document tasks, reading controls and source/version status. The interactive proposal exercises a synthetic 72-document workspace, search, PDF/Markdown switching, History, comparison and the Collection companion at full and compact sizes. An independent critic found state and search errors in the prototype; these were corrected and targeted browser workflows were repeated. This remains a proposal, not a shipped redesign. [Decision, evidence and limitations](../../proposals/mac-workspace-rethink/decision-and-validation.md).
 
 A separate agent reproduced and fixed the reported Chapters/Comments gray-state bug: workspace/history routes could return before refreshing the active document's navigation availability. The refresh now precedes those routes. Focused regressions, syntax checks and the native build pass. The signed candidate matches `dist/ShenzhenPDF.app`; the previous bundle is preserved and the user's running app was not restarted. [Bug audit and packaging](../../proposals/mac-workspace-rethink/bug-audit.md).
+
+
+## 1 October — native/mockup similarity correction loops
+
+The user's rejection was warranted: the first native pass retained old sidebar typography, row density and search-field chrome. Two independent baseline reviews rated it 7.7/10 similarity and 7.8/10 UX. We used the approved prototype's **last effective CSS overrides** as the contract. An early audit incorrectly read earlier 36-point rows; the final implementation follows the later 32-point override and 30-point fields. The audit records the correction.
+
+The work was divided between native sidebar presentation, Collection settings/palette polish, responsive layout, and parent integration. A fresh critic who did not implement the reader changes then reviewed actual offscreen AppKit renders. Its first pass (8.9 similarity / 8.8 UX) found two specific issues: table width clipping hid page numbers and the right selection corners, and an archived document could still have an “Original file” footer. Both were fixed. The final independent grades are **9.2/10 similarity and 9.1/10 UX**, with no major or medium interface findings remaining.
+
+User-visible corrections: filenames including extensions in the left panel; compact regular chapter rows, right page labels and rounded blue selection; metadata-first Find results with yellow term highlights; rounded search controls and consistent icon weight; accurate source status with no duplicate pagination; Apply immediately beneath Collection's storage cap; Esc in Command-K; and a quiet boundary around real Collection thumbnails. Narrow windows retain reading space while keeping requested panel widths and visibility. The last compact-panel choice is stored in YAML.
+
+Verification was strengthened where the previous fixtures were misleading. Reader tab titles now intentionally omit extensions; headers must still show the real full filename. Real Collection captures produce two versions for the History render. The probe asserts native clip/table bounds and exercises shrink, map reveal, sidebar reveal and grow restoration. It writes native view renders without ordering any window or touching user configuration. The full Markdown/Collection UI suite and focused regression matrix passed, including updater (32 cases), release workflow (56 cases), launch laziness, YAML persistence, tab lifecycle and reading-theme/minimap checks. No live update or release publication was performed.
+
+![Corrected native reader](../../proposals/mac-workspace-rethink/evidence/native-reader-light-1280.png)
+![Readable compact sidebar and preserved reader space](../../proposals/mac-workspace-rethink/evidence/native-reader-light-560.png)
+![Find context hierarchy](../../proposals/mac-workspace-rethink/evidence/native-reader-light-find.png)
+![Actual Collection history](../../proposals/mac-workspace-rethink/evidence/native-reader-light-history.png)
+![Apply belongs to the storage cap](../../proposals/mac-workspace-rethink/evidence/native-collection-settings-light.png)
+
+The full ranked review trail and test methodology are in [native verification](../../proposals/mac-workspace-rethink/native-verification.md). Scores describe the interface under the tested states; real PDF content, zoom and minimap rendering are deliberately preserved rather than imitated from the mockup.
