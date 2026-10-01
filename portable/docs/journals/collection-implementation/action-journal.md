@@ -830,3 +830,5 @@ Headless tests cover native drag delegate callbacks, filter/cancel restoration, 
 ![Native header color fixtures in Aqua and Dark Aqua](evidence/group-header-colors-2026-10-02.png)
 
 The real sidebar action test also passes moves in both ordering directions, duplicate-path resolution, destination visibility, selection and YAML restoration of membership/order/reading position. Review found and fixed an adjacent issue where clicking a duplicate-path document could select the copy in another group.
+
+Final `dist/ShenzhenPDF.app` rebuild passed with all native sources included. Strict deep code-signature verification and executable freshness checks passed. Local metadata remains 26.10.2-4; next-release notes contain these additions. The running app was not restarted and no release was published.
