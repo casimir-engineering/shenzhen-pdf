@@ -57,3 +57,39 @@ static void CheckCollectionPDFWorkspace(SPDFMacCollectionWindow* manager, SPDFMa
     }
     [NSFileManager.defaultManager removeItemAtPath:directory error:nil];
 }
+
+static void CheckCollectionSettingsApplyPlacement(SPDFMacCollectionWindow* manager) {
+    [manager showDestination:@"Settings"];
+    NSAppearance* previousAppearance = manager.window.appearance;
+    NSInteger previousLimitMode = manager.limitPicker.indexOfSelectedItem;
+    NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_WINDOW_EVIDENCE"];
+    for (NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
+        manager.window.appearance = [NSAppearance appearanceNamed:appearance];
+        for (NSInteger mode=0;mode<2;mode++) {
+            [manager.limitPicker selectItemAtIndex:mode];
+            [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
+            Layout(manager.window,NSMakeSize(850,590));
+            NSView* cap = Identified(manager.settingsPane,@"CollectionStorageCap");
+            NSButton* apply = (id)Identified(manager.settingsPane,@"CollectionStorageApply");
+            NSView* stack = cap.superview;
+            NSRect capRect = [cap convertRect:cap.bounds toView:stack];
+            NSRect applyRect = [apply convertRect:apply.bounds toView:stack];
+            NSRect helpRect = [Label(manager.settingsPane,@"Unlimited by default. Set 0 to keep all saved copies.")
+                convertRect:Label(manager.settingsPane,@"Unlimited by default. Set 0 to keep all saved copies.").bounds toView:stack];
+            NSRect locationRect = [manager.locationField convertRect:manager.locationField.bounds toView:stack];
+            Expect(@"Apply sits directly below the cap, before help and Location in both limit modes",
+                cap && apply && NSMinY(applyRect)>=NSMaxY(capRect) && NSMinY(applyRect)-NSMaxY(capRect)<=12 &&
+                NSMaxY(applyRect)<=NSMinY(helpRect) && NSMaxY(applyRect)<NSMinY(locationRect));
+            Expect(@"Apply describes its storage-only action to accessibility",[apply.accessibilityLabel isEqual:@"Apply storage limit"] &&
+                apply.action == @selector(changeLimit:) && apply.target == manager);
+            if (evidence.length) {
+                NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
+                [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
+                NSString* output = [evidence.stringByDeletingPathExtension stringByAppendingFormat:@"-settings-%@-%ld.png",appearance,(long)mode];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:output atomically:YES];
+            }
+        }
+    }
+    [manager.limitPicker selectItemAtIndex:previousLimitMode]; [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
+    manager.window.appearance = previousAppearance;
+}

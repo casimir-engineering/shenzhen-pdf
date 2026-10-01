@@ -34,7 +34,7 @@
     NSTextField* captureHelp = SPDFCollectionText(@"You continue using the originals. Turning this off stops new copies; existing history remains available.",12,NSFontWeightRegular,YES);
     add(captureHelp); [stack setCustomSpacing:19 afterView:captureHelp]; divider();
     section(@"Storage");
-    NSStackView* cap = [NSStackView stackViewWithViews:@[]]; cap.spacing = 6; cap.distribution = NSStackViewDistributionFill;
+    NSStackView* cap = [NSStackView stackViewWithViews:@[]]; cap.identifier = @"CollectionStorageCap"; cap.spacing = 6; cap.distribution = NSStackViewDistributionFill;
     [cap addArrangedSubview:SPDFCollectionText(@"Storage cap",12,NSFontWeightRegular,NO)];
     [cap addArrangedSubview:[NSView new]];
     self.limitPicker = SPDFCollectionPopUp(); [self.limitPicker addItemsWithTitles:@[@"Unlimited (default)",@"Custom limit"]];
@@ -49,6 +49,13 @@
     [self.limitField.widthAnchor constraintEqualToConstant:70].active = YES; [cap addArrangedSubview:self.limitField];
     self.limitUnit = SPDFCollectionText(@"GB",13,NSFontWeightRegular,NO); [cap addArrangedSubview:self.limitUnit]; add(cap);
     self.limitField.hidden = self.limitPicker.indexOfSelectedItem == 0; self.limitUnit.hidden = self.limitField.hidden;
+    // Keep the pending status and its action next to the only setting they apply.
+    NSStackView* applyRow = [NSStackView stackViewWithViews:@[]]; applyRow.distribution = NSStackViewDistributionFill;
+    self.settingsStatus = SPDFCollectionText(@"",12,NSFontWeightRegular,YES); [applyRow addArrangedSubview:self.settingsStatus];
+    [applyRow addArrangedSubview:[NSView new]];
+    NSButton* apply = SPDFCollectionButton(@"Apply",self,@selector(changeLimit:),@"normal");
+    apply.identifier = @"CollectionStorageApply"; apply.accessibilityLabel = @"Apply storage limit";
+    [applyRow addArrangedSubview:apply]; add(applyRow);
     add(SPDFCollectionText(@"Unlimited by default. Set 0 to keep all saved copies.",12,NSFontWeightRegular,YES));
     self.storage = SPDFCollectionText(@"Storage is calculated when Collection is opened.",12,NSFontWeightRegular,YES); add(self.storage);
     NSStackView* policy = [NSStackView stackViewWithViews:@[]]; policy.spacing = 12; policy.distribution = NSStackViewDistributionFill;
@@ -66,10 +73,6 @@
     location.spacing = 8; [stack addArrangedSubview:location];
     NSTextField* locationHelp = SPDFCollectionText(@"Set location moves the Collection after verifying the copies.",12,NSFontWeightRegular,YES);
     add(locationHelp); [stack setCustomSpacing:19 afterView:locationHelp]; divider();
-    NSStackView* footer = [NSStackView stackViewWithViews:@[]]; footer.distribution = NSStackViewDistributionFill;
-    self.settingsStatus = SPDFCollectionText(@"",12,NSFontWeightRegular,YES); [footer addArrangedSubview:self.settingsStatus];
-    [footer addArrangedSubview:[NSView new]];
-    [footer addArrangedSubview:SPDFCollectionButton(@"Apply",self,@selector(changeLimit:),@"normal")]; add(footer);
     [self updateStoragePolicy];
 }
 - (void)changeLimitMode:(id)sender {

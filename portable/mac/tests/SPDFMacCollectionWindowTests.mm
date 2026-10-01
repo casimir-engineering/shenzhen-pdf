@@ -89,6 +89,7 @@ int main(void) {
                 ![manager.limitField isDescendantOf:manager.documentsPane]);
             Expect(@"settings controls fit the minimum window",NSContainsRect(manager.settingsPane.bounds,
                 [manager.limitPicker convertRect:manager.limitPicker.bounds toView:manager.settingsPane]));
+            CheckCollectionSettingsApplyPlacement(manager);
             [manager showDestination:@"Documents"]; Layout(manager.window,NSMakeSize(1100,690));
             Expect(@"Documents removes the permanent options tower",!Label(manager.window.contentView,@"Document options") &&
                 fabs(manager.listScroll.frame.size.width-NSWidth(manager.documentsPane.bounds)) < 1);
