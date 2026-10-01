@@ -689,3 +689,8 @@ $(MAC_COLLECTION_BIN): mac/companion/main.mm mac/companion/sources.mk $(MAC_COLL
 mac-collection-companion-link-tests: $(MAC_COLLECTION_SRCS) $(YAML_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) | $(BUILD)
 	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionCompanionLinkTests.mm $(MAC_COLLECTION_SRCS) "$(YAML_OBJ)" $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_COLLECTION_FRAMEWORKS) -Wl,-dead_strip -Wl,-x -o "$(BUILD)/SPDFMacCollectionCompanionLinkTests"
 	"$(BUILD)/SPDFMacCollectionCompanionLinkTests"
+
+.PHONY: mac-workspace-panel-tests
+mac-workspace-panel-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacWorkspacePanelTests.mm mac/SPDFMacWorkspacePanels.mm -framework Cocoa -o "$(BUILD)/SPDFMacWorkspacePanelTests"
+	"$(BUILD)/SPDFMacWorkspacePanelTests"
