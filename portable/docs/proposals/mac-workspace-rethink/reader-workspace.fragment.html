@@ -13,7 +13,13 @@
           <select class="sz-zoom" aria-label="Document zoom"><option>Fit width</option><option>Fit page</option><option>100%</option><option>125%</option></select>
           <span class="sz-toolbar-space"></span><div class="sz-revision-controls" hidden><button class="sz-version-state" data-action="version-info" hidden></button><button class="sz-return-latest" data-action="return-latest" hidden>Return to Latest</button></div>
           <button data-action="collection" class="sz-collection-trigger" aria-label="Open Collection" data-tooltip="Collection"><i data-lucide="library" aria-hidden="true"></i><span>Collection</span></button>
-          <button data-action="tools" class="sz-tools-trigger" aria-label="Document tools"><i data-lucide="sliders-horizontal" aria-hidden="true"></i><span>Tools</span><i data-lucide="chevron-down" aria-hidden="true"></i></button>
+          <div class="sz-direct-tools" role="group" aria-label="Document tools">
+            <button data-action="theme" aria-label="Change reading theme" data-tooltip="Change reading theme"><i data-lucide="sun-moon" aria-hidden="true"></i></button>
+            <button data-action="ocr" aria-label="Recognize text (OCR)" data-tooltip="Recognize text (OCR)"><i data-lucide="scan-text" aria-hidden="true"></i></button>
+            <button data-action="translate" aria-label="Translate document" data-tooltip="Translate document"><i data-lucide="languages" aria-hidden="true"></i></button>
+            <button data-action="export" aria-label="Export or print document" data-tooltip="Export or print document"><i data-lucide="printer" aria-hidden="true"></i></button>
+            <button data-action="map" class="sz-map-reopen" aria-label="Show document map" data-tooltip="Show document map"><i data-lucide="panel-right-open" aria-hidden="true"></i></button>
+          </div>
         </div>
         <div class="sz-content">
           <aside class="sz-pane" aria-label="Current task panel"></aside>
@@ -118,7 +124,7 @@
 #sz-workspace .sz-command kbd{display:none}
 #sz-workspace .sz-tab-drag-space{flex:1;min-width:32px}
 #sz-workspace .sz-overlay{top:44px}
-@container sz-reader (max-width:780px){#sz-workspace .sz-browser-group.is-collapsed:not(.is-current-group){display:none}#sz-workspace .sz-tabs{gap:8px}#sz-workspace .sz-tab-drag-space{min-width:12px}}
+@container sz-reader (max-width:780px){#sz-workspace .sz-tabs{gap:8px}#sz-workspace .sz-tab-drag-space{min-width:12px}}
 @container sz-reader (max-width:650px){#sz-workspace .sz-titlebar{grid-template-columns:64px minmax(0,1fr) 32px;padding:0 8px}}
 @container sz-reader (max-width:500px){#sz-workspace .sz-browser-group.is-expanded:not(.is-current-group){display:none}#sz-workspace .sz-group-label{max-width:70px;overflow:hidden;text-overflow:ellipsis}#sz-workspace .sz-new-tab{display:none}#sz-workspace .sz-tab-drag-space{display:none}#sz-workspace .sz-tabs{gap:4px}}
 @container sz-reader (max-width:420px){#sz-workspace .sz-titlebar{grid-template-columns:52px minmax(0,1fr) 28px;padding:0 6px}#sz-workspace .sz-lights{gap:5px;padding:0}#sz-workspace .sz-browser-group.is-expanded .sz-group-label{margin-right:2px}#sz-workspace .sz-group-label{max-width:60px;padding:2px 5px}#sz-workspace .sz-browser-tab .sz-tab{padding-left:26px;padding-right:26px}}
@@ -138,14 +144,14 @@
 #sz-workspace .sz-pane-subtitle{padding:10px 12px 8px;line-height:16px}
 #sz-workspace .sz-pane-filter{height:30px;min-height:30px;margin:0 10px 8px}
 #sz-workspace .sz-list{padding:0 6px 10px}
-#sz-workspace .sz-browser-group.is-expanded{flex:1;max-width:var(--group-width,none)}
+#sz-workspace .sz-browser-group.is-expanded{flex:0 1 var(--group-width);max-width:var(--group-width,none)}
 #sz-workspace .sz-browser-tab{flex:1 1 144px;width:144px;max-width:220px}
 #sz-workspace .sz-browser-tab:not(.selected) .sz-tab{padding-left:12px;padding-right:12px}
 #sz-workspace .sz-browser-tab:not(.selected):is(:hover,:focus-within) .sz-tab{padding-left:28px;padding-right:28px}
 #sz-workspace .sz-tabs{gap:8px}
 #sz-workspace .sz-tab-drag-space{flex:1;min-width:12px}
 #sz-workspace .sz-tab-more{width:32px}
-#sz-workspace .sz-tabs.is-crowded .sz-browser-group.is-collapsed{display:none}
+
 #sz-workspace .sz-group-picker{position:absolute;top:42px;right:44px;z-index:12;width:236px;padding:6px;background:var(--sz-surface);border:1px solid var(--sz-line);border-radius:8px;box-shadow:0 6px 24px #00000028}
 #sz-workspace .sz-group-picker button{display:flex;width:100%;min-height:32px;font-size:12px;gap:8px}
 #sz-workspace .sz-group-picker button small{margin-left:auto;color:var(--sz-muted);font-size:12px}
@@ -154,6 +160,20 @@
 @container sz-reader (max-width:900px){#sz-workspace .sz-readingbar .sz-collection-trigger span{display:none}}
 @container sz-reader (max-width:650px){#sz-workspace .sz-shell{--sz-pane-width:0px}#sz-workspace .sz-pane{width:240px}#sz-workspace .sz-readingbar .sz-collection-trigger{width:28px;height:28px;min-height:28px;padding:6px}}
 @container sz-reader (max-width:500px){#sz-workspace .sz-browser-group.is-expanded:not(.is-current-group){display:flex}#sz-workspace .sz-group-picker{right:12px;max-width:calc(100% - 24px)}}
+/* Direct document actions; the map shares the sidebar's top alignment. */
+#sz-workspace .sz-readingbar{grid-column:3;flex-wrap:wrap;height:auto;min-height:44px;gap:4px}
+#sz-workspace .sz-readingbar button{height:28px;min-height:28px;padding:6px}
+#sz-workspace .sz-readingbar .sz-page-controls,#sz-workspace .sz-readingbar .sz-page-controls label{height:28px}
+#sz-workspace .sz-direct-tools{display:flex;align-items:center;gap:2px;flex-shrink:0}
+#sz-workspace .sz-readingbar .sz-direct-tools button,#sz-workspace .sz-readingbar .sz-collection-trigger{display:flex;justify-content:center;width:28px;height:28px;min-height:28px;padding:6px}
+#sz-workspace .sz-collection-trigger span{display:none}
+#sz-workspace .sz-minimap{grid-row:1/3;padding:0;display:grid;grid-template-rows:subgrid;overflow:hidden}
+#sz-workspace .sz-map-head{height:auto;min-height:44px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--sz-line);background:var(--sz-surface)}
+#sz-workspace .sz-map-head button{display:flex;width:28px;height:28px;min-height:28px;padding:6px;margin:0;border:0;border-radius:5px;background:transparent;color:var(--sz-text)}
+#sz-workspace .sz-map-head button:hover{background:var(--sz-hover)}
+#sz-workspace .sz-map-pages{flex:1;min-height:0;overflow:auto;padding:12px 5px 8px}
+#sz-workspace .sz-map-pages button{flex-shrink:0}
+@container sz-reader (max-width:650px){#sz-workspace .sz-readingbar{grid-column:1/4}#sz-workspace .sz-minimap{grid-column:4;grid-row:1/3}}
 </style>
 <script>
 (() => {
@@ -167,22 +187,23 @@
   const state={layout:'rail',mode:'chapters',pane:true,doc:0,page:1,version:'latest',missing:false,compare:false,map:true,zoom:'Fit width',query:'',groupQuery:'',filter:'',expanded:['Hardware'],hidden:[],kept:[],memories:{},paneScrolls:{},revisionLocations:{},linked:true,...(window.openai?.widgetState?.privateContent||{}),...saved};
   state.closedTabs=state.closedTabs||[];state.tabExpanded=state.tabExpanded||[docs[state.doc]?.group||'Hardware'];
   const openDocs=()=>docs.map((d,i)=>({...d,i})).filter(d=>!state.closedTabs.includes(d.i));
+  let barGroups=new Set();
   function visibleTabCounts(){
     const available=q('.sz-tabs').clientWidth;
     const open=openDocs(),expanded=state.tabExpanded.at(-1),members=open.filter(d=>d.group===expanded);
     const labels=groupData.filter(([name])=>name!==expanded&&!state.hidden.includes(name)&&open.some(d=>d.group===name));
-    const labelWidth=Math.min(100,(expanded||'').length*7+14)+12;
+    const labelWidth=members.length?Math.min(100,expanded.length*7+14)+12:0;
     const utilities=root.clientWidth>500?96:44;
-    const otherLabels=labels.reduce((sum,[name])=>sum+Math.min(100,name.length*7+14)+8,0);
-    const fullWidth=labelWidth+members.length*220+Math.max(0,members.length-1)*4;
-    const crowded=fullWidth+otherLabels+utilities>available;
-    q('.sz-tabs').classList.toggle('is-crowded',crowded);
-    // Other group labels yield first. Then retain at least 140px per visible
-    // document, except when the window can only accommodate one smaller tab.
-    const budget=available-labelWidth-utilities-(crowded?0:otherLabels);
-    let count=Math.max(1,Math.floor((budget+4)/144));
+    const budget=available-labelWidth-utilities;
+    let count=Math.min(members.length,Math.max(1,Math.floor((budget+4)/144)));
     if(count<members.length)count=Math.max(1,Math.floor((budget-36+4)/144));
-    return new Map([[expanded,Math.min(members.length,count)]]);
+    count=Math.min(members.length,count);
+    // First maximize readable document slots, then use every remaining slot
+    // for other group labels. The manager always lists all groups, separately.
+    let spare=budget-count*144-(count<members.length?36:0);
+    barGroups=new Set(expanded?[expanded]:[]);
+    for(const [name] of labels){const needed=Math.min(100,name.length*7+14)+8;if(needed<=spare){barGroups.add(name);spare-=needed;}}
+    return new Map([[expanded,count]]);
   }
   if(state.archiveOpened)docs.push({title:'Bench measurements.pdf',group:'General',format:'pdf'});
   state.layout='single';state.tabExpanded=state.tabExpanded.slice(-1);
@@ -205,10 +226,10 @@
     groupData.forEach(g=>g[1]=openDocs().filter(d=>d.group===g[0]).length);
     const d=docs[state.doc];
     const tabCounts=visibleTabCounts();
-    q('.sz-tabs').innerHTML=groupData.filter(g=>g[1]&&!state.hidden.includes(g[0])).map(([name,count])=>{
+    q('.sz-tabs').innerHTML=groupData.filter(g=>g[1]&&!state.hidden.includes(g[0])&&barGroups.has(g[0])).map(([name,count])=>{
       const expanded=state.tabExpanded.includes(name),members=openDocs().filter(v=>v.group===name),selected=members.find(v=>v.i===state.doc),limit=tabCounts.get(name)||1,shown=selected?[selected,...members.filter(v=>v.i!==state.doc).slice(0,limit-1)].sort((a,b)=>a.i-b.i):members.slice(0,limit);
       return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}" style="--group-width:${84+shown.length*224+(count>shown.length?36:0)}px"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}" data-tooltip="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
-    }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-action="group-picker" aria-label="Switch groups" aria-expanded="false" data-tooltip="Switch groups">${icon('panels-top-left')}</button>`;
+    }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-action="group-picker" aria-label="All groups" aria-expanded="false" data-tooltip="All groups">${icon('layers')}</button>`;
     q('.sz-mode-label').textContent=state.mode==='groups'?'Groups':modes().find(x=>x[0]===state.mode)?.[2]||'Chapters';
     q('.sz-page-number').value=state.page;q('.sz-zoom').value=state.zoom;
     q('.sz-revision-controls').hidden=state.version==='latest'&&!state.missing;q('.sz-version-state').hidden=state.version==='latest'&&!state.missing;q('.sz-return-latest').hidden=state.version==='latest';
@@ -216,7 +237,9 @@
     q('.sz-pane').hidden=!state.pane;q('.sz-pane').innerHTML=panel();
     q('.sz-source').textContent=state.hidden.includes(d.group)?`${d.title} · ${d.group} hidden from tab bar`:state.missing?'Saved copy · original missing':state.version==='latest'?'Original file · changes protected by Collection':'Read-only version · original remains unchanged';
     q('.sz-footer-page').textContent=`Page ${state.page} of 20`;
-    q('.sz-minimap').hidden=!state.map||state.compare;q('.sz-minimap').innerHTML=Array.from({length:20},(_,i)=>`<button data-page="${i+1}" aria-label="Go to page ${i+1}" aria-current="${state.page===i+1?'page':'false'}" class="${(matchingText()||[]).some(x=>x.i*3+1===i+1)?'sz-map-hit':''}">${i+1}</button>`).join('');
+    q('[data-action=ocr]').disabled=d.format==='md';q('[data-action=ocr]').dataset.tooltip=d.format==='md'?'OCR is available for PDFs':'Recognize text (OCR)';
+    q('.sz-map-reopen').hidden=state.map&&!state.compare;q('.sz-map-reopen').disabled=state.compare;
+    q('.sz-minimap').hidden=!state.map||state.compare;q('.sz-minimap').innerHTML=`<div class="sz-map-head"><button data-action="map" aria-label="Hide document map" data-tooltip="Hide document map">${icon('panel-right-close')}</button></div><div class="sz-map-pages">`+Array.from({length:20},(_,i)=>`<button data-page="${i+1}" aria-label="Go to page ${i+1}" aria-current="${state.page===i+1?'page':'false'}" class="${(matchingText()||[]).some(x=>x.i*3+1===i+1)?'sz-map-hit':''}">${i+1}</button>`).join('')+'</div>';
     renderDocument();symbols();if(q('.sz-list')){q('.sz-list').dataset.owner=paneOwner;q('.sz-list').scrollTop=state.paneScrolls[paneOwner]||0;}
     if(focusAttr)root.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus();
   }
@@ -270,7 +293,7 @@
     if(b.dataset.archiveOpen){const term=(q('[data-input=command]')?.value||'').replace(/^col:/i,'').trim();let index=docs.findIndex(d=>d.title==='Bench measurements.pdf');if(index<0){state.archiveOpened=true;index=docs.length;docs.push({title:'Bench measurements.pdf',group:'General',format:'pdf'});}setDoc(index);state.mode=b.dataset.archiveOpen==='text'?'find':'chapters';state.query=b.dataset.archiveOpen==='text'?term:'';state.regex=false;state.page=1;state.version='latest';state.missing=true;render();persist();return;}
     if(b.dataset.commandText){const term=q('[data-input=command]').value;setDoc(0);state.query=term;state.regex=false;state.page=Math.max(0,corpus.findIndex(t=>t.toLowerCase().includes(term.toLowerCase())))*3+1;state.version='latest';state.mode='find';state.pane=true;render();persist();return;}
     switch(b.dataset.action){
-      case 'group-picker':{const picker=q('.sz-group-picker');picker.hidden=!picker.hidden;b.setAttribute('aria-expanded',String(!picker.hidden));if(!picker.hidden){picker.innerHTML=groupData.filter(g=>g[1]).map(([name,count])=>`<button data-browse-group="${name}" aria-pressed="${state.tabExpanded.includes(name)}">${icon('panels-top-left')}<span>${name}</span><small>${count}</small></button>`).join('')+`<hr><button data-mode="groups">${icon('settings-2')}Manage groups</button>`;symbols();(picker.querySelector('[aria-pressed=true]')||picker.querySelector('button'))?.focus();}break;}
+      case 'group-picker':{const picker=q('.sz-group-picker');picker.hidden=!picker.hidden;b.setAttribute('aria-expanded',String(!picker.hidden));if(!picker.hidden){picker.innerHTML=groupData.map(([name,count])=>`<button data-browse-group="${name}" aria-pressed="${state.tabExpanded.includes(name)}">${icon('layers')}<span>${name}</span><small>${state.hidden.includes(name)?'Hidden · ':''}${count}</small></button>`).join('')+`<hr><button data-mode="groups">${icon('settings-2')}Manage groups</button>`;symbols();(picker.querySelector('[aria-pressed=true]')||picker.querySelector('button'))?.focus();}break;}
       case 'open-document':overlay(dialog('Open document',`<div class="sz-chooser">${docs.slice(0,5).map((d,i)=>`<button data-doc="${i}">${icon(d.format==='pdf'?'file':'file-text')}${esc(d.title)}</button>`).join('')}</div>`));break;
       case 'close-pane':state.pane=false;render();persist();break;
       case 'panel':state.pane=!state.pane;render();persist();break;
@@ -280,9 +303,8 @@
       case 'collection':collection();break;
       case 'collection-settings':collection(true);break;
       case 'command':overlay(`<section class="sz-dialog" role="dialog" aria-label="Find anything"><header class="sz-dialog-head">${icon('search')}<input data-input="command" aria-label="Documents, groups, text or col:" placeholder="Documents, groups, text or col:"><button data-action="dismiss">Esc</button></header><div class="sz-dialog-content sz-command-results">${commandRows()}</div></section>`);break;
-      case 'tools':overlay(dialog('Document tools',`<div class="sz-tools-menu"><button data-action="theme">${icon('sun-moon')}Reading theme</button><button data-action="map">${icon('map')}Document map</button><button data-action="ocr" ${docs[state.doc].format==='md'?'disabled':''}>${icon('scan-text')}Recognize text (OCR)…</button><button data-action="translate">${icon('languages')}Translate…</button><button data-action="export">${icon('share')}Export / Print…</button></div>`));break;
       case 'theme':root.style.colorScheme=(root.style.colorScheme?root.style.colorScheme==='dark':matchMedia('(prefers-color-scheme: dark)').matches)?'light':'dark';closeOverlay();break;
-      case 'map':state.map=!state.map;closeOverlay();render();break;
+      case 'map':state.map=!state.map;closeOverlay();render();persist();break;
       case 'compare':state.compare=true;render();break;
       case 'return-latest':selectVersion('latest');break;
       case 'end-compare':state.compare=false;render();break;
@@ -298,7 +320,7 @@
   });
   root.addEventListener('input',e=>{const kind=e.target.dataset.input;if(!kind)return;const value=e.target.value;
     if(kind==='groups'){state.groupQuery=value;q('.sz-list').innerHTML=groupList();}
-    if(kind==='find'){state.query=value;q('.sz-results').innerHTML=searchResults();q('.sz-count').textContent=value?(matchingText()===null?'Invalid pattern':`${matchingText().length} matches`):'Enter a search term';renderDocument();root.querySelectorAll('.sz-minimap button').forEach(b=>b.classList.toggle('sz-map-hit',(matchingText()||[]).some(x=>x.i*3+1===Number(b.dataset.page))));}
+    if(kind==='find'){state.query=value;q('.sz-results').innerHTML=searchResults();q('.sz-count').textContent=value?(matchingText()===null?'Invalid pattern':`${matchingText().length} matches`):'Enter a search term';renderDocument();root.querySelectorAll('.sz-map-pages button').forEach(b=>b.classList.toggle('sz-map-hit',(matchingText()||[]).some(x=>x.i*3+1===Number(b.dataset.page))));}
     if(kind==='chapters'){state.filter=value;const temp=document.createElement('div');temp.innerHTML=panel();q('.sz-list').innerHTML=temp.querySelector('.sz-list').innerHTML;}
     if(kind==='comments'){q('.sz-list').querySelectorAll('button').forEach(x=>x.hidden=!x.textContent.toLowerCase().includes(value.toLowerCase()));}
     if(kind==='collection')q('.sz-collection-results').innerHTML=collectionRows(value);

@@ -2,7 +2,23 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Latest revision: single sidebar and document-first tab capacity
+## Latest revision: visible group labels, direct tools and full-height map
+
+1 October 2026. Other group labels now use remaining tab-strip space individually, after allocating readable slots to the expanded group's documents. The previous all-or-nothing rule and narrow-width blanket hiding were removed. In the checked 1248px Hardware view all four group labels fit; at 736px Hardware and General fit. The crowded General view still shows six documents at desktop width.
+
+The right-side group manager now uses a stacked-layers icon labeled **All groups**. Its list always includes every group, including hidden and empty groups, independently of which labels fit in the bar. Hidden groups are identified in the list. Choosing a group still expands it without navigating to a different document, and Manage groups remains available.
+
+The Document tools menu was removed. Reading theme, OCR, translation and export/print are direct 28px icon buttons with accessible names and hover helper text. Collection remains a direct icon. OCR is disabled for Markdown with an explanatory helper label. These retain the proposal's existing behavior; OCR, translation and export are still simulated/native-integration placeholders, not newly implemented native commands.
+
+The map now spans both the toolbar and reading rows, matching the left sidebar's top edge. Its header has a direct Hide map icon; a direct Show map icon appears in the toolbar while hidden. The map pages scroll independently below the header. A shared row size keeps the map header aligned when the tools wrap at narrow widths; tools remain visible instead of returning to an overflow menu.
+
+Validation: all three desktop headers measured top=45px and height=44px. Checked light/dark appearance, desktop/736px/352px content widths, no horizontal overflow, retained six-document capacity, map hide/reopen, PDF/Markdown OCR enablement, and the presence of a deliberately hidden Research group in All groups. No browser console errors were observed. Native app and dist remain unchanged.
+
+![Direct tools and aligned map header](evidence/direct-tools-map-header.png)
+
+![Direct tools in light appearance](evidence/direct-tools-map-header-light.png)
+
+## Previous revision: single sidebar and document-first tab capacity
 
 1 October 2026. Following the user's acceptance of the tab direction and rejection of the double left panel, the permanent navigation rail was removed. One 240px sidebar contains a native labeled view selector with an icon, its current task content, and a close control. Chapters, Find, Comments (PDF only), History and Groups share this surface. Collection has a direct toolbar button. The old rail/chooser design alternative is removed. List rows are 32px with unchanged 12px text. Compared with the previous 104px rail plus 232px task pane, the document gains 96px of width.
 
