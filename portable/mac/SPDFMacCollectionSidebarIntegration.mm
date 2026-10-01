@@ -6,6 +6,7 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarWorkspace.h"
+#import "SPDFMacWorkspacePanels.h"
 #import <objc/runtime.h>
 @interface ShenzhenMacDelegate (CollectionRestoreHost)
 - (void)rememberActiveTabState;
@@ -21,6 +22,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey, history
     [self selectedTab].collectionHistoryDocumentID = doc[@"id"];
     [self syncSidebarModeControlSegmentsForSearchAvailability:[self hasSearchSidebar]];
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeHistory;
+    [self prioritizeWorkspaceSidebar];
     _sidebarPreferredVisible = YES; _sidebarWidth = MAX(280, _sidebarWidth);
     [self rememberSidebarWorkspaceMode]; [self collectionRememberSidebarMode]; [self rebuildSidebar];
 }

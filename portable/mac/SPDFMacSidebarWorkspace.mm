@@ -29,6 +29,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
         for (NSString* key in @[@"mode",@"groupScroll",@"width",@"visible",@"newDocumentsInGeneral"])
             if ([value[key] isKindOfClass:NSNumber.class]) state[key] = value[key];
         if ([value[@"groupQuery"] isKindOfClass:NSString.class]) state[@"groupQuery"] = value[@"groupQuery"];
+        if ([@[@"sidebar",@"map"] containsObject:value[@"compactPanel"] ?: @""]) state[@"compactPanel"] = value[@"compactPanel"];
         NSMutableArray* expanded = [NSMutableArray array];
         for (id entry in [value[@"expandedGroups"] isKindOfClass:NSArray.class] ? value[@"expandedGroups"] : @[])
             if ([entry isKindOfClass:NSString.class]) [expanded addObject:entry];

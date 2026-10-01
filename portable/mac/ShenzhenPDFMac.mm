@@ -1,5 +1,6 @@
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacWorkspaceChrome.h"
+#import "SPDFMacWorkspacePanels.h"
 #import "SPDFMacCollectionCompanion.h"
 #import "SPDFMacSidebarWorkspace.h"
 #import <Cocoa/Cocoa.h>
@@ -1011,6 +1012,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
         [self resizeDocumentViewForWindowLiveResize];
         return;
     }
+    [self applyWorkspacePanelPolicy];
     [self restoreSidebarWidth];
     [self relayoutDocumentForViewportChange];
     [self savePersistentState];
@@ -1026,6 +1028,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
     (void)notification;
     if (!_windowLiveResizing) return;
     _windowLiveResizing = NO;
+    [self applyWorkspacePanelPolicy];
     [self restoreSidebarWidth];
     [self relayoutDocumentForViewportChange];
     [self savePersistentState];
@@ -1783,7 +1786,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     windowContentSize = spdf_sane_window_content_size(windowContentSize, _window.screen ?: NSScreen.mainScreen);
 
     if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
-    CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, _splitView ? NSWidth(_splitView.bounds) : 0);
+    CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, 0);
     [self writeStateObject:@{
         @"version" : @1,
         @"fitMode" : @(_fitMode),
@@ -9002,18 +9005,18 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)restoreSidebarWidth {
     if (!_splitView || !_sidebarContainer || !_sidebarVisible || _splitView.subviews.count < 2) return;
-    _sidebarWidth = [self clampedSidebarWidth];
+    CGFloat effectiveWidth = [self clampedSidebarWidth];
     _restoringSidebarLayout = YES;
     _sidebarContainer.hidden = NO;
     _sidebarDividerView.hidden = NO;
     [_splitView layoutSubtreeIfNeeded];
-    [_splitView setPosition:_sidebarWidth ofDividerAtIndex:0];
+    [_splitView setPosition:effectiveWidth ofDividerAtIndex:0];
     [_splitView layoutSubtreeIfNeeded];
     [self normalizeSidebarModeControlWidths];
     _restoringSidebarLayout = NO;
 }
 
-- (void)setSidebarActuallyVisible:(BOOL)visible {
+- (void)setWorkspaceSidebarVisibleWithoutPolicy:(BOOL)visible {
     if (!_splitView || !_sidebarContainer || !_documentContainer) return;
     if (![_splitView.subviews containsObject:_sidebarContainer])
         [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_documentContainer];
@@ -9049,7 +9052,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self updateControls];
 }
 
-- (void)setMinimapActuallyVisible:(BOOL)visible {
+- (void)setWorkspaceMapVisibleWithoutPolicy:(BOOL)visible {
     if (!_minimapView || !_minimapWidthConstraint || !_minimapDividerView) {
         [self syncToolbarState];
         return;
@@ -9176,7 +9179,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [_sidebarTable
             noteHeightOfRowsWithIndexesChanged:[NSIndexSet
                                                    indexSetWithIndexesInRange:NSMakeRange(0, _sidebarItems.count)]];
-    if (_restoringSidebarLayout || !_allowSidebarWidthPersistence) return;
+    if (_restoringSidebarLayout || !_allowSidebarWidthPersistence || _windowLiveResizing || [self workspacePanelPolicyIsApplying]) return;
     if ([self hasActiveDocument]) [self relayoutDocumentForViewportChange];
     if ((NSEvent.pressedMouseButtons & 1) == 0) return;
     CGFloat width = NSWidth(_sidebarContainer.frame);
@@ -12680,6 +12683,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
         return;
     }
     _sidebarPreferredVisible = !_sidebarVisible;
+    if (_sidebarPreferredVisible) [self prioritizeWorkspaceSidebar];
     [self rebuildSidebar];
     [self persistActiveState];
 }
@@ -12698,7 +12702,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     if (!hasItems) return;
     BOOL sameVisibleMode = _sidebarVisible && _sidebarModeControl.spdf_selectedSidebarMode == mode;
     _sidebarPreferredVisible = !sameVisibleMode;
-    if (_sidebarPreferredVisible) _sidebarModeControl.spdf_selectedSidebarMode = mode;
+    if (_sidebarPreferredVisible) { [self prioritizeWorkspaceSidebar]; _sidebarModeControl.spdf_selectedSidebarMode = mode; }
     [self rememberSidebarWorkspaceMode]; [self rebuildSidebar];
     [self persistActiveState];
 }
@@ -12715,7 +12719,8 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (void)toggleMinimap:(id)sender {
     (void)sender;
-    _minimapPreferredVisible = !_minimapPreferredVisible;
+    _minimapPreferredVisible = !_minimapVisible;
+    if (_minimapPreferredVisible) [self prioritizeWorkspaceMap];
     [self setMinimapActuallyVisible:_minimapPreferredVisible];
     [self persistActiveState];
 }

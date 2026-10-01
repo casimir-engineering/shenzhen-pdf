@@ -117,6 +117,7 @@ int main(int argc, const char* argv[]) {
         Check(!promoted.general && [promoted.name isEqual:@"Reference"],@"General rename promotes to a named group");
         Check([reader.sidebarWorkspaceState[@"expandedGroups"] isEqual:@[promoted.identifier]],@"renaming General preserves manager expansion");
         NSMutableDictionary* state = reader.sidebarWorkspaceState;
+        state[@"compactPanel"] = @"map";
         state[@"groupQuery"] = @"Réference"; state[@"expandedGroups"] = @[promoted.identifier]; state[@"groupScroll"] = @48;
         reader.navigation.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
         NSMutableArray* savedTabs = [NSMutableArray array];
@@ -129,6 +130,7 @@ int main(int argc, const char* argv[]) {
         [reopened restoreSidebarWorkspaceState:restoredYAML[@"sidebar"]]; [reopened applySidebarWorkspaceState];
         Check(reopened.navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups && reopened.sidebarWidth == 284,
             @"YAML restores exact sidebar mode and width");
+        Check([reopened.sidebarWorkspaceState[@"compactPanel"] isEqual:@"map"],@"YAML restores compact panel priority");
         Check([reopened.sidebarWorkspaceState[@"groupQuery"] isEqual:@"Réference"] &&
             [reopened.sidebarWorkspaceState[@"expandedGroups"] isEqual:@[promoted.identifier]] &&
             [reopened.sidebarWorkspaceState[@"groupScroll"] integerValue] == 48,@"YAML restores manager query, expansion and scroll");
@@ -150,7 +152,8 @@ int main(int argc, const char* argv[]) {
         reopened.navigation.spdf_selectedSidebarMode = SPDFSidebarModeHistory; [reopened rememberSidebarWorkspaceMode];
         reopened.navigation.spdf_selectedSidebarMode = SPDFSidebarModeChapters; [reopened applySidebarWorkspaceState];
         Check(reopened.navigation.spdf_selectedSidebarMode == SPDFSidebarModeHistory,@"explicit new mode replaces prior sticky Groups state");
-        [reopened restoreSidebarWorkspaceState:@{@"groupQuery":@3,@"expandedGroups":@[@1,@"ok"],@"width":@(-1)}];
+        [reopened restoreSidebarWorkspaceState:@{@"groupQuery":@3,@"expandedGroups":@[@1,@"ok"],@"width":@(-1),@"compactPanel":@"unexpected"}];
+        Check(!reopened.sidebarWorkspaceState[@"compactPanel"],@"invalid compact panel preference is ignored");
         Check(!reopened.sidebarWorkspaceState[@"groupQuery"] && [reopened.sidebarWorkspaceState[@"expandedGroups"] isEqual:@[@"ok"]],
             @"malformed YAML fields are ignored safely");
         NSString* source = [NSString stringWithContentsOfFile:@"mac/ShenzhenPDFMac.mm" encoding:NSUTF8StringEncoding error:nil];
