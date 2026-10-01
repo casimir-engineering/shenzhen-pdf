@@ -716,3 +716,14 @@ View → Version History now uses Command+H, as requested. The sidebar History i
 Validation: sidebar layout tests passed at 176, 240 and 400 points, including aligned result metadata/context and preserved highlighted matches. Previous-document tests verify two-press return and reopening a closed target with its original viewport and group. The complete offscreen workspace probe passed across light/dark appearance and narrow/wide layouts; it verifies unique Command+H / Command+D menu bindings, actual AppKit key dispatch and the updater route. No user window was opened or captured.
 
 The final `dist/ShenzhenPDF.app` build and strict deep signature verification passed. Its executable is newer than all native frontend sources. The running app was left untouched.
+
+
+## 2 October — repeatable map toggle and naming new groups
+
+The map header's hide button and toolbar's show button previously used different AppKit tracking behavior. Both now use the same immediate toggle control. Its mouse-down handler dispatches once without entering a tracking loop that outlives the button's visibility, and consecutive clicks are accepted. This also preserves keyboard and accessibility activation inherited from NSButton. The offscreen workspace probe hit-tests the same window coordinate and sends four consecutive mouse-down events with increasing click counts; every event toggles the real map state. Responsive layout, reader rendering, shortcuts and updater routing checks pass in both appearances.
+
+Creating a group through Add to New Group or by dropping one tab onto another now opens Name New Group after the menu/drag tracking finishes. The suggested color name is actual editable text, focused and selected in full. Enter accepts it; typing replaces it. Keep Default dismisses the prompt without undoing the new group. Existing Rename uses the same focused, prefilled field. The core creation method and agent API remain non-interactive, avoiding modal prompts for automated grouping or restored state.
+
+Focused AppKit tests verify the field-editor selection and Return acceptance without showing a window. Existing tab-group interaction, creation/order and integration tests pass. The initial offscreen native tracking experiment could not activate an unordered stock NSButton, so it was not treated as a reproduction of the reported bug; the final input regression exercises the production immediate handler and real hit-test/layout transitions. No user app window was opened, quit or captured.
+
+Final local build and strict deep signature verification passed for `dist/ShenzhenPDF.app`. Its executable is newer than all native frontend sources. No application restart or release publication was performed.

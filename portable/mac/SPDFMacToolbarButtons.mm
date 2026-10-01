@@ -13,6 +13,7 @@
     self = [super initWithFrame:NSZeroRect];
     if (self) {
         self.title = title;
+        self.ignoresMultiClick = NO;
         self.target = target;
         self.action = action;
         self.bordered = NO;
@@ -20,13 +21,17 @@
         self.translatesAutoresizingMaskIntoConstraints = NO;
         self.focusRingType = NSFocusRingTypeNone;
         [self setButtonType:NSButtonTypeMomentaryChange];
-        // Fire on mouse-down rather than the default mouse-up so toggling the
-        // Side Panel / Map feels immediate.
-        [self sendActionOn:NSEventMaskLeftMouseDown];
         [self setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     }
     return self;
+}
+
+// These actions can hide this button and reveal its counterpart under the
+// pointer. Do not enter NSButton's tracking loop across that layout change.
+- (void)mouseDown:(NSEvent*)event {
+    (void)event;
+    if (self.enabled) [self sendAction:self.action to:self.target];
 }
 
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {

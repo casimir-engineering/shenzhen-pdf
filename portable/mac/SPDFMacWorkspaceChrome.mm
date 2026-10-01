@@ -154,7 +154,10 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
 
     state.mapHeader = SPDFCollectionSurface(@"pane"); state.mapHeader.translatesAutoresizingMaskIntoConstraints = NO;
     [_documentContainer addSubview:state.mapHeader];
-    NSButton* closeMap = Icon(@"sidebar.right",@"Hide document map",self,@selector(toggleMinimap:));
+    NSButton* closeMap = [[SPDFToolbarToggleButton alloc] initWithTitle:@"Map" target:self action:@selector(toggleMinimap:)];
+    closeMap.toolTip = @"Hide document map"; closeMap.accessibilityLabel = closeMap.toolTip;
+    [closeMap.widthAnchor constraintEqualToConstant:28].active = YES;
+    [closeMap.heightAnchor constraintEqualToConstant:28].active = YES;
     closeMap.identifier = @"WorkspaceMapToggle";
     [state.mapHeader addSubview:closeMap];
     [NSLayoutConstraint activateConstraints:@[
