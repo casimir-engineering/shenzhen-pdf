@@ -199,7 +199,7 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
         [_window.appearance performAsCurrentDrawingAppearance:^{
             [NSGraphicsContext saveGraphicsState];
             NSGraphicsContext.currentContext=[NSGraphicsContext graphicsContextWithBitmapImageRep:opaque];
-            [NSColor.windowBackgroundColor setFill]; NSRectFill(view.bounds);
+            [self->_window.backgroundColor setFill]; NSRectFill(view.bounds);
             [bitmap drawInRect:view.bounds fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
                 fraction:1 respectFlipped:YES hints:nil];
             [NSGraphicsContext restoreGraphicsState];
