@@ -3,6 +3,8 @@
 void SPDFInstallReaderNavigationMenu(NSMenu* appMenu, NSMenu* goMenu, NSMenu* viewMenu, id reader) {
     NSMenuItem* previous = [goMenu addItemWithTitle:@"Previous Document" action:NSSelectorFromString(@"returnToPreviousTab:") keyEquivalent:@"d"];
     previous.target = reader; previous.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    NSMenuItem* groups = [viewMenu addItemWithTitle:@"Groups" action:NSSelectorFromString(@"showGroupsSidebar:") keyEquivalent:@"g"];
+    groups.target = reader; groups.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     NSMenuItem* history = [[NSMenuItem alloc] initWithTitle:@"Version History" action:NSSelectorFromString(@"showCollectionHistory:") keyEquivalent:@"h"];
     history.target = reader; history.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [viewMenu insertItem:history atIndex:MIN(1,viewMenu.numberOfItems)];

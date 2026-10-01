@@ -19,13 +19,19 @@ static NSString* Symbol(NSInteger mode) {
     NSTrackingArea* _hoverArea;
     BOOL _hovered;
 }
+- (void)mouseDown:(NSEvent*)event {
+    if (self.mode >= 0) { [super mouseDown:event]; return; }
+    [self highlight:NO]; self.state=NSControlStateValueOff;
+    if (self.enabled) [self sendAction:self.action to:self.target];
+    [self highlight:NO]; self.state=NSControlStateValueOff;
+}
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
-    BOOL selected = self.state == NSControlStateValueOn;
+    BOOL selected = self.mode >= 0 && self.state == NSControlStateValueOn;
     NSRect bounds = NSInsetRect(self.bounds,.5,.5);
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7 yRadius:7];
-    if (selected || self.highlighted || _hovered) {
+    if (self.mode >= 0 && (selected || self.highlighted || _hovered)) {
         BOOL dark = [[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
         NSColor* fill = selected ? (dark ? [NSColor colorWithSRGBRed:.216 green:.294 blue:.380 alpha:1] : [NSColor colorWithSRGBRed:.859 green:.898 blue:.941 alpha:1]) : [NSColor.labelColor colorWithAlphaComponent:self.highlighted ? .065 : .035];
         [fill setFill]; [shape fill];
@@ -75,6 +81,7 @@ static NSString* Symbol(NSInteger mode) {
 - (void)setCollapseTarget:(id)target action:(SEL)action {
     if (!_collapse) {
         SPDFSidebarNavigationRow* collapse = [SPDFSidebarNavigationRow new]; collapse.mode = -1;
+        collapse.ignoresMultiClick=NO; [collapse setButtonType:NSButtonTypeMomentaryChange];
         collapse.target = target; collapse.action = action; collapse.bordered = NO;
         _collapse = collapse; _collapse.toolTip = @"Hide side panel";
         _collapse.accessibilityLabel = @"Hide side panel"; [self addSubview:_collapse];

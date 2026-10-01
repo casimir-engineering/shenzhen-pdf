@@ -1,4 +1,7 @@
+#import "SPDFMacMenuText.h"
+#import "SPDFMacShortcutHelpStyle.h"
 #import "SPDFMacFindContext.h"
+#import "SPDFMacDocumentToolInputIntegration.h"
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacWorkspaceChrome.h"
 #import "SPDFMacFindInteraction.h"
@@ -2089,11 +2092,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                  keyEquivalent:@""];
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Find" action:@selector(focusFind:) keyEquivalent:@"f"];
-    [editMenu addItemWithTitle:@"Find Next" action:@selector(findNext:) keyEquivalent:@"g"];
-    NSMenuItem* prevFind = [editMenu addItemWithTitle:@"Find Previous"
-                                               action:@selector(findPrevious:)
-                                        keyEquivalent:@"G"];
-    prevFind.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItemWithTitle:@"Find Next" action:@selector(findNext:) keyEquivalent:@""];
+    [editMenu addItemWithTitle:@"Find Previous" action:@selector(findPrevious:) keyEquivalent:@""];
     [editMenu addItem:[NSMenuItem separatorItem]];
     [editMenu addItemWithTitle:@"Regex Multiline" action:@selector(toggleFindRegexMultiline:) keyEquivalent:@""];
     [editMenu addItem:[NSMenuItem separatorItem]];
@@ -2505,7 +2505,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                                 action:@selector(ocrDocument:)
                                   menu:menu
                                  state:NSControlStateValueOff
-                               enabled:hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]];
+                               enabled:hasDoc && SPDFOCRPathSupported(_path)];
     if ([hiddenViews containsObject:_translateButton])
         [self addOverflowItemWithTitle:@"Translate..."
                                 action:@selector(translateDocument:)
@@ -10083,7 +10083,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _fitModePopup.enabled = hasDoc;
     _searchField.enabled = hasDoc;
     _findRegexCheckbox.enabled = hasDoc;
-    _ocrButton.enabled = hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+    _ocrButton.enabled = hasDoc && SPDFOCRPathSupported(_path);
     [self updateTranslateCommandEnablement];
     _minimapToggleButton.enabled = hasDoc;
     [self updateFindControls];
@@ -10625,9 +10625,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 }
 
 - (NSString*)shortSelectedTextForMenuTitle {
-    NSString* text = SPDFTextByCollapsingWhitespace([self trimmedSelectedTextForCommand]);
-    if (text.length <= 42) return text;
-    return [[text substringToIndex:39] stringByAppendingString:@"..."];
+    return SPDFMenuSelectionPreview([self isMarkdownActive] ? [self markdownSelectedText] : _selectedText);
 }
 
 - (void)searchSelectedTextInBrowser:(id)sender {
@@ -13839,7 +13837,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (void)translateDocument:(id)sender {
     if (![self beginTranslateCommandForSender:sender]) return;
-    if ([self beginWholeDocumentTranslationForMarkdown]) return;  // renders to PDF, then re-enters
+    if ([self beginWholeDocumentTranslationForMarkdown] || [self beginNativeDocumentTranslation]) return;
     if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;
 
     BOOL usingSelection = NO;
@@ -14072,7 +14070,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         strongSelf->_ocrInstallTask = nil;
         [strongSelf->_ocrInstallProgress stopAnimation:nil];
         strongSelf->_ocrButton.enabled =
-            strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+            strongSelf->_doc != NULL && SPDFOCRPathSupported(strongSelf->_path);
         NSString* tool = [strongSelf ocrToolPath];
         NSString* tesseract = [strongSelf tesseractToolPath];
         if (finishedTask.terminationStatus == 0 && tool.length && tesseract.length &&
@@ -14095,7 +14093,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         _ocrInstallRunning = NO;
         _ocrInstallTask = nil;
         [_ocrInstallProgress stopAnimation:nil];
-        _ocrButton.enabled = _doc != NULL && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+        _ocrButton.enabled = _doc != NULL && SPDFOCRPathSupported(_path);
         [self showError:@"Could not start OCR installer" detail:error.localizedDescription ?: @""];
     }
 }
@@ -14175,13 +14173,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 - (void)rotateAnticlockwise:(id)sender {
     (void)sender;
     [self rotateCurrentPageByDegrees:-90];
-}
-
-- (void)ocrDocument:(id)sender {
-    (void)sender;
-    NSDictionary<NSString*, NSString*>* language = [self promptForOCRLanguage];
-    if (!language) return;
-    [self runOCRWithLanguage:language[@"code"] displayName:language[@"name"]];
 }
 
 // Strip the entire text layer (e.g. a wrong OCR layer) so the document can be
@@ -14334,7 +14325,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                 return;
             }
             strongSelf->_ocrButton.enabled =
-                strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+                strongSelf->_doc != NULL && SPDFOCRPathSupported(strongSelf->_path);
             [strongSelf finishOCRProgressWithDetail:@"OCR failed."];
             [strongSelf showError:@"OCR failed" detail:spdf_mac_ocr_human_readable_failure(output)];
             strongSelf->_statusLabel.stringValue = @"OCR failed.";
@@ -14369,7 +14360,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         if (outputHasText <= 0) {
             [NSFileManager.defaultManager removeItemAtPath:tmp error:nil];
             strongSelf->_ocrButton.enabled =
-                strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+                strongSelf->_doc != NULL && SPDFOCRPathSupported(strongSelf->_path);
             [strongSelf finishOCRProgressWithDetail:@"OCR produced no selectable text."];
             NSString* detail =
                 outputHasText < 0
@@ -14419,7 +14410,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         [strongSelf collectionDidSavePath:originalPath];
         [strongSelf loadSelectedTab];
         strongSelf->_ocrButton.enabled =
-            strongSelf->_doc != NULL && [strongSelf->_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+            strongSelf->_doc != NULL && SPDFOCRPathSupported(strongSelf->_path);
         if (backupPath.length)
             strongSelf->_statusLabel.stringValue =
                 [NSString stringWithFormat:@"OCR complete. Backup: %@", backupPath.lastPathComponent];
@@ -14439,6 +14430,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 }
 
 - (void)runOCRWithLanguage:(NSString*)language displayName:(NSString*)displayName {
+    if ([self beginImageOCRWithLanguage:language displayName:displayName]) return;
     if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
         NSBeep();
         return;
@@ -15005,7 +14997,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         }
         if (commandSelector == @selector(insertNewline:) ||
             commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
-            BOOL shift = (NSApp.currentEvent.modifierFlags & NSEventModifierFlagShift) != 0;
+            BOOL shift = (NSApp.currentEvent.modifierFlags & (NSEventModifierFlagShift | NSEventModifierFlagCommand)) != 0;
             if (_findMatches.count > 0)
                 [self findFromCurrentForward:!shift];
             else
@@ -15086,8 +15078,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 - (CGFloat)tableView:(NSTableView*)tableView heightOfRow:(NSInteger)row {
     if (tableView == _shortcutHelpTable) {
         if (row < 0 || row >= (NSInteger)_shortcutHelpRows.count) return 48.0;
-        NSString* kind = _shortcutHelpRows[(NSUInteger)row][@"kind"];
-        return [kind isEqualToString:@"header"] ? 36.0 : 54.0;
+        return SPDFShortcutHelpRowHeight(_shortcutHelpRows[(NSUInteger)row]);
     }
     if (tableView != _paletteTable) {
         if (row >= 0 && row < (NSInteger)_sidebarItems.count) {
@@ -15133,50 +15124,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 - (NSView*)tableView:(NSTableView*)tableView viewForTableColumn:(NSTableColumn*)tableColumn row:(NSInteger)row {
     if (tableView == _shortcutHelpTable) {
         if (row < 0 || row >= (NSInteger)_shortcutHelpRows.count) return nil;
-        NSDictionary* shortcut = _shortcutHelpRows[(NSUInteger)row];
-        NSString* kind = shortcut[@"kind"];
-        if ([kind isEqualToString:@"header"]) {
-            NSView* view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, 36)];
-            NSTextField* label = [NSTextField labelWithString:shortcut[@"title"] ?: @""];
-            label.translatesAutoresizingMaskIntoConstraints = NO;
-            label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
-            label.textColor = NSColor.labelColor;
-            [view addSubview:label];
-            [NSLayoutConstraint activateConstraints:@[
-                [label.leadingAnchor constraintEqualToAnchor:view.leadingAnchor constant:6],
-                [label.centerYAnchor constraintEqualToAnchor:view.centerYAnchor constant:4]
-            ]];
-            return view;
-        }
-
-        NSView* view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, 54)];
-        NSTextField* title = [NSTextField labelWithString:shortcut[@"title"] ?: @""];
-        title.translatesAutoresizingMaskIntoConstraints = NO;
-        title.font = [NSFont systemFontOfSize:15 weight:NSFontWeightRegular];
-        title.textColor = [kind isEqualToString:@"empty"] ? NSColor.secondaryLabelColor : NSColor.labelColor;
-        [view addSubview:title];
-
-        NSString* subtitleText = shortcut[@"subtitle"];
-        NSTextField* subtitle = [NSTextField labelWithString:subtitleText ?: @""];
-        subtitle.translatesAutoresizingMaskIntoConstraints = NO;
-        subtitle.font = [NSFont systemFontOfSize:12 weight:NSFontWeightRegular];
-        subtitle.textColor = NSColor.secondaryLabelColor;
-        [view addSubview:subtitle];
-
-        NSView* keycaps = [self shortcutKeycapsViewForKeys:shortcut[@"keys"]];
-        [view addSubview:keycaps];
-        [NSLayoutConstraint activateConstraints:@[
-            [title.leadingAnchor constraintEqualToAnchor:view.leadingAnchor constant:6],
-            [title.trailingAnchor constraintLessThanOrEqualToAnchor:keycaps.leadingAnchor constant:-16],
-            [title.topAnchor constraintEqualToAnchor:view.topAnchor constant:9],
-            [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-            [subtitle.trailingAnchor constraintLessThanOrEqualToAnchor:keycaps.leadingAnchor constant:-16],
-            [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2],
-            [keycaps.trailingAnchor constraintEqualToAnchor:view.trailingAnchor constant:-8],
-            [keycaps.centerYAnchor constraintEqualToAnchor:view.centerYAnchor]
-        ]];
-        keycaps.hidden = [kind isEqualToString:@"empty"] || [shortcut[@"keys"] count] == 0;
-        return view;
+        return SPDFShortcutHelpRowView(_shortcutHelpRows[(NSUInteger)row]);
     }
 
     if (tableView == _paletteTable) return [self workspacePaletteViewForRow:row];
@@ -15361,7 +15309,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(deleteComment:)) return !markdown && hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
     if (action == @selector(rotateClockwise:) || action == @selector(rotateAnticlockwise:))
         return [self canRotateActivePage];
-    if (action == @selector(ocrDocument:) || action == @selector(deleteAllTextFromDocument:))
+    if (action == @selector(ocrDocument:)) return hasDoc && SPDFOCRPathSupported(_path);
+    if (action == @selector(deleteAllTextFromDocument:))
         return hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
     if (action == @selector(translateDocument:)) {
         spdf_translation_context context = [self translationContext];

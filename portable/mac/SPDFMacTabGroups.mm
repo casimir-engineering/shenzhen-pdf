@@ -8,12 +8,20 @@
     group.colorName = @"Gray";
     return group;
 }
++ (instancetype)collectionBackupsGroup {
+    SPDFTabGroup* group = [[self alloc] init];
+    group.identifier = @"collection-backups";
+    group.name = @"Collection Backups";
+    group.colorName = @"Slate";
+    return group;
+}
 + (instancetype)groupWithColor:(NSString*)color {
     SPDFTabGroup* group = [[self alloc] init];
     group.identifier = NSUUID.UUID.UUIDString;
     group.colorName = [spdf_tab_group_colors() containsObject:color] ? color : @"Purple";
     return group;
 }
+- (BOOL)collectionBackups { return [self.identifier isEqualToString:@"collection-backups"]; }
 - (BOOL)general { return [self.identifier isEqualToString:@"general"]; }
 - (NSString*)displayName { return self.name.length ? self.name : self.general ? @"General" : self.colorName; }
 - (NSDictionary*)dictionary {
@@ -151,4 +159,13 @@ void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* 
         tab.group.collapsed = tab.group != selected.group;
     selected.group.collapsed = NO;
     selected.group.lastUsedPath = selected.path;
+}
+
+void spdf_tab_group_collection_copy(NSMutableArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* tab) {
+    if (!tab || tab.group.collectionBackups || ![tabs containsObject:tab]) return;
+    SPDFTabGroup* group = nil;
+    for (SPDFDocumentTab* candidate in tabs)
+        if (candidate.group.collectionBackups) { group = candidate.group; break; }
+    tab.group = group ?: SPDFTabGroup.collectionBackupsGroup;
+    spdf_tab_groups_normalize(tabs);
 }

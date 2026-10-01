@@ -749,3 +749,23 @@ Focused group, hover, workspace, retention, cache, preview-delivery, palette, co
 This image is a hidden native AppKit render, not a capture of the user's reader. The same probe checks repeated input at a fixed coordinate in light/dark appearance and wide/compact layouts. Live validation used the separate temporary reader described above; after testing, only its verified PID was stopped.
 
 Final packaging: `dist/ShenzhenPDF.app` rebuilt successfully as 26.10.2-1. Strict deep code-signature verification passed; the production bundle identifier is unchanged, and the executable is newer than every native frontend source. This is the local development candidate, not a notarized published release. No tag, push, upload or publication was performed.
+
+
+## 2 October — shortcuts, instant controls and explicit backup opening
+
+Command+G now opens Groups. Find Next/Previous no longer bind Command+G / Shift+Command+G. Return advances a search and Command+Return moves backward, both from the Find field and from the document while Find is active; Shift+Return remains compatible. Other text editors retain Return. The reader probe dispatches G/H/D through actual AppKit menu equivalents. The shortcut window uses a normal titled surface, compact rows, aligned keycaps and a highlighted New! category. Search recognizes action names and key aliases; the launch opt-out still persists.
+
+![Keyboard shortcuts in dark appearance](evidence/shortcuts-new-dark.png)
+![Keyboard shortcuts in light appearance](evidence/shortcuts-new-light.png)
+
+These are offscreen renders of the real native builder; no user window was opened. Geometry checks cover every catalog row and keycap, in addition to search and preference persistence.
+
+Group mouse-up previously discarded click counts greater than one, which explained why quick repeated clicks were ignored. Every click now toggles immediately. Naming and renaming share an anchored, non-animated popover with the suggested name selected; it retains Return acceptance, cancellation and an explicit commit. This removes the sheet-opening animation without a timer or launch-time preload. The sidebar collapse control is momentary, clears its tracking state and never draws a selected/hover background; six successive activations are checked. The map keeps its persistent button and repeated-click checks.
+
+Context-menu previews previously normalized the complete selected text just to show a short label. They now sample at most 256 UTF-16 units plus a composed-character boundary, preserving full text for the actual Copy/Translate actions. The 8-million-character selection fixture produced 100 previews in 0.61 ms. This measures label construction, not the system menu's presentation latency; no universal zero-latency claim is made.
+
+Collection now distinguishes Open original from Open collection copy. A saved copy never redirects to its source. Protected copies join the lazily created Collection Backups group, whose identity survives YAML restoration and whose header/picker show the collection symbol. Opening an ordinary original while this group is selected routes it to General. Copy files are read-only before asynchronous metadata lookup. History continues to open the latest linked original with History selected; search results open without switching to History.
+
+OCR can now accept supported images and creates a separate PDF on a worker before entering the existing OCR workflow. Native text documents such as EPUB and Office files similarly get a PDF rendition before whole-document translation; Markdown/plain text/source files use the existing text-renderer export. Generated names avoid collisions and protected Collection sources request an external destination. Image and native-text conversion tests cover nine format fixtures and multipage TIFF, preserving source bytes and existing output. Existing OCR command, validation and translation-policy tests pass; no tool installation or external OCR/translation run was needed for these routing changes. The shared PDF writer was extracted without changing its Windows entry point.
+
+The combined local build and hidden workspace probe pass, along with focused keyboard, popover, group, sidebar, Collection, conversion and shortcut UI checks. Release candidate 26.10.2-2 will run the complete release sweep before final packaging.

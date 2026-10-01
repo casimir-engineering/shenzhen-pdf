@@ -6,8 +6,18 @@
 #import "SPDFMacCollectionCompanion.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import <objc/runtime.h>
+#import "SPDFMacTabGroups.h"
 static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported, kCollectionRecoveryPath, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionIntegration)
+- (void)collectionGroupBackupTab:(SPDFDocumentTab*)tab {
+    SPDFDocumentTab* selected = [self selectedTab];
+    spdf_tab_group_collection_copy(_tabs,tab);
+    _selectedTabIndex = selected ? [_tabs indexOfObjectIdenticalTo:selected] : -1;
+    if (selected == tab) {
+        tab.group.hidden = NO;
+        spdf_tab_groups_activate(_tabs,tab);
+    }
+}
 - (void)collectionObserveSettings {
     if (objc_getAssociatedObject(self, &kCollectionSettingsObserver)) return;
     __weak ShenzhenMacDelegate* weakSelf = self;
@@ -63,6 +73,7 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
             NSInteger index = [self indexOfTabForPath:source];
             if (index >= 0) {
                 SPDFDocumentTab* tab = self->_tabs[(NSUInteger)index]; tab.readOnly = YES;
+                [self collectionGroupBackupTab:tab];
                 [self collectionSetVersionInfo:info forTab:tab];
                 NSNumber* capturedAt = info[@"version"][@"capturedAt"];
                 NSString* label = capturedAt ? [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:capturedAt.doubleValue]
@@ -70,7 +81,7 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
                 tab.collectionVersionLabel = [NSString stringWithFormat:@"Archived · %@ · %@ · Read-only", label, source.lastPathComponent.stringByDeletingPathExtension];
                 tab.title = tab.collectionVersionLabel;
                 [self updateTabStrip]; [self savePersistentState]; [self collectionRefreshHistory];
-                if (index == self->_selectedTabIndex) {
+                if (tab == [self selectedTab]) {
                     self->_window.title = [tab.collectionVersionLabel stringByAppendingString:@" - Shenzhen PDF"];
                     self->_statusLabel.stringValue = [NSString stringWithFormat:@"Archived copy · Read-only · %@", label];
                 }
@@ -205,6 +216,7 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     [NSApp activateIgnoringOtherApps:YES];
     if (archived && [[self selectedTab].path isEqual:path]) {
         SPDFDocumentTab* tab = [self selectedTab]; tab.readOnly = YES;
+        [self collectionGroupBackupTab:tab];
         tab.title = [NSString stringWithFormat:@"%@ · Collection copy", path.lastPathComponent.stringByDeletingPathExtension];
         [self updateTabStrip]; [self savePersistentState];
         _statusLabel.stringValue = @"Read-only Collection copy · the original document is unchanged";

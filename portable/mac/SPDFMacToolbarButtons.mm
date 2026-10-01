@@ -31,7 +31,9 @@
 // pointer. Do not enter NSButton's tracking loop across that layout change.
 - (void)mouseDown:(NSEvent*)event {
     (void)event;
+    [self highlight:NO];
     if (self.enabled) [self sendAction:self.action to:self.target];
+    [self highlight:NO];
 }
 
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {
@@ -61,10 +63,6 @@
 
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
-    if (self.highlighted) {
-        [[NSColor.labelColor colorWithAlphaComponent:.08] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,1,1) xRadius:6 yRadius:6] fill];
-    }
     NSImage* image = [NSImage imageWithSystemSymbolName:[self.title isEqualToString:@"Map"] ? @"sidebar.right" : @"sidebar.left"
                               accessibilityDescription:nil];
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular]];

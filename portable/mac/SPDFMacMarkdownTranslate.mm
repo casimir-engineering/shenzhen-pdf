@@ -42,7 +42,7 @@
                                          attributedString:text
                                                     toURL:[NSURL fileURLWithPath:rendition]
                                                     error:&error]) {
-        [self showError:@"Could not translate this Markdown document"
+        [self showError:@"Could not translate this text document"
                  detail:error.localizedDescription
                             ?: @"Shenzhen PDF could not render it to a PDF to translate."];
         return YES;  // handled: the caller must not fall through to the PDF path

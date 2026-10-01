@@ -72,12 +72,14 @@
 }
 - (void)promptForGroup:(SPDFTabGroup*)group creating:(BOOL)creating {
     if (!group || !self.window) return;
-    NSAlert* alert = SPDFTabGroupNamePrompt(group.displayName,creating);
-    NSTextField* field = (NSTextField*)alert.accessoryView;
-    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
-        if (response == NSAlertFirstButtonReturn) [self.groupReader renameTabGroup:group name:field.stringValue];
-    }];
-    SPDFSelectGroupPromptName(alert);
+    NSRect rect = NSZeroRect;
+    for (id layout in self.groupLayouts) if ([layout valueForKey:@"group"] == group) {
+        rect = [[layout valueForKey:@"header"] rectValue]; break;
+    }
+    __weak SPDFTabStripView* weakSelf=self;
+    SPDFPresentGroupNamePrompt(self,rect,group.displayName,creating,^(NSString* name) {
+        [weakSelf.groupReader renameTabGroup:group name:name];
+    });
 }
 - (void)renameGroup:(SPDFTabGroup*)group { [self promptForGroup:group creating:NO]; }
 - (void)groupRenameMenu:(NSMenuItem*)sender { [self renameGroup:sender.representedObject]; }
@@ -162,7 +164,6 @@
 }
 - (BOOL)handleGroupMouseUp:(NSEvent*)event {
     SPDFTabGroup* group = _pressedGroup;
-    if (event.clickCount > 1) { _pressedGroup = nil; [self restoreWindowMovementForTabGesture]; return group != nil; }
     _pressedGroup = nil;
     if (!group) return NO;
     [self restoreWindowMovementForTabGesture];

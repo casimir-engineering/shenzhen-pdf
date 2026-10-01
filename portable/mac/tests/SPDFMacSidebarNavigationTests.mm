@@ -106,6 +106,16 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
             windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:0 pressure:0]];
     }
     if (focus == 2) { filter.stringValue = @"document"; [window makeFirstResponder:filter]; }
+    [navigation setCollapseTarget:fixture action:@selector(changed:)];
+    NSButton* collapse=nil;
+    for (NSView* child in navigation.subviews) if ([child isKindOfClass:NSButton.class] && [child.accessibilityLabel isEqual:@"Hide side panel"]) collapse=(id)child;
+    Check(collapse!=nil,"sidebar collapse control is available");
+    for (NSInteger click=1;click<=6;click++) {
+        [collapse highlight:YES]; collapse.state=NSControlStateValueOn;
+        NSUInteger before=fixture.changes;
+        [collapse mouseDown:[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:window.windowNumber context:nil eventNumber:click clickCount:click pressure:1]];
+        Check(fixture.changes==before+1 && !collapse.highlighted && collapse.state==NSControlStateValueOff,"repeated collapse clears highlighted/toggled state every cycle");
+    }
     Check(!window.visible,"navigation test never shows a window");
     if (evidence.length) {
         NSBitmapImageRep* bitmap = [surface bitmapImageRepForCachingDisplayInRect:surface.bounds];

@@ -66,7 +66,9 @@
 - (NSInteger)appendNewTabToActiveGroup:(SPDFDocumentTab*)tab {
     SPDFTabGroup* group = _selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count
         ? _tabs[(NSUInteger)_selectedTabIndex].group : nil;
-    if ([[self sidebarWorkspaceState][@"newDocumentsInGeneral"] boolValue] || group.hidden) {
+    // Backups is a reserved destination for immutable Collection copies. Opening
+    // an original from it must not inherit that group; archived opens route explicitly.
+    if ([[self sidebarWorkspaceState][@"newDocumentsInGeneral"] boolValue] || group.hidden || group.collectionBackups) {
         group=nil;
         for (SPDFDocumentTab* existing in _tabs) if (existing.group.general) { group=existing.group; break; }
         if (!group) group=SPDFTabGroup.generalGroup;

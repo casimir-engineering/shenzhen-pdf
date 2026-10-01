@@ -1,3 +1,4 @@
+#import "SPDFMacTabGroupNamePrompt.h"
 #import "SPDFMacGroupManagement.h"
 #import "SPDFMacTabGroups.h"
 
@@ -75,7 +76,7 @@ static NSTextField* Label(NSString* text, CGFloat size, BOOL secondary) {
 }
 static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, SEL action) {
     SPDFGroupActionButton* button = [SPDFGroupActionButton new];
-    button.bordered = NO; button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:help];
+    button.ignoresMultiClick = NO; button.bordered = NO; button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:help];
     button.target = target; button.action = action; button.toolTip = help;
     [button setAccessibilityLabel:help];
     [button.widthAnchor constraintEqualToConstant:26].active = YES;
@@ -281,8 +282,9 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
             [NSString stringWithFormat:@"%@ %@ documents",expanded ? @"Collapse" : @"Expand",group[@"name"]],self,@selector(disclose:)); disclosure.groupID = group[@"id"];
         disclosure.enabled = !searching;
         if (searching) disclosure.toolTip = @"Matching documents are shown while searching";
-        NSImageView* swatch = [NSImageView imageViewWithImage:spdf_tab_group_swatch_image(group[@"color"])];
-        [swatch.widthAnchor constraintEqualToConstant:8].active = YES;
+        BOOL backups=[group[@"id"] isEqual:@"collection-backups"];
+        NSImageView* swatch = [NSImageView imageViewWithImage:backups ? [NSImage imageWithSystemSymbolName:@"books.vertical" accessibilityDescription:@"Collection Backups"] : spdf_tab_group_swatch_image(group[@"color"])];
+        [swatch.widthAnchor constraintEqualToConstant:backups ? 14 : 8].active = YES;
         NSTextField* name = Label(group[@"name"],12,NO);
         [name setContentCompressionResistancePriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal]; name.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
         name.toolTip = group[@"name"];
@@ -348,13 +350,12 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (void)menuAction:(NSMenuItem*)sender {
     NSDictionary* group = sender.representedObject; if (!self.actionHandler) return;
     if ([sender.title isEqual:@"Rename…"]) {
-        NSAlert* alert = [NSAlert new]; alert.messageText = @"Rename group";
-        alert.informativeText = [group[@"id"] isEqual:@"general"] ? @"New documents will open in a new General group." : @"Choose a name for this group.";
-        NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,260,24)]; field.stringValue = group[@"name"];
-        alert.accessoryView = field; [alert addButtonWithTitle:@"Rename"]; [alert addButtonWithTitle:@"Cancel"];
-        [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse result) {
-            if (result == NSAlertFirstButtonReturn) self.actionHandler(@"rename",group[@"id"],field.stringValue);
-        }];
+        NSInteger row=_table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+        NSRect rect=row >= 0 ? [_table rectOfRow:row] : _table.visibleRect;
+        __weak SPDFGroupManagementController* weakSelf=self;
+        SPDFPresentGroupNamePrompt(_table,rect,group[@"name"],NO,^(NSString* name) {
+            if (weakSelf.actionHandler) weakSelf.actionHandler(@"rename",group[@"id"],name);
+        });
     } else self.actionHandler([sender.title isEqual:@"Jump to Group"] ? @"jump" : @"visibility",group[@"id"],@"");
 }
 @end

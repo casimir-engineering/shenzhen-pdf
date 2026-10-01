@@ -1,3 +1,4 @@
+#import "SPDFMacMenuText.h"
 #import "SPDFMacFindInteraction.h"
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacWorkspaceChrome.h"
@@ -19,6 +20,8 @@
 @property NSUInteger clears;
 @property NSUInteger searches;
 @property NSUInteger saves;
+@property NSInteger direction;
+- (void)seedMatches;
 - (void)seedMode:(NSInteger)mode visible:(BOOL)visible;
 - (NSInteger)mode;
 - (BOOL)visible;
@@ -49,6 +52,8 @@
 }
 - (SPDFDocumentTab*)selectedTab { return (id)self.tabIdentity; }
 - (BOOL)hasActiveDocument { return YES; }
+- (void)seedMatches { _findMatches=[NSMutableArray arrayWithObject:@{}]; }
+- (void)findFromCurrentForward:(BOOL)forward { self.direction=forward ? 1 : -1; }
 - (NSInteger)mode { return _sidebarModeControl.spdf_selectedSidebarMode; }
 - (void)setMode:(NSInteger)mode { _sidebarModeControl.spdf_selectedSidebarMode = mode; }
 - (BOOL)visible { return _sidebarPreferredVisible; }
@@ -167,6 +172,16 @@ int main(int argc, const char* argv[]) {
         NSString* host = [NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"SPDFMacUIHelpers.mm"] encoding:NSUTF8StringEncoding error:nil];
         Check([host containsString:@"event.type == NSEventTypeKeyDown && !self.attachedSheet"] &&
             [host containsString:@"[self.reader documentTypeToSearchKeyDown:event])) return"],@"window routes passive controls without stealing sheets/editors");
+        FindProbe* returns=[FindProbe new]; [returns seedMode:SPDFSidebarModeSearch visible:YES];
+        [returns editQuery:@"text"]; [returns seedMatches];
+        Check([returns documentFindReturnKeyDown:Key(@"\r",36)] && returns.direction==1,@"Return advances search from document");
+        Check([returns documentFindReturnKeyDown:Key(@"\r",36,NSEventModifierFlagCommand)] && returns.direction==-1,@"Command Return goes to previous result");
+        [returns focusTextView]; Check(![returns documentFindReturnKeyDown:Key(@"\r",36)],@"Return in another editor is untouched");
+        Check([SPDFMenuSelectionPreview(@"  a\n b  ") isEqual:@"a b"],@"context preview collapses whitespace");
+        NSString* enormous=[@"document " stringByPaddingToLength:8000000 withString:@"document " startingAtIndex:0];
+        CFAbsoluteTime started=CFAbsoluteTimeGetCurrent();
+        for (NSUInteger i=0;i<100;i++) Check(SPDFMenuSelectionPreview(enormous).length<=43,@"large selection preview stays short");
+        printf("Context menu preview: 8M characters, 100 previews in %.2f ms\n",(CFAbsoluteTimeGetCurrent()-started)*1000);
         if (!failures) puts("SPDFMacFindInteractionTests passed");
         return failures ? 1 : 0;
     }

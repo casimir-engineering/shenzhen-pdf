@@ -1,4 +1,4 @@
 #pragma once
 #import <Cocoa/Cocoa.h>
-NSAlert* SPDFTabGroupNamePrompt(NSString* defaultName, BOOL creating);
-void SPDFSelectGroupPromptName(NSAlert* alert);
+NSViewController* SPDFGroupNamePromptContent(NSString* defaultName, BOOL creating, void (^accept)(NSString*));
+void SPDFPresentGroupNamePrompt(NSView* anchor, NSRect rect, NSString* defaultName, BOOL creating, void (^accept)(NSString*));

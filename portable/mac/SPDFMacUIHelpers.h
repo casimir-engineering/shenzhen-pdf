@@ -99,6 +99,8 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 - (NSNumber*)commentIndexForSidebarRow:(NSInteger)row;
 - (void)editComment:(id)sender;
 - (void)deleteComment:(id)sender;
+@optional
+- (BOOL)documentFindReturnKeyDown:(NSEvent*)event;
 @end
 
 @interface SPDFPaletteSearchField : NSSearchField

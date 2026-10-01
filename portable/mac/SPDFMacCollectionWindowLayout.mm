@@ -119,7 +119,7 @@ static void Fill(NSView* child, NSView* parent) {
     // Existing command availability remains shared by the accessible contextual menu.
     self.details = Label(@"Select a document or version.",12,NSFontWeightRegular);
     self.selectionButtons = [NSMutableArray array];
-    NSArray* titles = @[@"Open Original",@"Open Document",@"History",@"Compare with Latest",@"Compare with Previous",
+    NSArray* titles = @[@"Open Original",@"Open Collection Copy",@"History",@"Compare with Latest",@"Compare with Previous",
         @"Locate Original…",@"Save a Copy…",@"Keep forever",@"Delete Selected Copies…"];
     NSArray* actions = @[@"openOriginal:",@"preview:",@"history:",@"compareCurrent:",@"comparePrevious:",@"locate:",
         @"exportCopy:",@"keep:",@"deleteSelected:"];

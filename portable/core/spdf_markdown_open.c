@@ -27,6 +27,7 @@
  * em relays the document; nothing else in the pipeline knows about it.
  */
 #include "spdf_core_document.h"
+#include "spdf_document_export.h"
 #include "spdf_markdown.h"
 #include "spdf_win_compat.h"
 
@@ -270,45 +271,5 @@ int spdf_markdown_resolve_anchor(spdf_document* doc, const char* uri, int* page_
 }
 
 int spdf_export_pdf(spdf_document* doc, const char* path, int page_index, char* err, size_t err_len) {
-    fz_document_writer* writer = NULL;
-    fz_page* page = NULL;
-    int first, last, i;
-
-    set_error(err, err_len, "");
-    if (!doc || !path || !*path) {
-        set_error(err, err_len, "No document path was supplied.");
-        return 0;
-    }
-    if (page_index >= doc->page_count || page_index < -1) {
-        set_error(err, err_len, "Page index is out of range.");
-        return 0;
-    }
-    first = page_index < 0 ? 0 : page_index;
-    last = page_index < 0 ? doc->page_count - 1 : page_index;
-
-    fz_var(writer);
-    fz_var(page);
-    fz_try(doc->ctx) {
-        writer = fz_new_document_writer(doc->ctx, path, "pdf", "compress");
-        for (i = first; i <= last; ++i) {
-            fz_device* dev;
-            page = fz_load_page(doc->ctx, doc->doc, i); /* doc->doc: always the light rendition */
-            dev = fz_begin_page(doc->ctx, writer, fz_bound_page(doc->ctx, page));
-            fz_run_page(doc->ctx, page, dev, fz_identity, NULL);
-            fz_end_page(doc->ctx, writer);
-            fz_drop_page(doc->ctx, page);
-            page = NULL;
-        }
-        fz_close_document_writer(doc->ctx, writer);
-    }
-    fz_always(doc->ctx) {
-        fz_drop_page(doc->ctx, page);
-        fz_drop_document_writer(doc->ctx, writer);
-    }
-    fz_catch(doc->ctx) {
-        set_error(err, err_len, fz_caught_message(doc->ctx));
-        fz_ignore_error(doc->ctx);
-        return 0;
-    }
-    return 1;
+    return spdf_document_export_pdf(doc, path, page_index, err, err_len);
 }

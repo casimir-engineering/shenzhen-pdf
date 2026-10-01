@@ -10,7 +10,7 @@
 - (spdf_translation_context)translationContext;
 - (void)updateTranslateCommandEnablement;
 // The Translate command's front door: routes a selection to the selection
-// panel, explains the PDF-only whole-document path on a Markdown tab, and
+// panel, admits whole-document translation through a PDF rendition, and
 // answers YES only when whole-document translation may actually proceed.
 - (BOOL)beginTranslateCommandForSender:(id)sender;
 @end

@@ -111,10 +111,15 @@ static NSString* DateLabel(NSDictionary* version) {
         NSString* status = [row[@"textAvailable"] boolValue] ? @"Title match · no matching saved text" : @"Title match · saved text is not indexed";
         [text addArrangedSubview:SPDFCollectionText(status,11,NSFontWeightRegular,YES)];
     }
-    BOOL live = SPDFCollectionVersionIsLatest(doc,version) && SPDFCollectionOriginalAvailable(doc);
-    NSButton* preview = SPDFCollectionButton(live ? @"Open document" : @"Open saved copy",self,@selector(previewForRow:),@"normal");
+    NSButton* preview = SPDFCollectionButton(@"Open collection copy",self,@selector(previewForRow:),@"normal");
     preview.tag = index; preview.enabled = [version[@"id"] length]>0;
-    NSStackView* actions = [NSStackView stackViewWithViews:@[preview,history]]; actions.spacing = 6;
+    NSMutableArray* rowActions = [NSMutableArray array];
+    if (SPDFCollectionOriginalAvailable(doc)) {
+        NSButton* original = SPDFCollectionButton(@"Open original",self,@selector(openOriginalForRow:),@"normal");
+        original.tag = index; [rowActions addObject:original];
+    }
+    [rowActions addObjectsFromArray:@[preview,history]];
+    NSStackView* actions = [NSStackView stackViewWithViews:rowActions]; actions.spacing = 6;
     actions.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:actions];
     if (matches.count>3) {
         BOOL expanded = [self.expandedResults containsObject:RowKey(row)];
@@ -144,6 +149,10 @@ static NSString* DateLabel(NSDictionary* version) {
         [divider.leadingAnchor constraintEqualToAnchor:image.leadingAnchor],[divider.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14],
         [divider.bottomAnchor constraintEqualToAnchor:cell.bottomAnchor constant:-1]]];
     return cell;
+}
+- (void)openOriginalForRow:(NSControl*)sender {
+    NSInteger index = sender.tag; if (index<0 || index>=(NSInteger)self.rows.count) return;
+    [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO]; [self openOriginal:nil];
 }
 - (void)previewForRow:(NSControl*)sender {
     NSInteger index = sender.tag; if (index<0 || index>=(NSInteger)self.rows.count) return;

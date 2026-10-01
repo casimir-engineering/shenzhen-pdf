@@ -15,16 +15,6 @@ void spdf_activate_window_for_view(NSView* view) {
     if (!window.keyWindow) [window makeKeyAndOrderFront:nil];
 }
 
-void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
-    if (!item || symbolName.length == 0) return;
-    if (@available(macOS 11.0, *)) {
-        NSImage* image = [NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:item.title];
-        if (!image) return;
-        [image setTemplate:YES];
-        item.image = image;
-    }
-}
-
 @implementation SPDFPresentationOverlayView
 
 - (BOOL)isFlipped {
@@ -380,6 +370,8 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader handleWindowArrangementShortcutEvent:event]) return;
+    if (event.type == NSEventTypeKeyDown && (event.keyCode == 36 || event.keyCode == 76) &&
+        [self.reader respondsToSelector:@selector(documentFindReturnKeyDown:)] && [self.reader documentFindReturnKeyDown:event]) return;
     if (event.type == NSEventTypeKeyDown && !self.attachedSheet && ![self.firstResponder isKindOfClass:NSText.class] &&
         self.reader && ((event.keyCode == 53 && [self.reader documentEscapeKeyDown:event]) ||
                         [self.reader documentTypeToSearchKeyDown:event])) return;

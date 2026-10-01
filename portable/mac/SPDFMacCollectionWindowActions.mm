@@ -8,16 +8,10 @@
 - (void)openOriginal:(id)sender {
     (void)sender; NSString* path = [self selectedDocument][@"path"];
     if (SPDFCollectionOriginalAvailable([self selectedDocument])) self.openHandler(path, NO);
-    else [self locate:nil];
 }
 - (void)preview:(id)sender {
     (void)sender; NSDictionary* doc = [self selectedDocument], *version = [self selectedVersion];
     if (!doc || !version[@"id"]) return;
-    for (NSDictionary* candidate in self.store.documents)
-        if ([candidate[@"id"] isEqual:doc[@"id"]]) { doc = candidate; break; }
-    if (SPDFCollectionVersionIsLatest(doc,version) && SPDFCollectionOriginalAvailable(doc)) {
-        self.openHandler(doc[@"path"], NO); return;
-    }
     self.details.stringValue = @"Preparing read-only preview…";
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError* error = nil;
