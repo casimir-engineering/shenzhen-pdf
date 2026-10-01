@@ -593,3 +593,5 @@ The production-window probe now rasterizes actual controls in enabled and disabl
 
 ![Light appearance with readable unavailable controls and edge-aligned map toggle](../../proposals/mac-workspace-rethink/evidence/native-icons-light.png)
 ![Dark appearance with the same contrast hierarchy](../../proposals/mac-workspace-rethink/evidence/native-icons-dark.png)
+
+The corrected reader and Collection helper were rebuilt into `dist/ShenzhenPDF.app`; strict deep signature verification passed, and the executable is newer than all native sources. Updater regression tests also passed all32 cases. The app was not launched.
