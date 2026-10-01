@@ -790,3 +790,7 @@ Technical review caught and corrected three Save As integration gaps: archive de
 ![Hidden tab-renderer fixture: unsaved capture with a red dot, saved image without one](evidence/2026-10-02-pasted-image-unsaved.png)
 
 This isolated drawing fixture exercises the production tab renderer; it is not a screenshot of the user's app. The completion-state tests separately verify that Save As removes the marker in the same originating tab.
+
+Release preparation for 26.10.2-3 passed the full test sweep, including the new clipboard/export/persistence suites, 32 updater cases and 56 release-workflow checks. The independent technical critic independently rebuilt the focused suites and found no remaining major or medium issues in this scope. The updater source remains unchanged from the last published release. The prepared notes now provide a 691-word reader overview with a separate AI section instead of the previous dense implementation list.
+
+Final packaging rebuilt `dist/ShenzhenPDF.app` successfully as 26.10.2-3. Strict deep code-signature verification passed, the production bundle identifier is unchanged, and the executable is newer than every native frontend source. No app was launched or restarted. This is the prepared local development candidate; no tag, push, notarization or publication was performed.
