@@ -608,20 +608,20 @@ MAC_COLLECTION_PARSER_SRCS := mac/markdown/SPDFMarkdownParser.mm mac/markdown/SP
 MAC_COLLECTION_PARSER_LIBS := $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS)
 .PHONY: mac-collection-store-tests mac-collection-asset-tests mac-collection-compare-tests mac-previous-tab-tests mac-viewport-checkpoint-tests
 mac-collection-store-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionStoreTests.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionStoreTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionStoreTests.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionStoreTests"
 	"$(BUILD)/SPDFMacCollectionStoreTests"
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionIntegrityTests.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionIntegrityTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionIntegrityTests.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionIntegrityTests"
 	"$(BUILD)/SPDFMacCollectionIntegrityTests"
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionCleanupTests.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionCleanupTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionCleanupTests.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionCleanupTests"
 	"$(BUILD)/SPDFMacCollectionCleanupTests"
 
 .PHONY: mac-collection-search-tests
 mac-collection-search-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionContextSearchTests.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework CoreText -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionContextSearchTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionContextSearchTests.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework CoreText -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionContextSearchTests"
 	"$(BUILD)/SPDFMacCollectionContextSearchTests"
 
 mac-collection-asset-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionAssetTests.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionAssetTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac mac/tests/SPDFMacCollectionAssetTests.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionAssetTests"
 	"$(BUILD)/SPDFMacCollectionAssetTests"
 
 mac-collection-compare-tests: | $(BUILD)
@@ -636,14 +636,19 @@ mac-viewport-checkpoint-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacViewportCheckpointTests.mm mac/SPDFMacViewportCheckpoint.mm -framework Cocoa -o "$(BUILD)/SPDFMacViewportCheckpointTests"
 	"$(BUILD)/SPDFMacViewportCheckpointTests"
 
+.PHONY: mac-search-file-cache-tests
+mac-search-file-cache-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -DSPDF_SEARCH_CACHE_TESTING=1 -Imac mac/tests/SPDFMacSearchFileCacheTests.mm mac/tests/SPDFMacSearchFileCachePeer.mm mac/SPDFMacSearchFileCache.mm -framework Foundation -o "$(BUILD)/SPDFMacSearchFileCacheTests"
+	"$(BUILD)/SPDFMacSearchFileCacheTests"
+
 .PHONY: mac-collection-palette-tests
 mac-collection-palette-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacCollectionPaletteTests.mm mac/SPDFMacCollectionPaletteModel.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionPaletteTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacCollectionPaletteTests.mm mac/SPDFMacCollectionPaletteModel.mm mac/SPDFMacSearchFileCache.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionPaletteTests"
 	"$(BUILD)/SPDFMacCollectionPaletteTests"
 
 .PHONY: mac-collection-reader-navigation-tests
 mac-collection-reader-navigation-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionReaderNavigationTests.mm mac/SPDFMacCollectionReaderNavigation.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionReaderNavigationTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionReaderNavigationTests.mm mac/SPDFMacCollectionReaderNavigation.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionReaderNavigationTests"
 	"$(BUILD)/SPDFMacCollectionReaderNavigationTests"
 
 .PHONY: mac-collection-companion-tests
@@ -658,7 +663,7 @@ mac-collection-credentials-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $
 
 .PHONY: mac-collection-password-open-tests
 mac-collection-password-open-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_COLLECTION_PARSER_LIBS) mupdf-libs | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionPasswordOpenTests.mm mac/SPDFMacCollectionCredentials.mm mac/SPDFMacCollectionCredentialIntegration.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm mac/SPDFMacCollectionStore*.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -framework Security -framework LocalAuthentication -lm -o "$(BUILD)/SPDFMacCollectionPasswordOpenTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionPasswordOpenTests.mm mac/SPDFMacCollectionCredentials.mm mac/SPDFMacCollectionCredentialIntegration.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -framework Security -framework LocalAuthentication -lm -o "$(BUILD)/SPDFMacCollectionPasswordOpenTests"
 	"$(BUILD)/SPDFMacCollectionPasswordOpenTests"
 
 .PHONY: mac-agent-group-tests
@@ -682,6 +687,11 @@ mac-sidebar-workspace-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(YAML_OBJ) mupdf-l
 	"$(BUILD)/SPDFMacSidebarWorkspaceTests"
 
 .PHONY: mac-tab-group-performance
+.PHONY: mac-collection-thumbnail-delivery-tests
+mac-collection-thumbnail-delivery-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacCollectionThumbnailDeliveryTests.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionThumbnailDeliveryTests"
+	"$(BUILD)/SPDFMacCollectionThumbnailDeliveryTests"
+
 mac-tab-group-performance: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -O2 -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupPerformance.mm mac/SPDFMacTabGroups.mm -framework Cocoa -o "$(BUILD)/SPDFMacTabGroupPerformance"
 	"$(BUILD)/SPDFMacTabGroupPerformance" --verify

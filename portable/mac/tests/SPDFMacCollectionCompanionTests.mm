@@ -23,6 +23,12 @@ int main(void) {
         NSString* host=[NSString stringWithContentsOfFile:[mac stringByAppendingPathComponent:@"SPDFMacCollectionCompanionHost.mm"] encoding:NSUTF8StringEncoding error:nil];
         Expect(@"Return to reader uses the existing companion activation channel",
             [runtime containsString:@"returnHandler"] && [runtime containsString:@"activateReader"] && [host containsString:@"activateReader"]);
+        NSString* integration=[NSString stringWithContentsOfFile:[mac stringByAppendingPathComponent:@"SPDFMacCollectionIntegration.mm"] encoding:NSUTF8StringEncoding error:nil];
+        NSRange capGuard=[integration rangeOfString:@"if ([note.userInfo[@\"storageLimitOnly\"] boolValue]) return;"];
+        NSRange capture=[integration rangeOfString:@"for (SPDFDocumentTab* tab in owner->_tabs)"];
+        Expect(@"storage-only changes refresh History without recapturing or reimporting documents",
+            [runtime containsString:@"storageLimitOnly"] && [host containsString:@"storageLimitOnly"] &&
+            capGuard.location != NSNotFound && capGuard.location < capture.location);
         NSPipe* outgoing=[NSPipe pipe], *incoming=[NSPipe pipe];
         SPDFCollectionPipe* parent=[[SPDFCollectionPipe alloc] initWithReader:incoming.fileHandleForReading
                                                                       writer:outgoing.fileHandleForWriting];
@@ -39,6 +45,9 @@ int main(void) {
             @"query":@"café\nline two",@"history":@YES,@"page":@4};
         Expect(@"intent sent over private pipe",[parent send:message]);
         Expect(@"Unicode/newline intent survives bidirectional transport",Wait(received) && [reply isEqual:message]);
+        NSDictionary* settings=@{@"kind":@"settings",@"storageLimitOnly":@YES};
+        Expect(@"storage-only setting flag survives companion transport",[parent send:settings] &&
+            Wait(received) && [reply isEqual:settings]);
         // A broken/partial frame must not hide the next complete valid frame.
         [outgoing.fileHandleForWriting writeData:[@"not-json\n{\"kind\":\"frag" dataUsingEncoding:NSUTF8StringEncoding]];
         [outgoing.fileHandleForWriting writeData:[@"mented\"}\n" dataUsingEncoding:NSUTF8StringEncoding]];

@@ -150,6 +150,13 @@ static void CheckGroupScrolling(NSString* evidence) {
             @"selected":@(groupIndex==1),@"documents":documents}];
     }
     [manager updateGroups:groups state:@{@"expandedGroups":@[@"g0",@"g2"],@"groupScroll":@0}];
+    __block NSDictionary* savedExpansion=nil;
+    manager.stateHandler=^(NSDictionary* state) { savedExpansion=state; };
+    [manager revealSelectedDocument];
+    Check([savedExpansion[@"expandedGroups"] containsObject:@"g1"],"active group expansion publishes before first layout");
+    [manager updateGroups:groups state:savedExpansion];
+    Check([manager.viewState[@"expandedGroups"] containsObject:@"g1"],"refresh cannot restore stale collapsed active group");
+    manager.stateHandler=nil;
     host.contentView = [[GroupSurface alloc] initWithFrame:NSMakeRect(0,0,280,340)];
     manager.view.frame = host.contentView.bounds;
     manager.view.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;

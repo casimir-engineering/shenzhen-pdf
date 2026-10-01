@@ -13,7 +13,8 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     __weak ShenzhenMacDelegate* weakSelf = self;
     id observer = [NSNotificationCenter.defaultCenter addObserverForName:@"SPDFCollectionSettingsChanged" object:nil
         queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification* note) {
-            (void)note; ShenzhenMacDelegate* owner = weakSelf; if (!owner) return;
+            if ([note.userInfo[@"storageLimitOnly"] boolValue]) return;
+            ShenzhenMacDelegate* owner = weakSelf; if (!owner) return;
             objc_setAssociatedObject(owner, &kCollectionImported, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             for (SPDFDocumentTab* tab in owner->_tabs) [owner collectionDidOpenPath:tab.path];
         }];

@@ -120,9 +120,9 @@ static void Fill(NSView* child, NSView* parent) {
     self.details = Label(@"Select a document or version.",12,NSFontWeightRegular);
     self.selectionButtons = [NSMutableArray array];
     NSArray* titles = @[@"Open Original",@"Open Document",@"History",@"Compare with Latest",@"Compare with Previous",
-        @"Locate Original…",@"Save a Copy…",@"Keep this version",@"Pause saving new versions",@"Delete Selected Copies…"];
+        @"Locate Original…",@"Save a Copy…",@"Keep forever",@"Delete Selected Copies…"];
     NSArray* actions = @[@"openOriginal:",@"preview:",@"history:",@"compareCurrent:",@"comparePrevious:",@"locate:",
-        @"exportCopy:",@"keep:",@"exclude:",@"deleteSelected:"];
+        @"exportCopy:",@"keep:",@"deleteSelected:"];
     for (NSUInteger i=0;i<titles.count;i++) [self.selectionButtons addObject:SPDFCollectionButton(titles[i],self,NSSelectorFromString(actions[i]),@"normal")];
     [self buildSettingsPane];
     [self showDestination:[preferences[@"managerDestination"] isEqual:@"Settings"] ? @"Settings" : @"Documents"];

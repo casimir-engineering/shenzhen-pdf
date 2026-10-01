@@ -75,7 +75,6 @@
 - (void)locate:(id)sender;
 - (void)exportCopy:(id)sender;
 - (void)keep:(id)sender;
-- (void)exclude:(id)sender;
 - (void)deleteSelected:(id)sender;
 - (void)changeEnabled:(id)sender;
 - (void)changeLimit:(id)sender;

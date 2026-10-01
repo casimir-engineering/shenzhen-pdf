@@ -13,8 +13,3 @@ static inline BOOL SPDFCollectionSelectionIsKept(NSArray<NSDictionary*>* rows) {
     }
     return found;
 }
-static inline BOOL SPDFCollectionSelectionIsPaused(NSArray<NSDictionary*>* rows) {
-    if (!rows.count) return NO;
-    for (NSDictionary* row in rows) if (![row[@"document"][@"excluded"] boolValue]) return NO;
-    return YES;
-}

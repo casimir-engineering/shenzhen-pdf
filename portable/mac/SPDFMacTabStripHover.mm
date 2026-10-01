@@ -53,6 +53,8 @@
 
 - (void)updateHoverForPoint:(NSPoint)point {
     NSInteger hovered = -1;
+    NSRect previousClose = _hoverTabIndex >= 0 ? [self closeCircleRectForTabRect:[self rectForTabAtIndex:_hoverTabIndex]] : NSZeroRect;
+    BOOL wasOnClose = _hasLastHoverPoint && NSPointInRect(_lastHoverPoint,previousClose);
     _lastHoverPoint = point;
     _hasLastHoverPoint = YES;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
@@ -63,7 +65,11 @@
             break;
         }
     }
-    if (hovered == _hoverTabIndex) return;
+    if (hovered == _hoverTabIndex) {
+        if (hovered >= 0 && wasOnClose != NSPointInRect(point,previousClose))
+            [self setNeedsDisplayInRect:previousClose];
+        return;
+    }
     [self setNeedsDisplay:YES];
     if (hovered >= 0) [self showHoverPanelForTabAtIndex:hovered];
     else [self dismissHoverPanel];

@@ -23,6 +23,7 @@ static char chromeKey;
 @property NSButton* previous;
 @property NSButton* next;
 @property NSLayoutConstraint* toolbarRight;
+@property NSLayoutConstraint* headerWidth;
 @property NSView* footer;
 @property NSTextField* sourceStatus;
 @property NSTextField* outlineSummary;
@@ -136,7 +137,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.collection = Icon(@"books.vertical",@"Collection",self,@selector(showCollectionManager:));
     state.print = Icon(@"printer",@"Print document",self,@selector(printDocument:));
     state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,_pageField,_pageCountLabel,state.next,_fitModePopup,_zoomSegments,_markdownFontSizeSegments,_toolbarSpacer]];
-    state.tools = @[state.collection,_readingThemeButton,_ocrButton,_translateButton,state.print,_minimapToggleButton];
+    state.tools = @[state.collection,_readingThemeButton,_ocrButton,_translateButton,state.print];
     state.toolsRow = [NSStackView stackViewWithViews:state.tools];
     for (NSStackView* row in @[state.primaryRow,state.toolsRow]) {
         row.orientation = NSUserInterfaceLayoutOrientationHorizontal; row.alignment = NSLayoutAttributeCenterY;
@@ -147,26 +148,29 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.headerRow.spacing = 4; state.headerRow.alignment = NSLayoutAttributeCenterY;
     state.headerRow.translatesAutoresizingMaskIntoConstraints = NO;
     [_toolbar addArrangedSubview:state.headerRow];
-    [state.headerRow.widthAnchor constraintEqualToAnchor:_toolbar.widthAnchor constant:-16].active = YES;
+    state.headerWidth = [state.headerRow.widthAnchor constraintEqualToAnchor:_toolbar.widthAnchor constant:-16];
+    state.headerWidth.active = YES;
     _toolbar.orientation = NSUserInterfaceLayoutOrientationVertical; _toolbar.alignment = NSLayoutAttributeLeading;
     [state.primaryRow setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     [state.toolsRow setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     state.mapHeader = SPDFCollectionSurface(@"pane"); state.mapHeader.translatesAutoresizingMaskIntoConstraints = NO;
     [_documentContainer addSubview:state.mapHeader];
-    NSButton* closeMap = [[SPDFToolbarToggleButton alloc] initWithTitle:@"Map" target:self action:@selector(toggleMinimap:)];
-    closeMap.toolTip = @"Hide document map"; closeMap.accessibilityLabel = closeMap.toolTip;
-    [closeMap.widthAnchor constraintEqualToConstant:28].active = YES;
-    [closeMap.heightAnchor constraintEqualToConstant:28].active = YES;
-    closeMap.identifier = @"WorkspaceMapToggle";
-    [state.mapHeader addSubview:closeMap];
     [NSLayoutConstraint activateConstraints:@[
         [state.mapHeader.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
         [state.mapHeader.leadingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor],
         [state.mapHeader.trailingAnchor constraintEqualToAnchor:_minimapView.trailingAnchor],
-        [state.mapHeader.heightAnchor constraintEqualToConstant:44],
-        [closeMap.trailingAnchor constraintEqualToAnchor:state.mapHeader.trailingAnchor constant:-8],
-        [closeMap.centerYAnchor constraintEqualToAnchor:state.mapHeader.centerYAnchor]]];
+        [state.mapHeader.heightAnchor constraintEqualToConstant:44]]];
+    // Keep one control alive at one position. Swapping hidden controls under a
+    // stationary pointer leaves AppKit's mouse target pointing at the old view.
+    [_minimapToggleButton removeFromSuperview];
+    _minimapToggleButton.identifier = @"WorkspaceMapToggle";
+    [_documentContainer addSubview:_minimapToggleButton positioned:NSWindowAbove relativeTo:nil];
+    [NSLayoutConstraint activateConstraints:@[
+        [_minimapToggleButton.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor constant:-8],
+        [_minimapToggleButton.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor constant:8],
+        [_minimapToggleButton.widthAnchor constraintEqualToConstant:28],
+        [_minimapToggleButton.heightAnchor constraintEqualToConstant:28]]];
     state.toolbarRight = [_toolbar.trailingAnchor constraintEqualToAnchor:_minimapDividerView.leadingAnchor];
     state.toolbarRight.active = YES;
 
@@ -234,7 +238,8 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.mapHeader.hidden = !_minimapVisible || _presentationMode;
     state.command.hidden = _presentationMode;
     _markdownFontSizeSegments.hidden = ![self isMarkdownActive];
-    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds) < ([self isMarkdownActive] ? 600 : 532);
+    state.headerWidth.constant = _minimapVisible ? -16 : -48;
+    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds)-(_minimapVisible ? 0 : 32) < ([self isMarkdownActive] ? 600 : 532);
     if (state.wrapped != wrapped) {
         state.wrapped = wrapped;
         state.headerRow.orientation = wrapped ? NSUserInterfaceLayoutOrientationVertical : NSUserInterfaceLayoutOrientationHorizontal;
@@ -246,7 +251,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 76 : 44) + (revision ? 28 : 0);
     state.footer.hidden = _presentationMode; state.splitBottom.constant = _presentationMode ? 0 : -28;
     _sidebarToggleButton.hidden = _sidebarVisible;
-    _minimapToggleButton.hidden = _minimapVisible;
+    _minimapToggleButton.hidden = _presentationMode;
     _toolbarOverflowButton.hidden = YES;
     state.previous.enabled = [_pageSegments isEnabledForSegment:0];
     state.next.enabled = [_pageSegments isEnabledForSegment:1];

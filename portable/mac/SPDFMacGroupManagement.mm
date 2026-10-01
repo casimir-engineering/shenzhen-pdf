@@ -216,6 +216,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         if (![group[@"selected"] boolValue]) continue;
         if (![_expanded containsObject:group[@"id"]]) {
             [_expanded addObject:group[@"id"]]; [self rebuildRows];
+            [self publishState]; // Persist before a layout-triggered snapshot can restore stale collapse state.
         }
         break;
     }

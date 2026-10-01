@@ -47,6 +47,12 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
 - (void)rememberSidebarWorkspaceMode {
     NSMutableDictionary* state = [self sidebarWorkspaceState];
     state[@"mode"] = @(_sidebarModeControl.spdf_selectedSidebarMode);
+    if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeGroups) {
+        NSString* activeGroup = [self selectedTab].group.identifier ?: @"general";
+        NSMutableSet* expanded = [NSMutableSet setWithArray:state[@"expandedGroups"] ?: @[]];
+        [expanded addObject:activeGroup];
+        state[@"expandedGroups"] = [expanded.allObjects sortedArrayUsingSelector:@selector(compare:)];
+    }
     state[@"width"] = @(_sidebarWidth); state[@"visible"] = @(_sidebarPreferredVisible);
     [self savePersistentState];
 }

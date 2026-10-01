@@ -342,6 +342,11 @@ int main(void) {
         [NSApp sendAction:rename.action to:rename.target from:rename];
         expect(strip.renameRequests == 1, @"context menu must retain explicit group rename");
 
+        NSRect hoverTab=[strip rectForTabAtIndex:0];
+        [strip updateHoverForPoint:NSMakePoint(NSMinX(hoverTab)+16,NSMidY(hoverTab))]; strip.needsDisplay=NO;
+        NSRect hoverClose=[strip closeCircleRectForTabRect:hoverTab];
+        [strip updateHoverForPoint:NSMakePoint(NSMidX(hoverClose),NSMidY(hoverClose))];
+        expect(strip.needsDisplay,@"moving onto close button within one tab must repaint its hover square");
         // A header drag routes the whole group once it crosses the threshold.
         strip.tabs = (id)tabs;
         blueHeader = [[layout_for_group(strip, blue) valueForKey:@"header"] rectValue];

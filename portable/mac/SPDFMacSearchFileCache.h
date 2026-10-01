@@ -1,6 +1,13 @@
 #import <Foundation/Foundation.h>
 #import <sys/stat.h>
 
+// Shared across all search translation units in this process, allocated only
+// when an existing file is first searched.
+NSCache* SPDFSharedSearchFileCache(void);
+#if defined(SPDF_SEARCH_CACHE_TESTING)
+NSUInteger SPDFSearchFileCacheCreationCount(void);
+#endif
+
 // Read-only search snapshots: allocate on first search, never on app launch.
 // File identity and nanosecond timestamps invalidate replacements and external edits.
 // Values must be immutable; writes continue through the store's locked transaction.
@@ -14,10 +21,9 @@ static inline NSString* SPDFSearchFileStamp(NSString* path) {
 }
 static inline id SPDFSearchCachedFileValidated(NSString* path, NSString* variant, NSUInteger cost,
                                               BOOL (^valid)(id), id (^load)(void)) {
-    static NSCache* cache; static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSCache new]; cache.totalCostLimit = 64 * 1024 * 1024; cache.countLimit = 256; });
     NSString* stamp = SPDFSearchFileStamp(path);
     if (!stamp) return nil;
+    NSCache* cache = SPDFSharedSearchFileCache();
     NSString* key = [NSString stringWithFormat:@"%@|%@", path, variant ?: @""];
     NSDictionary* entry = [cache objectForKey:key];
     if ([entry[@"stamp"] isEqual:stamp] && (!valid || valid(entry[@"value"]))) return entry[@"value"];

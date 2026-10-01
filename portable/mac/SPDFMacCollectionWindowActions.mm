@@ -105,7 +105,9 @@
     });
 }
 - (void)keep:(id)sender {
-    (void)sender; NSArray* rows = [self selectedRowsSnapshot];
+    (void)sender;
+    if (![self.store.settings[@"storageLimitBytes"] unsignedLongLongValue]) return;
+    NSArray* rows = [self selectedRowsSnapshot];
     BOOL keep = !SPDFCollectionSelectionIsKept(rows);
     [self performMutation:^(NSError** error) {
         for (NSDictionary* row in rows) {
@@ -115,26 +117,13 @@
         }
     }];
 }
-- (void)exclude:(id)sender {
-    (void)sender; NSArray* rows = [self selectedRowsSnapshot];
-    BOOL pause = !SPDFCollectionSelectionIsPaused(rows);
-    [self performMutation:^(NSError** error) {
-        NSMutableSet* changed = [NSMutableSet set];
-        for (NSDictionary* row in rows) {
-            NSDictionary* doc = row[@"document"];
-            if ([changed containsObject:doc[@"id"]]) continue;
-            [changed addObject:doc[@"id"]];
-            if (![self.store setExcluded:pause documentID:doc[@"id"] error:error]) break;
-        }
-    }];
-}
 - (void)deleteSelected:(id)sender {
     (void)sender;
     NSArray* rows = [self selectedRowsSnapshot]; if (!rows.count) return;
     BOOL versionsOnly = [self.destination isEqual:@"History"];
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = versionsOnly ? @"Delete selected versions permanently?" : @"Delete all history for selected documents?";
-    alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept. Use Pause Saving New Versions separately to stop future copies.",
+    alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept.",
         rows.count,versionsOnly ? @"versions" : @"document histories"];
     [alert addButtonWithTitle:@"Cancel"]; [alert addButtonWithTitle:@"Delete Copies"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
@@ -173,7 +162,11 @@
             }
             void (^apply)(void) = ^{
                 [self performMutation:^(NSError** error) {
-                    [self.store applyStorageLimit:bytes reviewedPlan:plan error:error];
+                    if ([self.store applyStorageLimit:bytes reviewedPlan:plan error:error])
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:self.store
+                                userInfo:@{@"storageLimitOnly":@YES}];
+                        });
                 }];
             };
             if (![plan[@"removedVersionCount"] unsignedIntegerValue] && ![plan[@"removedDocumentCount"] unsignedIntegerValue]) {

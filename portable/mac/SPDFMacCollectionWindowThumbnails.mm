@@ -3,6 +3,7 @@
 #import "SPDFMacMarkdownPrinting.h"
 #import "markdown/SPDFMarkdownDocument.h"
 #import "SPDFMacCollectionThumbnail.h"
+#import "SPDFMacCollectionThumbnailDelivery.h"
 #import "SPDFMacPassword.h"
 #import "SPDFMacCollectionCompanion.h"
 
@@ -58,13 +59,7 @@
                 if (!owner) return;
                 [owner.pendingThumbnails removeObject:key];
                 if (image) [owner.thumbnailCache setObject:image forKey:key cost:260*300*4];
-                for (NSInteger index = 0; index < (NSInteger)owner.rows.count; index++) {
-                    NSView* cell = [owner.table viewAtColumn:0 row:index makeIfNecessary:NO];
-                    for (NSView* child in cell.subviews) if ([child isKindOfClass:NSImageView.class] && [child.identifier isEqual:key]) {
-                        if (image) ((NSImageView*)child).image = image;
-                        else child.toolTip = error.localizedDescription ?: @"Preview unavailable; open the saved copy.";
-                    }
-                }
+                SPDFCollectionDeliverThumbnail(owner.table,owner.rows.count,key,image,error.localizedDescription);
             });
         }
     }];
