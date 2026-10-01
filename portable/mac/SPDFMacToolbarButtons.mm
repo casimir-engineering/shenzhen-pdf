@@ -1,3 +1,4 @@
+#import "SPDFMacChromeColors.h"
 #import "SPDFMacUIHelpers.h"
 
 // The two custom-drawn buttons of the document toolbar: a labelled switch and a
@@ -62,8 +63,9 @@
     NSImage* image = [NSImage imageWithSystemSymbolName:[self.title isEqualToString:@"Map"] ? @"sidebar.right" : @"sidebar.left"
                               accessibilityDescription:nil];
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular]];
+    image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]];
     [image drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-16)/2),floor((NSHeight(self.bounds)-16)/2),16,16)
-            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : .4];
+            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
 }
 
 @end
@@ -112,7 +114,7 @@
     outline.lineWidth = 1.0;
     [outline stroke];
 
-    [[NSColor.labelColor colorWithAlphaComponent:0.78 * alpha] setFill];
+    [SPDFChromeIconColor(self.enabled) setFill];
     CGFloat dotSize = 3.0;
     CGFloat gap = 3.0;
     CGFloat x = floor(NSMidX(bounds) - dotSize / 2.0);

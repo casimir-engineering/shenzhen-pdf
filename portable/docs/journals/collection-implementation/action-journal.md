@@ -583,3 +583,13 @@ The full ranked review trail and test methodology are in [native verification](.
 
 
 Packaging completed after the accepted critique: the reader and Collection helper were rebuilt into `dist/ShenzhenPDF.app`, the strict deep signature check passed, and source timestamps confirm this bundle contains the new native code. This is the local development build (26.9.23/build1), not a published release. The user's running app was left untouched.
+
+
+## 1 October — readable unavailable icons and map-toggle placement
+
+The user found the disabled icons too faint and the centered map button visually detached. The audit found multiple unrelated dimming paths: AppKit's disabled sidebar color,35–55% drawing opacity, and native inactive-window segment tint. Chrome now uses a shared opaque unavailable color (light `#7a808a`, dark `#9298a2`) across sidebar navigation, toolbar actions, segmented controls, panel toggles, overflow and Collection actions. Enabled icons retain the primary text tint. Capability checks and disabled input behavior are unchanged. The map toggle sits8 points from its header's right edge, aligned with the upper-right command control instead of floating in the middle of the map column.
+
+The production-window probe now rasterizes actual controls in enabled and disabled states under both appearances and requires visible glyph strokes at3:1 contrast. This caught the remaining native sidebar-collapse dimming; it now shares the navigation glyph treatment while retaining button accessibility. The probe also asserts the map button's right-edge constraint. Light/dark PDF, Find and Markdown renders were inspected. Native workspace, sidebar navigation, reading theme, minimap/window chrome, panel-policy and the full Markdown/Collection UI suites passed; no user window was launched or captured.
+
+![Light appearance with readable unavailable controls and edge-aligned map toggle](../../proposals/mac-workspace-rethink/evidence/native-icons-light.png)
+![Dark appearance with the same contrast hierarchy](../../proposals/mac-workspace-rethink/evidence/native-icons-dark.png)
