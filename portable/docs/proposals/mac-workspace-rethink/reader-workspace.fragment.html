@@ -179,7 +179,8 @@
 #sz-workspace .sz-tab-close{width:20px;height:20px;min-height:20px;padding:3px;top:2px;right:2px;border-radius:4px}
 #sz-workspace .sz-pane-head{padding:0 8px;gap:4px}
 #sz-workspace .sz-pane-modes{display:flex;align-items:center;gap:4px;min-width:0;flex:1}
-#sz-workspace .sz-pane-modes button{display:flex;align-items:center;justify-content:center;width:28px;height:28px;min-height:28px;padding:6px;margin:0;border-radius:5px}
+#sz-workspace .sz-pane-workspace{display:flex;align-items:center;padding-right:8px;margin-right:4px;border-right:1px solid var(--sz-line)}
+#sz-workspace .sz-pane-workspace button,#sz-workspace .sz-pane-modes button{display:flex;align-items:center;justify-content:center;width:28px;height:28px;min-height:28px;padding:6px;margin:0;border-radius:5px}
 #sz-workspace .sz-pane-head>button{margin-left:auto}
 </style>
 <script>
@@ -251,7 +252,7 @@
     renderDocument();symbols();if(q('.sz-list')){q('.sz-list').dataset.owner=paneOwner;q('.sz-list').scrollTop=state.paneScrolls[paneOwner]||0;}
     if(focusAttr)root.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus();
   }
-  function head(name,subtitle){const items=[['groups','layers','Groups'],...modes()];return `<div class="sz-pane-head"><nav class="sz-pane-modes" aria-label="Sidebar panels">${items.map(([id,i,label])=>`<button data-mode="${id}" aria-label="${label}" data-tooltip="${label}" aria-pressed="${state.mode===id}">${icon(i)}</button>`).join('')}</nav><button data-action="close-pane" aria-label="Close ${name} panel" data-tooltip="Hide sidebar">${icon('panel-left-close')}</button></div><div class="sz-pane-subtitle">${esc(subtitle)}</div>`;}
+  function head(name,subtitle){return `<div class="sz-pane-head"><nav class="sz-pane-workspace" aria-label="Workspace"><button data-mode="groups" aria-label="Groups" data-tooltip="Groups" aria-pressed="${state.mode==='groups'}">${icon('layers')}</button></nav><nav class="sz-pane-modes" aria-label="Document panels">${modes().map(([id,i,label])=>`<button data-mode="${id}" aria-label="${label}" data-tooltip="${label}" aria-pressed="${state.mode===id}">${icon(i)}</button>`).join('')}</nav><button data-action="close-pane" aria-label="Close ${name} panel" data-tooltip="Hide sidebar">${icon('panel-left-close')}</button></div><div class="sz-pane-subtitle">${esc(subtitle)}</div>`;}
   function filter(placeholder,value,kind){return `<label class="sz-pane-filter">${icon('search')}<input aria-label="${placeholder}" data-input="${kind}" placeholder="${placeholder}" value="${esc(value)}"></label>`;}
   function panel(){
     if(state.mode==='groups')return head('Groups',`${openDocs().length} open documents · ${groupData.filter(g=>g[1]).length} groups`)+filter('Search group names',state.groupQuery,'groups')+`<div class="sz-list">${groupList()}</div><div class="sz-pane-foot">${state.hidden.length} hidden · documents stay open</div>`;

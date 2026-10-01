@@ -528,6 +528,8 @@ All 25 native Markdown/UI suites and four sidebar suites pass, including full-da
 
 ### Whole-reader UX reset and sidebar availability correction
 
+1 October, workspace/document separation: moved the Groups button into its own sidebar header section, with a vertical divider and additional spacing before the document-panel icons. Verified compact fit and Groups/Chapters switching. Prototype only.
+
 1 October, lean tabs and sidebar icons: corrected the remaining sidebar dropdown to a direct icon row for Groups/Chapters/Find/Comments/History, with names, hover helpers and selected state. Reduced document surfaces to 24px while preserving 12px text; group labels remain 20px. Tabs now follow measured title width rather than stretching short names, capped at 200px. Verified direct mode switching, Markdown Comments removal, dark/light and three widths without overflow; desktop General retains six visible documents. [Evidence](../../proposals/mac-workspace-rethink/decision-and-validation.md). Native app and dist are unchanged.
 
 1 October, direct-controls refinement: other group labels now use spare tab-strip space individually; the stacked-layers All groups button always lists every group, including hidden and empty groups. Replaced the Document tools menu with accessible icons and hover labels. Extended the map to the toolbar's top edge, with direct hide/show controls and a separately scrolling page list. Verified exact 44px header alignment, light/dark and three widths, six-document capacity, hidden-group discovery, map hide/reopen and Markdown OCR disablement. Native app and dist are unchanged; OCR/translation/export retain prototype-only behavior. [Evidence and validation](../../proposals/mac-workspace-rethink/decision-and-validation.md).
