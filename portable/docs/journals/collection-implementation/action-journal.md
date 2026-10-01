@@ -741,4 +741,9 @@ Collection exposes Keep forever / Stop keep forever only with an applied storage
 
 Measured optimization: completing a thumbnail for a 10,000-row result set with eight visible rows now visits eight cells instead of 10,000, without instantiating offscreen cells. The file-search cache previously had a separate static instance in each translation unit; it is now one lazy cache per process with the existing estimated 64 MiB / 256-entry limits. Cross-translation-unit tests prove no cache allocation before an existing file is searched, a single first extraction, and correct replacement/deletion invalidation. These are structural memory reductions, not a measured process-RSS claim. The palette fixture (128 documents / 8 MiB) measured 14.73 ms cold, 0.79 ms warm, and 22.28 ms for a full miss. Group normalization remains linearly bounded.
 
-Focused group, hover, workspace, retention, cache, preview-delivery, palette, companion and launch-work tests passed. The full release sweep and final packaging follow; publication remains a separate action.
+Focused group, hover, workspace, retention, cache, preview-delivery, palette, companion and launch-work tests passed. The complete release preparation sweep subsequently passed, including 31 rendered format fixtures, 32 macOS updater cases and 56 release-workflow checks. The updater implementation and repository endpoint are unchanged from the last published tag. Version 26.10.2 build 1 is prepared on the working branch; publication remains a separate action.
+
+
+![Release candidate workspace with the persistent map toggle at the upper-right](evidence/release-26-10-2-map.png)
+
+This image is a hidden native AppKit render, not a capture of the user's reader. The same probe checks repeated input at a fixed coordinate in light/dark appearance and wide/compact layouts. Live validation used the separate temporary reader described above; after testing, only its verified PID was stopped.
