@@ -171,7 +171,7 @@ static void check_group_reorder(BOOL useGeneral) {
     expect(strip.isVisuallyReorderingTabs, @"grouped drag did not enable its moving preview");
     expect(fabs(NSMinX([strip visualRectForTabAtIndex:0])-floor(right.x-28)) < 0.1,
            @"moving grouped tab did not preserve the pointer's grab offset");
-    expect(NSEqualRects([strip visualRectForTabAtIndex:1],first), @"rightward drag did not shift sibling left");
+    expect(NSEqualRects([strip visualRectForTabAtIndex:1],NSOffsetRect(second,-NSWidth(first)-kTabGap,0)), @"rightward drag did not shift sibling left");
     expect(NSEqualRects([strip visualRectForTabAtIndex:2],third), @"uncrossed sibling moved");
     expect(NSEqualRects([strip visualRectForTabAtIndex:3],outside), @"reorder displaced another group's tabs");
     expect(reader.movedToGroup == 0, @"preview committed document order before mouse release");
@@ -188,16 +188,19 @@ static void check_group_reorder(BOOL useGeneral) {
            @"drop left stale preview geometry");
 
     strip.selectedIndex = 2;
+    first = [strip rectForTabAtIndex:0]; second = [strip rectForTabAtIndex:1];
+    third = [strip rectForTabAtIndex:2];
     start = NSMakePoint(NSMinX(third)+28,NSMidY(third));
     NSPoint left = NSMakePoint(NSMidX(first)-8,start.y);
     [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,start)];
     [strip mouseDragged:mouse(window,NSEventTypeLeftMouseDragged,left)];
-    expect(NSEqualRects([strip visualRectForTabAtIndex:0],second) &&
-           NSEqualRects([strip visualRectForTabAtIndex:1],third), @"leftward drag did not shift siblings right");
+    expect(NSEqualRects([strip visualRectForTabAtIndex:0],NSOffsetRect(first,NSWidth(third)+kTabGap,0)) &&
+           NSEqualRects([strip visualRectForTabAtIndex:1],NSOffsetRect(second,NSWidth(third)+kTabGap,0)), @"leftward drag did not shift siblings right");
     [strip mouseUp:mouse(window,NSEventTypeLeftMouseUp,left)];
     expect(reader.lastInsertionIndex == 0 && reader.createdGroups == 0, @"leftward drop changed group membership");
 
     strip.selectedIndex = 0;
+    first = [strip rectForTabAtIndex:0]; outside = [strip rectForTabAtIndex:3];
     start = NSMakePoint(NSMinX(first)+28,NSMidY(first));
     NSPoint across = NSMakePoint(NSMidX(outside),start.y);
     [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,start)];
@@ -235,6 +238,7 @@ static void check_group_reorder(BOOL useGeneral) {
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
+        check_compact_workspace_tabs();
         check_group_reorder(YES);
         check_group_reorder(NO);
         check_group_overflow();
@@ -290,8 +294,8 @@ int main(void) {
 
         NSBitmapImageRep* bitmap = render_strip(strip, [NSAppearance appearanceNamed:NSAppearanceNameAqua],
                                                 @"/tmp/spdf-tab-groups-light.png");
-        expect(alpha_at(bitmap, NSMakePoint(NSMinX(blueFrame) + 1, NSMinY(blueFrame) + 1)) == 0,
-               @"group background lost its rounded transparent corner");
+        expect(alpha_at(bitmap, NSMakePoint(NSMinX(blueFrame) + 1, NSMinY(blueFrame) + 4)) == 0,
+               @"group rail unexpectedly fills the group container");
         expect(alpha_at(bitmap, NSMakePoint(NSMinX(blueHeader) + 4, NSMidY(blueHeader))) > 0,
                @"group background was not painted behind its header");
         render_strip(strip, [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],
@@ -427,7 +431,7 @@ int main(void) {
         NSMenu* groupedOverflow = [strip overflowMenu];
         NSUInteger overflowHeadings = 0;
         for (NSMenuItem* item in groupedOverflow.itemArray)
-            if (!item.enabled && !item.separatorItem && item.image) ++overflowHeadings;
+            if (item.action == @selector(browseGroupFromMenu:) && item.image) ++overflowHeadings;
         expect(overflowHeadings >= 2, @"grouped overflow omitted named color headings");
 
         // Context moves enumerate every existing destination once, including

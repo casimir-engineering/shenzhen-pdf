@@ -7,53 +7,53 @@
 
 @implementation SPDFTabStripView (Menus)
 - (NSMenu*)overflowMenu {
-    NSArray<NSNumber*>* hiddenIndexes = [self hiddenTabIndexes];
-    if (!hiddenIndexes.count) return nil;
-
-    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Hidden Tabs"];
-    SPDFTabGroup* previousGroup = nil;
-    for (NSNumber* indexNumber in hiddenIndexes) {
-        NSInteger index = indexNumber.integerValue;
-        SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"All Groups"];
+    NSMutableSet* seen = [NSMutableSet set];
+    for (NSUInteger index=0;index<self.tabs.count;index++) {
+        SPDFDocumentTab* tab = self.tabs[index];
         SPDFTabGroup* group = tab.group;
-        if (group && group != previousGroup) {
-            if (previousGroup) [menu addItem:NSMenuItem.separatorItem];
-            NSMenuItem* heading = [menu addItemWithTitle:group.displayName action:nil keyEquivalent:@""];
-            heading.enabled = NO;
+        if (group && ![seen containsObject:group.identifier]) {
+            [seen addObject:group.identifier];
+            if (menu.numberOfItems) [menu addItem:NSMenuItem.separatorItem];
+            NSString* name = [NSString stringWithFormat:@"%@%@",group.displayName,group.hidden ? @" · Hidden" : @""];
+            NSMenuItem* heading = [menu addItemWithTitle:name action:@selector(browseGroupFromMenu:) keyEquivalent:@""];
+            heading.target = self;
+            heading.representedObject = group;
             heading.image = spdf_tab_group_swatch_image(group.colorName);
-            heading.toolTip = [NSString stringWithFormat:@"%@ group, %@", group.displayName,
-                                                         group.collapsed ? @"collapsed" : @"expanded"];
-            previousGroup = group;
+            heading.state = group.collapsed ? NSControlStateValueOff : NSControlStateValueOn;
         }
-        NSString* title = [self titleForTabAtIndex:index];
-        if (!title.length) title = @"Untitled";
-
-        NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
-                                                      action:@selector(overflowTabMenuItemSelected:)
-                                               keyEquivalent:@""];
+        NSMenuItem* item = [menu addItemWithTitle:[self fullTitleForTabAtIndex:index]
+            action:@selector(overflowTabMenuItemSelected:) keyEquivalent:@""];
         item.target = self;
-        item.representedObject = indexNumber;
-        item.state = index == self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
-        spdf_set_menu_item_system_symbol(item, @"doc.text");
-        [menu addItem:item];
+        item.representedObject = @(index);
+        item.indentationLevel = group ? 1 : 0;
+        item.state = index == (NSUInteger)self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
     }
-
     return menu;
+}
+- (void)browseGroupFromMenu:(NSMenuItem*)sender {
+    SPDFTabGroup* group = sender.representedObject;
+    if (!group) return;
+    if (group.hidden) [self.groupReader setTabGroup:group hidden:NO];
+    if (group.collapsed) [self.groupReader toggleTabGroup:group];
 }
 
 - (void)showOverflowMenuWithEvent:(NSEvent*)event {
-    NSMenu* menu = [self overflowMenu];
-    if (!menu || !event) return;
+    (void)event;
+    [self showGroupPicker];
+}
+- (void)showOverflowMenuForAccessibility { [self showGroupPicker]; }
+- (void)showGroupDocuments:(SPDFTabGroup*)group event:(NSEvent*)event {
+    NSMenu* menu=[[NSMenu alloc] initWithTitle:group.displayName];
+    for (NSUInteger index=0;index<self.tabs.count;index++) {
+        if (self.tabs[index].group!=group) continue;
+        NSMenuItem* item=[menu addItemWithTitle:[self fullTitleForTabAtIndex:index]
+            action:@selector(overflowTabMenuItemSelected:) keyEquivalent:@""];
+        item.target=self; item.representedObject=@(index);
+        item.state=index==(NSUInteger)self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
+    }
     [self dismissHoverPanel];
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
-}
-
-- (void)showOverflowMenuForAccessibility {
-    NSMenu* menu = [self overflowMenu];
-    NSRect rect = [self overflowRect];
-    if (!menu || NSIsEmptyRect(rect)) return;
-    [self dismissHoverPanel];
-    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(NSMinX(rect), NSMinY(rect)) inView:self];
 }
 
 - (void)overflowTabMenuItemSelected:(NSMenuItem*)sender {

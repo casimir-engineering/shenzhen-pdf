@@ -2,7 +2,7 @@
 
 #import "SPDFMacTabStripGeometry.h"
 #import "SPDFMacTabGroups.h"
-#import "SPDFMacTabStripView.h"
+#import "SPDFMacTabStripViewPrivate.h"
 #import "SPDFMacWindowChrome.h"
 
 @interface SPDFFakeTab : NSObject
@@ -200,7 +200,8 @@ int main(void) {
 
         NSPoint tabPoint = NSMakePoint(180, 21);
         NSPoint emptyPoint = NSMakePoint(820, 21);
-        NSPoint plusPoint = NSMakePoint(874, 21);
+        NSRect plusFrame = [strip plusRect];
+        NSPoint plusPoint = NSMakePoint(NSMidX(plusFrame), NSMidY(plusFrame));
         expect_true(@"tab is an interactive hit region", [strip containsTabOrControlAtPoint:tabPoint]);
         expect_true(@"plus is an interactive hit region", [strip containsTabOrControlAtPoint:plusPoint]);
         expect_true(@"background is outside interactive hit regions", ![strip containsTabOrControlAtPoint:emptyPoint]);

@@ -80,7 +80,8 @@
 
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _groupLayout = nil;
-    _displayTitles = nil;
+    _preferredTabWidths = nil;
+    _ungroupedVisibleIndexes = nil;
     _tabs = [tabs copy];
     _accessibilityChildrenSnapshot = nil;
     NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
@@ -93,6 +94,8 @@
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
     _groupLayout = nil;
     _selectedIndex = selectedIndex;
+    _preferredTabWidths = nil;
+    _ungroupedVisibleIndexes = nil;
     _accessibilityChildrenSnapshot = nil;
     NSAccessibilityPostNotification(self, NSAccessibilitySelectedChildrenChangedNotification);
     [self setNeedsDisplay:YES];
@@ -119,8 +122,8 @@
 }
 
 - (NSRect)closeCircleRectForTabRect:(NSRect)tabRect {
-    CGFloat diameter = 16.0;
-    return NSMakeRect(floor(NSMaxX(tabRect) - 26.0), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
+    CGFloat diameter = 20.0;
+    return NSMakeRect(floor(NSMaxX(tabRect) - 22.0), floor(NSMidY(tabRect) - diameter / 2.0), diameter, diameter);
 }
 
 // Read-only dot rect: inside the title's left inset, vertically centered. View
@@ -277,13 +280,9 @@
         self.tabs[(NSUInteger)target].group != sourceGroup || self.tabs[(NSUInteger)index].group != sourceGroup)
         return baseRect;
 
-    if (source < target && index > source && index <= target) {
-        NSRect shifted = [self rectForTabAtIndex:index - 1];
-        if (!NSIsEmptyRect(shifted)) return shifted;
-    } else if (target < source && index >= target && index < source) {
-        NSRect shifted = [self rectForTabAtIndex:index + 1];
-        if (!NSIsEmptyRect(shifted)) return shifted;
-    }
+    CGFloat pitch = NSWidth([self rectForTabAtIndex:source]) + kTabGap;
+    if (source < target && index > source && index <= target) baseRect.origin.x -= pitch;
+    else if (target < source && index >= target && index < source) baseRect.origin.x += pitch;
     return baseRect;
 }
 

@@ -73,14 +73,14 @@ NSImage* spdf_tab_group_swatch_image(NSString* color) {
     }];
 }
 NSColor* spdf_tab_group_selected_fill(NSString* color, BOOL dark) {
-    if (!color.length || [color isEqualToString:@"Gray"]) return RGB(dark ? 0x16161b : 0xe3e3e9);
+    if (!color.length || [color isEqualToString:@"Gray"]) return RGB(dark ? 0x50535c : 0xc6c8ce);
     NSUInteger index = [spdf_tab_group_colors() indexOfObject:color ?: @""];
     // Aqua uses labelColor (black) for every tab title, so selected fills are
     // pale tints. Dark Aqua keeps the deep fills below for white labelColor.
-    const unsigned light[] = {0xe8dbf6, 0xd8eee5, 0xdbeaf7, 0xd6edef, 0xf3dce7,
-                              0xf5e0d8, 0xefe6ce, 0xdfe2f7, 0xeadceb, 0xdde7ed};
-    const unsigned night[] = {0x30203f, 0x153b2c, 0x1d334c, 0x17393e, 0x482337,
-                              0x492a1e, 0x443412, 0x292d4f, 0x402944, 0x283844};
+    const unsigned light[] = {0xc9b7dd, 0xaecfc6, 0xb3cce4, 0xaecfc6, 0xddb6ca,
+                              0xddc5a5, 0xddd0a5, 0xbfc4e1, 0xd0b8d4, 0xb9cbd6};
+    const unsigned night[] = {0x625078, 0x44675e, 0x45627c, 0x44675e, 0x765065,
+                              0x705b40, 0x72633d, 0x545b7e, 0x6c5171, 0x506773};
     return RGB(index < spdf_tab_group_colors().count ? (dark ? night[index] : light[index])
                                                     : (dark ? 0x16161b : 0x41414a));
 }

@@ -14,19 +14,15 @@
 }
 
 - (NSRect)plusRect {
-    CGFloat x = MAX([self leftInset] + kTabControlWidth + 16.0, NSWidth(self.bounds) - 42);
-    x = MIN(x, MAX([self leftInset] + kTabControlWidth + 16.0, NSWidth(self.bounds) - 40));
-    return NSMakeRect(x, 7, kTabControlWidth, 28);
+    return NSMakeRect(MAX([self leftInset], NSWidth(self.bounds)-76), floor((NSHeight(self.bounds)-28)/2), 28,28);
 }
-
 - (NSRect)overflowRectAssumingVisible {
-    CGFloat x = NSMinX([self plusRect]) - kTabControlWidth - kTabGap;
-    x = MAX([self leftInset], x);
-    return NSMakeRect(x, 7, kTabControlWidth, 28);
+    return NSMakeRect(MAX([self leftInset]+32,NSWidth(self.bounds)-36), floor((NSHeight(self.bounds)-28)/2),28,28);
 }
 
 - (CGFloat)tabAreaRightWithOverflow:(BOOL)overflow {
-    return overflow ? NSMinX([self overflowRectAssumingVisible]) - 8.0 : NSMinX([self plusRect]) - 10.0;
+    (void)overflow;
+    return NSMinX([self plusRect]) - 12.0;
 }
 
 - (CGFloat)tabAreaWidthWithOverflow:(BOOL)overflow {
@@ -53,27 +49,28 @@
 
 - (BOOL)hasOverflowTabs {
     if ([self hasTabGroups]) return [self groupedHasOverflow];
-    NSInteger count = (NSInteger)self.tabs.count;
-    if (count <= 1) return NO;
-    return [self visibleTabCapacityWithOverflow:NO] < count;
+    return [self visibleTabIndexes].count < self.tabs.count;
 }
 
 - (NSArray<NSNumber*>*)visibleTabIndexes {
     if ([self hasTabGroups]) return [self groupedVisibleTabIndexes];
-    NSInteger count = (NSInteger)self.tabs.count;
-    if (count <= 0) return @[];
-
-    BOOL overflow = [self hasOverflowTabs];
-    NSInteger visibleCount = overflow ? [self visibleTabCapacityWithOverflow:YES] : count;
-    visibleCount = MAX(1, MIN(count, visibleCount));
-
-    NSInteger selected = [self selectedIndexForLayout];
-    NSInteger start = overflow ? selected - (visibleCount - 1) / 2 : 0;
-    start = MAX(0, MIN(start, count - visibleCount));
-
-    NSMutableArray<NSNumber*>* indexes = [NSMutableArray arrayWithCapacity:(NSUInteger)visibleCount];
-    for (NSInteger i = 0; i < visibleCount; ++i) { [indexes addObject:@(start + i)]; }
-    return indexes;
+    CGFloat room = [self tabAreaWidthWithOverflow:YES];
+    if (_ungroupedVisibleIndexes && _ungroupedLayoutWidth==room) return _ungroupedVisibleIndexes;
+    _ungroupedLayoutWidth=room;
+    NSInteger count = self.tabs.count, selected = [self selectedIndexForLayout];
+    NSMutableArray<NSNumber*>* indexes = [NSMutableArray array];
+    // Preserve the current tab and nearby siblings without stretching short names.
+    for (NSInteger distance=0;distance<count;distance++) {
+        for (NSNumber* value in distance ? @[@(selected-distance),@(selected+distance)] : @[@(selected)]) {
+            NSInteger index=value.integerValue;
+            if (index<0 || index>=count) continue;
+            CGFloat width = [self preferredWidthForTabAtIndex:index] + (indexes.count ? kTabGap : 0);
+            if (width>room && indexes.count) continue;
+            [indexes addObject:value]; room -= width;
+        }
+    }
+    _ungroupedVisibleIndexes=[indexes sortedArrayUsingSelector:@selector(compare:)];
+    return _ungroupedVisibleIndexes;
 }
 
 - (NSArray<NSNumber*>*)hiddenTabIndexes {
@@ -90,7 +87,7 @@
 }
 
 - (NSRect)overflowRect {
-    return [self hasOverflowTabs] ? [self overflowRectAssumingVisible] : NSZeroRect;
+    return [self overflowRectAssumingVisible];
 }
 
 - (NSRect)rectForTabAtIndex:(NSInteger)index {
@@ -99,10 +96,11 @@
     NSUInteger visiblePosition = [visibleIndexes indexOfObject:@(index)];
     if (visiblePosition == NSNotFound) return NSZeroRect;
 
-    CGFloat x = [self leftInset] + (CGFloat)visiblePosition * ([self tabWidth] + kTabGap);
-    CGFloat maxRight = [self tabAreaRightWithOverflow:[self hasOverflowTabs]];
-    CGFloat width = MIN([self tabWidth], maxRight - x);
-    return NSMakeRect(x, 7, width, 28);
+    CGFloat x = [self leftInset];
+    for (NSUInteger i=0;i<visiblePosition;i++) x += [self preferredWidthForTabAtIndex:visibleIndexes[i].integerValue]+kTabGap;
+    CGFloat maxRight = [self tabAreaRightWithOverflow:YES];
+    CGFloat width = MAX(0,MIN([self preferredWidthForTabAtIndex:index], maxRight-x));
+    return NSMakeRect(x, floor((NSHeight(self.bounds) - 24) / 2), width, 24);
 }
 
 - (NSRect)interactionRectForTabRect:(NSRect)tabRect {
@@ -121,20 +119,27 @@
     return -1;
 }
 
+- (NSString*)fullTitleForTabAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.tabs.count) return @"";
+    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
+    if (tab.collectionVersionLabel.length) return tab.collectionVersionLabel;
+    return tab.path.length ? tab.path.lastPathComponent : tab.title ?: @"";
+}
+
 - (NSString*)titleForTabAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)self.tabs.count) return @"";
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
     if (tab.collectionVersionLabel.length) return tab.collectionVersionLabel;
-    if (!tab.path.length) return spdf_display_label_without_extension(tab.title);
-
-    if (!_displayTitles) {
-        NSMutableArray<NSString*>* paths = [NSMutableArray arrayWithCapacity:self.tabs.count];
-        for (SPDFDocumentTab* item in self.tabs) [paths addObject:item.path ?: @""];
-        _displayTitles = spdf_disambiguated_display_names_for_paths(paths);
-    }
-    if (index < (NSInteger)_displayTitles.count && _displayTitles[(NSUInteger)index].length)
-        return _displayTitles[(NSUInteger)index];
-    return spdf_display_name_for_path(tab.path);
+    NSString* name = tab.path.length ? tab.path.lastPathComponent : tab.title;
+    return name.pathExtension.length ? name.stringByDeletingPathExtension : name ?: @"";
 }
-
+- (CGFloat)preferredWidthForTabAtIndex:(NSInteger)index {
+    if (_preferredTabWidths[@(index)]) return _preferredTabWidths[@(index)].doubleValue;
+    if (!_preferredTabWidths) _preferredTabWidths=[NSMutableDictionary dictionary];
+    NSString* title = [self titleForTabAtIndex:index];
+    NSFont* font = [NSFont systemFontOfSize:12 weight:index == self.selectedIndex ? NSFontWeightSemibold : NSFontWeightRegular];
+    CGFloat width=MIN(kTabMaxWidth, MAX(kTabMinVisibleWidth, ceil([title sizeWithAttributes:@{NSFontAttributeName:font}].width) + 12));
+    _preferredTabWidths[@(index)]=@(width);
+    return width;
+}
 @end

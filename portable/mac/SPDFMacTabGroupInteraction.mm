@@ -134,6 +134,11 @@
 }
 - (BOOL)handleGroupMouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    for (id layout in [self groupLayouts])
+        if (NSPointInRect(point,[[layout valueForKey:@"overflowFrame"] rectValue])) {
+            [self showGroupDocuments:[layout valueForKey:@"group"] event:event];
+            return YES;
+        }
     SPDFTabGroup* group = [self groupAtPoint:point headerOnly:YES];
     _pressedGroup = group;
     if (!group) return NO;

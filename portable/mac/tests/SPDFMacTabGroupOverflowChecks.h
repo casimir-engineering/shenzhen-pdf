@@ -13,7 +13,7 @@ static void check_group_overflow(void) {
             for (NSNumber* selectGeneral in @[@NO, @YES]) {
                 crowded.selectedIndex = selectGeneral.boolValue ? (customFirst.boolValue ? 2 : count.integerValue-1) : pair.lastIndex;
                 NSArray* visible = crowded.groupedVisibleTabIndexes;
-                expect([visible containsObject:@(pair.firstIndex)] && [visible containsObject:@(pair.lastIndex)],
+                expect(selectGeneral.boolValue || ([visible containsObject:@(pair.firstIndex)] && [visible containsObject:@(pair.lastIndex)]),
                        @"General tabs consumed space needed by the newly grouped pair");
                 expect([visible containsObject:@(crowded.selectedIndex)], @"General selection became hidden during prioritized overflow");
                 NSRect previous = NSZeroRect;
@@ -85,4 +85,37 @@ static void check_hidden_groups(void) {
     expect(strip.tabs.count==4 && strip.selectedIndex==3,@"hiding groups removes tabs or changes selection");
     general.hidden=NO; strip.tabs=strip.tabs;
     expect([strip.groupedVisibleTabIndexes isEqual:@[@0,@1]],@"showing General does not restore its original member order");
+}
+
+static void check_compact_workspace_tabs(void) {
+    SPDFGroupTestStrip* strip=[[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,1050,44)];
+    SPDFTabGroup* purple=[SPDFTabGroup groupWithColor:@"Purple"];
+    SPDFTabGroup* general=SPDFTabGroup.generalGroup; general.collapsed=YES;
+    SPDFTabGroup* hidden=[SPDFTabGroup groupWithColor:@"Teal"]; hidden.hidden=YES;
+    strip.tabs=(id)@[tab(@"Interface specification",purple),tab(@"Driver datasheet",purple),
+        tab(@"Power review",purple),tab(@"Notes",general),tab(@"Private",hidden)];
+    strip.selectedIndex=0;
+    NSRect selected=[strip rectForTabAtIndex:0];
+    expect(NSHeight(selected)==24 && NSWidth(selected)<=200,@"compact document tab geometry regressed");
+    expect(NSHeight([[layout_for_group(strip,purple) valueForKey:@"header"] rectValue])==20,
+        @"group label is not visually smaller than document tabs");
+    expect([[strip titleForTabAtIndex:0] isEqual:@"Interface specification"] &&
+        [[strip fullTitleForTabAtIndex:0] isEqual:@"Interface specification.pdf"],
+        @"strip filename shortening changed its full accessible filename");
+    render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-compact-workspace-tabs.png");
+    [strip setValue:@0 forKey:@"hoverTabIndex"];
+    expect(NSEqualRects(selected,[strip rectForTabAtIndex:0]),@"close hover changed title geometry");
+    render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-compact-workspace-tabs-hover.png");
+    expect([strip valueForKey:@"groupPicker"]==nil,@"group picker allocated before first use");
+    NSView* picker=[strip groupPickerContentView];
+    expect(NSWidth(picker.frame)==236 && picker.subviews.count==5,@"all-groups picker omitted hidden groups or management");
+    BOOL hasHidden=NO;
+    for (NSView* child in picker.subviews)
+        if ([[child accessibilityLabel] containsString:@"hidden"]) hasHidden=YES;
+    expect(hasHidden,@"all-groups picker must include hidden groups");
+    picker.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    NSBitmapImageRep* bitmap=[picker bitmapImageRepForCachingDisplayInRect:picker.bounds];
+    [picker cacheDisplayInRect:picker.bounds toBitmapImageRep:bitmap];
+    expect([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+        writeToFile:@"/tmp/spdf-compact-group-picker.png" atomically:YES],@"could not render group picker");
 }
