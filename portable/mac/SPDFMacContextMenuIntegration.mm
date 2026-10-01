@@ -116,12 +116,12 @@
                                                action:@selector(copyCurrentDocumentFile:)
                                         keyEquivalent:@""];
     copyDocument.enabled = [self hasActiveDocument] && _path.length > 0;
-    NSInteger copyPageIndex = _contextPageIndex >= 0 ? _contextPageIndex : _pageIndex;
+    NSInteger currentPage = markdown ? self.activeMarkdownSession.currentPageIndex : _pageIndex;
+    NSInteger copyPageIndex = _contextPageIndex >= 0 ? _contextPageIndex : currentPage;
     NSMenuItem* copyPage = [menu addItemWithTitle:SPDFMacCopyPageMenuTitle(copyPageIndex, NO)
                                            action:@selector(copyCurrentPageAsPDF:)
                                     keyEquivalent:@""];
-    copyPage.enabled = markdown ? [self canCopyCurrentPageAsPDF]
-                                : _path.length > 0 && (_contextPageIndex >= 0 || _pageIndex >= 0);
+    copyPage.enabled = [self canCopyPageAsPDFAtIndex:copyPageIndex];
     if (_contextPageIndex >= 0) copyPage.representedObject = @(_contextPageIndex);
     NSMenuItem* copyImage = [menu addItemWithTitle:SPDFMacCopyPageMenuTitle(copyPageIndex, YES)
                                             action:@selector(copyCurrentPageImage:)

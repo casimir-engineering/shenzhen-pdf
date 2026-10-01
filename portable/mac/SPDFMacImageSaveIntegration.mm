@@ -6,6 +6,8 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacCollectionIntegration.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
+static char pendingImageSaveKey;
 
 @interface SPDFImageSaveFormatPicker : NSObject
 @property(nonatomic, weak) NSSavePanel* panel;
@@ -48,8 +50,27 @@
 
 - (BOOL)saveActiveImageAs {
     if (!_doc || !SPDFOCRPathNeedsPDF(_path)) return NO;
-    NSString* source = [_path copy];
-    SPDFDocumentTab* originatingTab = [self selectedTab];
+    [self saveImageTab:[self selectedTab] completion:nil];
+    return YES;
+}
+
+- (BOOL)waitForPendingImageSave:(void (^)(BOOL))completion {
+    NSMutableArray* waiting = objc_getAssociatedObject(self, &pendingImageSaveKey);
+    if (!waiting) return NO;
+    if (completion) [waiting addObject:[completion copy]];
+    return YES;
+}
+- (void)finishPendingImageSave:(BOOL)saved {
+    NSArray* waiting = [objc_getAssociatedObject(self, &pendingImageSaveKey) copy];
+    objc_setAssociatedObject(self, &pendingImageSaveKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    for (void (^callback)(BOOL) in waiting) callback(saved);
+}
+- (void)saveImageTab:(SPDFDocumentTab*)originatingTab completion:(void (^)(BOOL))completion {
+    // One export at a time: closing/quitting can join it instead of starting
+    // a duplicate export or terminating the worker before installation.
+    if ([self waitForPendingImageSave:completion]) return;
+    NSString* source = [originatingTab.path copy];
+    if (!source.length) { if (completion) completion(NO); return; }
     NSSavePanel* panel = [NSSavePanel savePanel];
     panel.title = @"Save Image As"; panel.canCreateDirectories = YES; panel.allowsOtherFileTypes = NO;
     panel.nameFieldStringValue = SPDFPathIsUnsavedPastedImage(source)
@@ -73,19 +94,21 @@
     accessory.frame = NSMakeRect(0, 0, MAX(260, accessory.fittingSize.width), MAX(42, accessory.fittingSize.height));
     panel.accessoryView = accessory;
     [picker formatChanged:nil];
-    if ([panel runModal] != NSModalResponseOK) return YES;
+    if ([panel runModal] != NSModalResponseOK) { if (completion) completion(NO); return; }
     NSString* destination = panel.URL.path;
     if (SPDFMacPathIsCollectionArchive(destination)) {
         [self showError:@"Collection backups are read-only" detail:@"Choose a location outside Collection."];
-        return YES;
+        if (completion) completion(NO); return;
     }
     NSDictionary* destinationIdentity = SPDFImageSaveDestinationIdentity(destination);
     if (!destinationIdentity) {
         [self showError:@"Could not inspect destination" detail:@"Choose another location and try again."];
-        return YES;
+        if (completion) completion(NO); return;
     }
     if ([NSFileManager.defaultManager fileExistsAtPath:destination] &&
-        ![self collectionProtectPath:destination operation:@"saving an image copy"]) return YES;
+        ![self collectionProtectPath:destination operation:@"saving an image copy"]) { if (completion) completion(NO); return; }
+    objc_setAssociatedObject(self, &pendingImageSaveKey, [NSMutableArray array], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (completion) [self waitForPendingImageSave:completion];
     BOOL asPDF = picker.popup.indexOfSelectedItem == 1;
     _statusLabel.stringValue = @"Saving a copy…";
     __weak ShenzhenMacDelegate* weakSelf = self;
@@ -96,12 +119,12 @@
             dispatch_async(dispatch_get_main_queue(), ^{
                 ShenzhenMacDelegate* owner = weakSelf;
                 if (!owner) return;
-                if (!saved) { [owner showError:@"Could not save image copy" detail:error.localizedDescription]; return; }
+                if (!saved) { [owner showError:@"Could not save image copy" detail:error.localizedDescription]; [owner finishPendingImageSave:NO]; return; }
                 [owner completeImageSaveFromPath:source tab:originatingTab destination:destination asPDF:asPDF];
+                [owner finishPendingImageSave:YES];
             });
         }
     });
-    return YES;
 }
 - (void)completeImageSaveFromPath:(NSString*)source tab:(SPDFDocumentTab*)tab
                     destination:(NSString*)destination asPDF:(BOOL)asPDF {

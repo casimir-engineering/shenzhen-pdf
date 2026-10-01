@@ -1,5 +1,6 @@
 #import "SPDFMacMenuText.h"
 #import "SPDFMacClipboardIntegration.h"
+#import "SPDFMacUnsavedImageClose.h"
 #import "SPDFMacShortcutHelpStyle.h"
 #import "SPDFMacFindContext.h"
 #import "SPDFMacDocumentToolInputIntegration.h"
@@ -908,6 +909,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     (void)sender;
+    if ([self deferUnsavedImageTermination]) return NSTerminateCancel;
     if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     if (!_terminateOnlyThisProcess && !gSPDFTerminatingAllWindows) {
         gSPDFTerminatingAllWindows = YES;
@@ -8641,36 +8643,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self savePersistentState];
 }
 
-- (void)closeDocument:(id)sender {
-    (void)sender;
-    [self cancelDocumentTransientInteraction];
-    if (_selectedTabIndex >= 0) {
-        [self closeTabAtIndex:_selectedTabIndex];
-        return;
-    }
-    NSString* closedPath = [_path copy];
-    [self rememberClosedDocumentPath:closedPath];
-    [self cancelInactiveTabPreloads];
-    [self clearActiveMetadata];
-    [self closeActiveDocumentIfUnowned];
-    _path = nil;
-    _workingPath = nil; // keep working/source paths in sync when the doc clears
-    _pageIndex = 0;
-    _highlightPageIndex = -1;
-    _selectionPageIndex = -1;
-    _selectedText = nil;
-    _searchField.stringValue = @"";
-    _findRegexCheckbox.state = NSControlStateValueOff;
-    _findRegexMultiline = YES;
-    [self clearFindResults];
-    _renderGeneration++;
-    [_renderedPages removeAllObjects];
-    _window.title = @"Shenzhen PDF";
-    _statusLabel.stringValue = @"Ready";
-    [self rebuildSidebar];
-    [self showEmptyDocumentViewWithMessage:@"Open a document"];
-    [self updateControls];
-}
 
 - (SPDFDocumentTab*)newTabForPath:(NSString*)path {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
@@ -8804,6 +8776,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)closeTabAtIndex:(NSInteger)index preferMostRecentActive:(BOOL)preferMostRecentActive {
+    if ([self deferClosingUnsavedImageAtIndex:index preferMostRecentActive:preferMostRecentActive]) return;
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
     if (closingActive) [self cancelDocumentTransientInteraction];

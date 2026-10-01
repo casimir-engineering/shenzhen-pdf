@@ -22,6 +22,13 @@
 - (NSInteger)selectedIndex;
 @end
 @implementation GroupReaderProbe
+// Save/alert behavior is exercised by SPDFMacUnsavedImageCloseTests. These
+// group fixtures contain saved documents and have no asynchronous close gate.
+- (BOOL)deferClosingImageTabs:(NSArray<SPDFDocumentTab*>*)tabs action:(void (^)(void))action {
+    (void)action;
+    for (SPDFDocumentTab* tab in tabs) NSCAssert(!tab.unsavedPastedImage, @"saved-document fixture required");
+    return NO;
+}
 - (void)seed:(NSArray*)tabs selected:(NSInteger)index {
     _tabs = [tabs mutableCopy];
     _selectedTabIndex = index;
