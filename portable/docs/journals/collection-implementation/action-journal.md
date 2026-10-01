@@ -671,3 +671,18 @@ Validation passed: the full Markdown engine suite, full Markdown/Collection UI i
 The final speed review extended the laziness check to the actual opening/title policy: native-path checks use the existing native extension list plus constant source pairs; only an explicit complete Open list builds the source catalog. The format regression verifies zero initialization for PDF, image, source and unknown paths before that request.
 
 Final packaging completed in `dist/ShenzhenPDF.app`, including the Collection helper. Strict deep signature verification passed; executable timestamps and bundled file associations match the final production sources. This is a local development build, not a published release. The running app was left untouched.
+
+
+## 2 October — one Collection layout and explicit retention actions
+
+Removed the Layout submenu and standalone thumbnail-grid mode at the user’s request. Collection now always uses the document list, including when existing settings contain `managerLayout: 1`. The small page previews and highlighted contextual matches within rows remain. Removed grid construction, layout, selection synchronization, scroll-state persistence and obsolete grid tests; extracted the retained lazy thumbnail loader into `SPDFMacCollectionWindowThumbnails.mm`. Show/filter and Sort remain available.
+
+Audited the actual retention rules before explaining them. A Keep mark belongs to a saved version; the current cleanup policy protects a document’s entire history while any version is marked. Removing all marks makes it eligible for future storage-cap cleanup, without deleting anything immediately. Manual deletion is still available. Exclude only stops future captures, while Include allows them again; neither changes originals nor removes existing copies.
+
+Collection menus now say Keep this version / Stop keeping this version and Pause / Resume saving new versions, with explanatory hover text. Filters read Kept histories and Saving paused. Multi-selection performs the explicit action on the whole selection, rather than toggling mixed values in opposite directions. Storage policy and source documents are unchanged.
+
+The full Markdown/Collection UI integration suite passed, including retained encrypted previews, old thumbnail preferences reopening as a list, filter/sort menu mapping, list scroll-state persistence and retention labels/help for both states. Initialization still starts no capture or preview jobs. Inspected the native offscreen search view below; no user app window was opened or captured. File-size and whitespace checks passed.
+
+![One document list retains page previews and highlighted context](../../proposals/mac-workspace-rethink/evidence/native-collection-list-only.png)
+
+Rebuilt the reader and Collection helper in `dist/ShenzhenPDF.app`; strict deep signature verification passed and the executable is newer than the final native sources. This is a local build, not a published release. The running app was left untouched.

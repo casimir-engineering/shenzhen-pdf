@@ -16,10 +16,9 @@ static NSString* RowIdentity(NSDictionary* row) {
             matchIndex = [row[@"matches"] indexOfObject:row[@"selectedMatch"]];
         matches[RowIdentity(row)] = @{@"page":row[@"selectedPage"],@"index":@(matchIndex)};
     }
-    NSPoint list = self.listScroll.contentView.bounds.origin, grid = self.gridScroll.contentView.bounds.origin;
+    NSPoint list = self.listScroll.contentView.bounds.origin;
     return @{@"query":self.resultQuery ?: self.search.stringValue,@"selection":selection,@"matches":matches,
-        @"expanded":self.expandedResults.allObjects,@"listX":@(list.x),@"listY":@(list.y),
-        @"gridX":@(grid.x),@"gridY":@(grid.y)};
+        @"expanded":self.expandedResults.allObjects,@"listX":@(list.x),@"listY":@(list.y)};
 }
 - (void)restoreBrowseState:(NSDictionary*)state toRows:(NSMutableArray*)rows query:(NSString*)query {
     // Match indices only describe the same query and immutable archived version.
@@ -42,15 +41,12 @@ static NSString* RowIdentity(NSDictionary* row) {
     NSMutableIndexSet* selected = [NSMutableIndexSet indexSet];
     for (NSUInteger i=0;i<self.rows.count;i++) if ([selection containsObject:RowIdentity(self.rows[i])]) [selected addIndex:i];
     [self.table selectRowIndexes:selected byExtendingSelection:NO];
-    [self synchronizeGridSelection];
     [self.window.contentView layoutSubtreeIfNeeded];
-    // Restore after row heights and both layouts settle; reloading a table can otherwise
+    // Restore after row heights and list layout settle; reloading a table can otherwise
     // reset the clip origin even though History never changed the user's result list.
     if ([state[@"query"] isEqual:self.search.stringValue]) {
         [self.listScroll.contentView scrollToPoint:NSMakePoint([state[@"listX"] doubleValue],[state[@"listY"] doubleValue])];
-        [self.gridScroll.contentView scrollToPoint:NSMakePoint([state[@"gridX"] doubleValue],[state[@"gridY"] doubleValue])];
         [self.listScroll reflectScrolledClipView:self.listScroll.contentView];
-        [self.gridScroll reflectScrolledClipView:self.gridScroll.contentView];
     }
 }
 @end

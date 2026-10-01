@@ -15,12 +15,12 @@ static void Expect(NSString* label, BOOL value) {
     if (!value) { fprintf(stderr,"FAIL: %s\n",label.UTF8String); failures++; }
 }
 #import "SPDFMacCollectionThumbnailChecks.h"
+#import "SPDFMacCollectionRetentionChecks.h"
 static void Layout(NSWindow* window, NSSize size) {
     [window setContentSize:size];
     [window.contentView layoutSubtreeIfNeeded];
     Expect(@"headless layout never shows a window",!window.visible);
 }
-#import "SPDFMacCollectionGridChecks.h"
 static NSView* Label(NSView* view, NSString* string) {
     if ([view isKindOfClass:NSTextField.class] && [[(NSTextField*)view stringValue] isEqual:string]) return view;
     for (NSView* child in view.subviews) { NSView* found = Label(child,string); if (found) return found; }
@@ -37,24 +37,6 @@ static NSView* Identified(NSView* view,NSString* identifier) {
     if ([view.identifier isEqual:identifier]) return view;
     for (NSView* child in view.subviews) { NSView* found = Identified(child,identifier); if (found) return found; }
     return nil;
-}
-static BOOL CaptionHasInk(NSCollectionViewItem* item) {
-    [item.view layoutSubtreeIfNeeded];
-    NSBitmapImageRep* bitmap = [item.view bitmapImageRepForCachingDisplayInRect:item.view.bounds];
-    [item.view cacheDisplayInRect:item.view.bounds toBitmapImageRep:bitmap];
-    NSRect caption = NSInsetRect(item.textField.frame,4,4);
-    CGFloat scaleX = bitmap.pixelsWide / item.view.bounds.size.width;
-    CGFloat scaleY = bitmap.pixelsHigh / item.view.bounds.size.height;
-    CGFloat darkest = 1, lightest = 0;
-    for (NSInteger y = floor(NSMinY(caption) * scaleY); y < ceil(NSMaxY(caption) * scaleY); y += 2) {
-        for (NSInteger x = floor(NSMinX(caption) * scaleX); x < ceil(NSMaxX(caption) * scaleX); x += 2) {
-            NSColor* color = [[bitmap colorAtX:x y:y] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-            CGFloat brightness = .2126 * color.redComponent + .7152 * color.greenComponent +
-                .0722 * color.blueComponent;
-            darkest = MIN(darkest,brightness); lightest = MAX(lightest,brightness);
-        }
-    }
-    return lightest - darkest > .3;
 }
 #import "SPDFMacCollectionWorkspaceChecks.h"
 int main(void) {
@@ -133,24 +115,13 @@ int main(void) {
                 [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
                 [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:evidence atomically:YES];
             }
-            [manager.layoutPicker selectItemAtIndex:1]; [manager reloadGrid];
-            Layout(manager.window,NSMakeSize(940,560));
-            Expect(@"thumbnail layout has a real visible collection view",!manager.gridScroll.hidden &&
-                manager.listScroll.hidden && manager.gridScroll.frame.size.width > 300);
             NSDictionary* fixtureDocument = @{@"id": @"fixture-document", @"title": @"Bridge Notes.pdf",
                 @"path": @"/tmp/Bridge Notes.pdf", @"versions": @[]};
             NSDictionary* fixtureVersion = @{@"id": @"fixture-version", @"capturedAt": @1727092800,
                 @"encrypted": @YES};
-            CheckCompactCollectionGrid(manager,@{@"document":fixtureDocument,@"version":fixtureVersion},evidence);
             manager.rows = @[@{@"document": fixtureDocument, @"version": fixtureVersion}];
-            [manager.table reloadData]; [manager reloadGrid];
-            [manager.window.contentView layoutSubtreeIfNeeded]; [manager.grid layoutSubtreeIfNeeded];
-            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
-            [manager.window.contentView layoutSubtreeIfNeeded]; [manager.grid layoutSubtreeIfNeeded];
-            NSIndexPath* fixturePath = [NSIndexPath indexPathForItem:0 inSection:0];
-            NSCollectionViewItem* fixtureItem = [manager.grid itemAtIndexPath:fixturePath];
+            [manager.table reloadData];
             if (evidence.length) {
-                [manager.layoutPicker selectItemAtIndex:0]; [manager reloadGrid];
                 Layout(manager.window,NSMakeSize(850,590));
                 NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
                 [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
@@ -160,38 +131,13 @@ int main(void) {
                 [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
                 [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
                     writeToFile:[evidence.stringByDeletingPathExtension stringByAppendingString:@"-settings.png"] atomically:YES];
-                [manager showDestination:@"Documents"]; [manager.layoutPicker selectItemAtIndex:1]; [manager reloadGrid];
+                [manager showDestination:@"Documents"];
                 Layout(manager.window,NSMakeSize(940,560));
             }
-            Expect(@"thumbnail fixture creates its native item",fixtureItem != nil);
-            Expect(@"thumbnail caption contains filename and capture date",
-                fixtureItem.textField.stringValue.length > 20 &&
-                    [fixtureItem.textField.stringValue containsString:@"Bridge Notes.pdf"]);
-            Expect(@"thumbnail caption occupies visible item space",
-                fixtureItem.textField.superview == fixtureItem.view &&
-                    NSIntersectsRect(fixtureItem.textField.frame,fixtureItem.view.bounds));
-            Expect(@"thumbnail caption has stable layout and rendered pixels",
-                !fixtureItem.textField.hasAmbiguousLayout && fixtureItem.textField.frame.size.height == 36 &&
-                    CaptionHasInk(fixtureItem));
-            Expect(@"thumbnail item is a named accessibility element",fixtureItem.view.isAccessibilityElement &&
-                [fixtureItem.view.accessibilityLabel containsString:@"Bridge Notes.pdf"] &&
-                [fixtureItem.view.accessibilityLabel isEqual:fixtureItem.textField.stringValue]);
-            Expect(@"thumbnail collection exposes its named item",
-                [manager.grid.accessibilityChildren containsObject:fixtureItem.view]);
-            Expect(@"thumbnail accessibility press selects the item",[fixtureItem.view accessibilityPerformPress] &&
-                [manager.grid.selectionIndexPaths containsObject:fixturePath]);
-            Expect(@"thumbnail accessibility press updates document actions",manager.table.selectedRow == 0 &&
-                [manager.details.stringValue containsString:@"Bridge Notes.pdf"] &&
-                    manager.selectionButtons[1].enabled);
             NSMutableDictionary* latestDoc = [fixtureDocument mutableCopy]; latestDoc[@"latestVersionID"] = fixtureVersion[@"id"];
             latestDoc[@"versions"] = @[fixtureVersion];
             manager.rows = @[@{@"document":latestDoc,@"version":fixtureVersion}];
             Expect(@"Documents never displays the History-only Latest pill",!Identified([manager resultCellForRow:0],@"CollectionLatestBadge"));
-            [manager.table reloadData]; [manager reloadGrid]; [manager.window.contentView layoutSubtreeIfNeeded];
-            [manager.grid layoutSubtreeIfNeeded]; [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
-            [manager.grid layoutSubtreeIfNeeded];
-            NSCollectionViewItem* latestItem = [manager.grid itemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
-            Expect(@"thumbnail browsing has no History-only Latest pill",latestItem && !Identified(latestItem.view,@"CollectionLatestBadge"));
             CheckCollectionThumbnailRequests(manager);
             NSString* indexedPath = [root.path stringByAppendingString:@"-Field Notes.md"];
             [@"# Greenhouse log\nThe orchid bloomed overnight.\n" writeToFile:indexedPath atomically:YES
@@ -209,7 +155,7 @@ int main(void) {
             Expect(@"manager content search includes an indexed document whose title does not match",
                 indexed && manager.rows.count == 1 &&
                 [manager.rows.firstObject[@"document"][@"id"] isEqual:indexed[@"id"]]);
-            Expect(@"search uses list results even if thumbnail browsing was selected",!manager.listScroll.hidden && manager.gridScroll.hidden);
+            Expect(@"search uses the same list as browsing",!manager.listScroll.hidden);
             NSDictionary* result = manager.rows.firstObject;
             Expect(@"native search retains exact text contexts and version identity",[result[@"matches"] count] > 0 && result[@"version"][@"id"]);
             NSView* resultCell = [manager resultCellForRow:0];
@@ -274,12 +220,13 @@ int main(void) {
                 version[@"id"] = [NSString stringWithFormat:@"layout-%lu",(unsigned long)n]; copy[@"version"] = version;
                 [longRows addObject:copy];
             }
-            manager.rows = longRows; [manager.table reloadData]; [manager reloadGrid];
+            manager.rows = longRows; [manager.table reloadData];
             [manager.table selectRowIndexes:[NSIndexSet indexSetWithIndex:7] byExtendingSelection:NO];
             [manager.window.contentView layoutSubtreeIfNeeded];
             [manager.listScroll.contentView scrollToPoint:NSMakePoint(0,320)];
             NSDictionary* browsing = [manager captureBrowseState];
             Expect(@"browsing state can persist in the JSON manifest",[NSJSONSerialization isValidJSONObject:browsing]);
+            Expect(@"browsing state contains only the remaining list position",browsing[@"listY"] && !browsing[@"gridY"] && !browsing[@"gridX"]);
             NSMutableArray* reordered = [[[longRows reverseObjectEnumerator] allObjects] mutableCopy];
             [manager restoreBrowseState:browsing toRows:reordered query:@"orchid"];
             manager.rows = reordered; [manager.table reloadData]; [manager restoreBrowseSelectionAndScroll:browsing];
@@ -294,7 +241,7 @@ int main(void) {
             NSDictionary* newer = [store capturePath:indexedPath reason:@"Modified" continuingDocumentID:indexed[@"id"] error:nil];
             Expect(@"latest-only fixture contains two versions of one document",[newer[@"id"] isEqual:indexed[@"id"]] && [newer[@"versions"] count] == 2);
             NSString* oldVersion = remembered[@"version"][@"id"];
-            [store updateSettings:@{@"managerDestination":@"Documents",@"managerView":@1,@"managerSearchScope":@1,@"managerQuery":@""} error:nil];
+            [store updateSettings:@{@"managerDestination":@"Documents",@"managerLayout":@1,@"managerView":@1,@"managerSearchScope":@1,@"managerQuery":@""} error:nil];
             __block NSString* openedPath = nil;
             __block BOOL openedArchive = YES;
             SPDFMacCollectionWindow* latestOnly = [[SPDFMacCollectionWindow alloc] initWithStore:store open:^(NSString* path,BOOL archived) {
@@ -303,6 +250,13 @@ int main(void) {
             Expect(@"legacy Versions preference migrates to All Documents with no version controls",
                 latestOnly.viewPicker.selectedItem.tag == 0 && ![latestOnly.viewPicker.itemTitles containsObject:@"Versions"] &&
                 !Label(latestOnly.window.contentView,@"All saved versions"));
+            Expect(@"legacy thumbnail preference opens the document list",!latestOnly.listScroll.hidden &&
+                !Descendant(latestOnly.window.contentView,NSCollectionView.class));
+            NSMenu* viewOptions = [latestOnly collectionViewOptionsMenu];
+            Expect(@"Collection offers filtering and sorting without layout modes",viewOptions.numberOfItems == 2 &&
+                [viewOptions itemWithTitle:@"Show"] && [viewOptions itemWithTitle:@"Sort"] && ![viewOptions itemWithTitle:@"Layout"]);
+            NSMenuItem* sortByName = [[viewOptions itemWithTitle:@"Sort"].submenu itemWithTitle:@"Name"];
+            Expect(@"Sort uses its new menu position after removing Layout",[sortByName.representedObject isEqual:@[@1,@2]]);
             void (^refreshLatest)(id) = ^(id sender) {
                 NSArray* previous = latestOnly.rows; [latestOnly reload:sender];
                 NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:3];
@@ -314,6 +268,7 @@ int main(void) {
             Expect(@"Documents shows exactly one canonical latest version despite legacy all-version preferences",latestOnly.rows.count == 1 &&
                 [latestOnly.rows.firstObject[@"version"][@"id"] isEqual:newer[@"latestVersionID"]]);
             [latestOnly.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            CheckCollectionRetentionMenu(latestOnly);
             [latestOnly preview:nil];
             Expect(@"opening latest Collection document uses the editable original",
                 [openedPath isEqual:indexedPath] && !openedArchive);

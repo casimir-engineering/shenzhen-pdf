@@ -87,7 +87,7 @@ static void Fill(NSView* child, NSView* parent) {
     [toolbar addArrangedSubview:self.search]; [self.search.widthAnchor constraintEqualToAnchor:toolbar.widthAnchor constant:-28].active = YES;
     [self.search.heightAnchor constraintEqualToConstant:31].active = YES;
     self.viewPicker = SPDFCollectionPopUp();
-    [self.viewPicker addItemsWithTitles:@[@"All Documents",@"Originals Unavailable",@"Kept",@"Excluded"]];
+    [self.viewPicker addItemsWithTitles:@[@"All Documents",@"Originals Unavailable",@"Kept histories",@"Saving paused"]];
     NSArray<NSNumber*>* filterTags = @[@0,@2,@3,@4];
     for (NSUInteger index=0;index<filterTags.count;index++) [self.viewPicker itemAtIndex:index].tag = filterTags[index].integerValue;
     NSInteger restoredFilter = [preferences[@"managerView"] integerValue];
@@ -97,8 +97,6 @@ static void Fill(NSView* child, NSView* parent) {
     // View controls remain persisted and accessible from the compact header menu.
     self.resultSummary = SPDFCollectionText(@"",11,NSFontWeightRegular,YES);
     self.resultSummary.hidden = YES;
-    self.layoutPicker = SPDFCollectionPopUp(); [self.layoutPicker addItemsWithTitles:@[@"List",@"Thumbnails"]];
-    [self.layoutPicker selectItemAtIndex:MIN(1,MAX(0,[preferences[@"managerLayout"] integerValue]))];
     self.sortPicker = SPDFCollectionPopUp(); [self.sortPicker addItemsWithTitles:@[@"Newest first",@"Oldest first",@"Name"]];
     [self.sortPicker selectItemAtIndex:MIN(2,MAX(0,[preferences[@"managerSort"] integerValue]))];
     self.listScroll = [NSScrollView new]; self.listScroll.hasVerticalScroller = YES; self.listScroll.borderType = NSNoBorder;
@@ -112,7 +110,7 @@ static void Fill(NSView* child, NSView* parent) {
     [self.table addTableColumn:column]; self.listScroll.documentView = self.table;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Document actions"]; menu.delegate = (id)self; self.table.menu = menu;
     NSView* results = [NSView new]; [documents addArrangedSubview:results]; Fill(self.listScroll,results);
-    [self installGridInView:results];
+    [self initializeThumbnails];
     self.resultSummary.translatesAutoresizingMaskIntoConstraints = NO; [results addSubview:self.resultSummary];
     [NSLayoutConstraint activateConstraints:@[[self.resultSummary.leadingAnchor constraintEqualToAnchor:results.leadingAnchor constant:14],
         [self.resultSummary.topAnchor constraintEqualToAnchor:results.topAnchor constant:14]]];
@@ -122,7 +120,7 @@ static void Fill(NSView* child, NSView* parent) {
     self.details = Label(@"Select a document or version.",12,NSFontWeightRegular);
     self.selectionButtons = [NSMutableArray array];
     NSArray* titles = @[@"Open Original",@"Open Document",@"History",@"Compare with Latest",@"Compare with Previous",
-        @"Locate Original…",@"Save a Copy…",@"Keep / Unkeep",@"Exclude / Include",@"Delete Selected Copies…"];
+        @"Locate Original…",@"Save a Copy…",@"Keep this version",@"Pause saving new versions",@"Delete Selected Copies…"];
     NSArray* actions = @[@"openOriginal:",@"preview:",@"history:",@"compareCurrent:",@"comparePrevious:",@"locate:",
         @"exportCopy:",@"keep:",@"exclude:",@"deleteSelected:"];
     for (NSUInteger i=0;i<titles.count;i++) [self.selectionButtons addObject:SPDFCollectionButton(titles[i],self,NSSelectorFromString(actions[i]),@"normal")];
@@ -133,10 +131,10 @@ static void Fill(NSView* child, NSView* parent) {
     (void)sender;
     if (self.returnHandler) self.returnHandler(); else [self.window orderBack:nil];
 }
-- (void)showViewOptions:(NSControl*)sender {
+- (NSMenu*)collectionViewOptionsMenu {
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Collection view options"];
-    NSArray* pickers = @[self.viewPicker,self.layoutPicker,self.sortPicker];
-    NSArray* headings = @[@"Show",@"Layout",@"Sort"];
+    NSArray* pickers = @[self.viewPicker,self.sortPicker];
+    NSArray* headings = @[@"Show",@"Sort"];
     for (NSUInteger group=0;group<pickers.count;group++) {
         NSMenuItem* heading = [[NSMenuItem alloc] initWithTitle:headings[group] action:nil keyEquivalent:@""];
         NSMenu* submenu = [[NSMenu alloc] initWithTitle:headings[group]];
@@ -150,11 +148,14 @@ static void Fill(NSView* child, NSView* parent) {
         }
         heading.submenu = submenu; [menu addItem:heading];
     }
-    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,NSHeight(sender.bounds)) inView:sender];
+    return menu;
+}
+- (void)showViewOptions:(NSControl*)sender {
+    [[self collectionViewOptionsMenu] popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,NSHeight(sender.bounds)) inView:sender];
 }
 - (void)changeViewOption:(NSMenuItem*)sender {
     NSArray* value = sender.representedObject;
-    NSPopUpButton* picker = @[self.viewPicker,self.layoutPicker,self.sortPicker][[value[0] unsignedIntegerValue]];
+    NSPopUpButton* picker = @[self.viewPicker,self.sortPicker][[value[0] unsignedIntegerValue]];
     [picker selectItemAtIndex:[value[1] integerValue]]; [self reload:picker];
 }
 - (void)navigate:(id)sender {
@@ -171,7 +172,7 @@ static void Fill(NSView* child, NSView* parent) {
 }
 - (void)persistManagerPreferences {
     NSDictionary* preferences = @{@"managerView":@(self.viewPicker.selectedItem.tag),
-        @"managerLayout":@(self.layoutPicker.indexOfSelectedItem),@"managerSort":@(self.sortPicker.indexOfSelectedItem),
+        @"managerSort":@(self.sortPicker.indexOfSelectedItem),
         @"managerDestination":self.destination ?: @"Documents", @"managerQuery":self.search.stringValue,
         @"managerSearchScope":@0, @"managerBrowseState":[self captureBrowseState]};
     dispatch_async(self.preferenceQueue, ^{

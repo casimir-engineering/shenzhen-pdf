@@ -1,3 +1,4 @@
+#import "SPDFMacCollectionRetention.h"
 #import "SPDFMacCollectionSavePanel.h"
 #import "SPDFMacCollectionAvailability.h"
 #import "SPDFMacCollectionStyle.h"
@@ -105,23 +106,25 @@
 }
 - (void)keep:(id)sender {
     (void)sender; NSArray* rows = [self selectedRowsSnapshot];
+    BOOL keep = !SPDFCollectionSelectionIsKept(rows);
     [self performMutation:^(NSError** error) {
         for (NSDictionary* row in rows) {
             NSDictionary* doc = row[@"document"], *version = row[@"version"];
-            if (version[@"id"] && ![self.store setKeep:![version[@"keep"] boolValue]
+            if (version[@"id"] && ![self.store setKeep:keep
                 versionID:version[@"id"] documentID:doc[@"id"] error:error]) break;
         }
     }];
 }
 - (void)exclude:(id)sender {
     (void)sender; NSArray* rows = [self selectedRowsSnapshot];
+    BOOL pause = !SPDFCollectionSelectionIsPaused(rows);
     [self performMutation:^(NSError** error) {
         NSMutableSet* changed = [NSMutableSet set];
         for (NSDictionary* row in rows) {
             NSDictionary* doc = row[@"document"];
             if ([changed containsObject:doc[@"id"]]) continue;
             [changed addObject:doc[@"id"]];
-            if (![self.store setExcluded:![doc[@"excluded"] boolValue] documentID:doc[@"id"] error:error]) break;
+            if (![self.store setExcluded:pause documentID:doc[@"id"] error:error]) break;
         }
     }];
 }
@@ -131,7 +134,7 @@
     BOOL versionsOnly = [self.destination isEqual:@"History"];
     NSAlert* alert = [[NSAlert alloc] init];
     alert.messageText = versionsOnly ? @"Delete selected versions permanently?" : @"Delete all history for selected documents?";
-    alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept. Exclude separately to prevent future capture.",
+    alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept. Use Pause Saving New Versions separately to stop future copies.",
         rows.count,versionsOnly ? @"versions" : @"document histories"];
     [alert addButtonWithTitle:@"Cancel"]; [alert addButtonWithTitle:@"Delete Copies"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {

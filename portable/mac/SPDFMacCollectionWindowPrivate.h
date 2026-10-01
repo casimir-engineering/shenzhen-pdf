@@ -15,13 +15,10 @@
 @property(nonatomic, copy) NSString* destination;
 @property(nonatomic) NSMutableSet<NSString*>* expandedResults;
 @property(nonatomic) NSPopUpButton* viewPicker;
-@property(nonatomic) NSPopUpButton* layoutPicker;
 @property(nonatomic) NSPopUpButton* sortPicker;
 @property(nonatomic) NSSearchField* search;
 @property(nonatomic) NSTableView* table;
 @property(nonatomic) NSScrollView* listScroll;
-@property(nonatomic) NSScrollView* gridScroll;
-@property(nonatomic) NSCollectionView* grid;
 @property(nonatomic) NSCache<NSString*, NSImage*>* thumbnailCache;
 @property(nonatomic) NSOperationQueue* thumbnailQueue;
 @property(nonatomic) NSMutableSet<NSString*>* pendingThumbnails;
@@ -46,6 +43,7 @@
 @property(nonatomic) BOOL mutationPending;
 @property(nonatomic) NSMutableArray<NSButton*>* selectionButtons;
 - (void)buildManagerLayout;
+- (NSMenu*)collectionViewOptionsMenu;
 - (void)returnToReader:(id)sender;
 - (void)buildSettingsPane;
 - (void)updateStoragePolicy;
@@ -67,6 +65,7 @@
 - (void)showError:(NSError*)error;
 @end
 @interface SPDFMacCollectionWindow (Actions)
+- (NSArray<NSDictionary*>*)selectedRowsSnapshot;
 - (void)openOriginal:(id)sender;
 - (void)preview:(id)sender;
 - (void)selectSearchMatch:(NSControl*)sender;
@@ -83,9 +82,7 @@
 - (void)changeLocation:(id)sender;
 - (void)openLocation:(id)sender;
 @end
-@interface SPDFMacCollectionWindow (Grid)
-- (void)installGridInView:(NSView*)host;
+@interface SPDFMacCollectionWindow (Thumbnails)
+- (void)initializeThumbnails;
 - (void)requestThumbnail:(NSDictionary*)row key:(NSString*)key;
-- (void)reloadGrid;
-- (void)synchronizeGridSelection;
 @end

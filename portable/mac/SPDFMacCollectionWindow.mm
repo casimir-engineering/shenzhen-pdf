@@ -1,3 +1,4 @@
+#import "SPDFMacCollectionRetention.h"
 #import "SPDFMacCollectionAvailability.h"
 #import "SPDFMacCollectionWindowPrivate.h"
 #import "SPDFMacCollectionStoreContextSearch.h"
@@ -102,7 +103,6 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
             self.documents = docs; self.rows = rows; self.resultQuery = query; self.hasLoadedResults = YES;
             self.table.rowHeight = 100;
             [self.table reloadData];
-            [self reloadGrid];
             [self restoreBrowseSelectionAndScroll:browseState];
             self.reloadingResults = NO;
             self.resultSummary.stringValue = query.length ? @"No matching documents." : @"Documents you open will appear here when Collection is enabled.";
@@ -114,7 +114,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
                 self.documentID = nil;
                 for (NSUInteger index=0;index<rows.count;index++) if ([rows[index][@"document"][@"id"] isEqual:selectedID]) {
                     [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
-                    [self.table scrollRowToVisible:index]; [self synchronizeGridSelection]; break;
+                    [self.table scrollRowToVisible:index]; break;
                 }
                 self.restoreHistoryVersionID = nil;
             }
@@ -130,7 +130,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
     (void)tableView; (void)column; return [self resultCellForRow:row];
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)notification {
-    (void)notification; [self synchronizeGridSelection]; [self updateDetails];
+    (void)notification; [self updateDetails];
     if (!self.reloadingResults && self.hasLoadedResults) [self persistManagerPreferences];
 }
 - (NSDictionary*)selectedDocument {
@@ -156,7 +156,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         date(version[@"capturedAt"]),date(version[@"modifiedAt"]),
         [NSByteCountFormatter stringFromByteCount:[version[@"size"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile],
         [version[@"keep"] boolValue] ? @"Kept version" : version[@"id"] ? @"Read-only archive" : @"No archived version",
-        [doc[@"excluded"] boolValue] ? @"Excluded from future capture" : @"Capture allowed",
+        [doc[@"excluded"] boolValue] ? @"Saving new versions is paused" : @"Saving new versions is enabled",
         [version[@"encrypted"] boolValue] ? @"\nEncrypted · no text index" : @"",
         warnings.length ? [@"\nAssets incomplete:\n" stringByAppendingString:warnings] : @""]
         : (_rows.count ? @"Select a document or version." : @"No documents in this view.");
@@ -165,8 +165,19 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
     BOOL sourceAvailable = SPDFCollectionOriginalAvailable(doc);
     NSArray* versions = doc ? doc[@"versions"] ?: @[] : @[];
     BOOL previous = versions.count > 1 && ![versions.firstObject[@"id"] isEqual:version[@"id"]];
+    NSArray* selectedRows = [self selectedRowsSnapshot];
     for (NSButton* button in _selectionButtons) {
         NSString* action = NSStringFromSelector(button.action);
+        if ([action isEqual:@"keep:"]) {
+            BOOL kept = SPDFCollectionSelectionIsKept(selectedRows);
+            button.title = selectedRows.count > 1 ? (kept ? @"Stop keeping selected versions" : @"Keep selected versions")
+                : (kept ? @"Stop keeping this version" : @"Keep this version");
+            button.toolTip = @"Keeping any version protects this document’s entire history from automatic storage cleanup. "
+                @"Removing all Keep marks allows cleanup; it does not delete anything immediately. Manual deletion is still available.";
+        } else if ([action isEqual:@"exclude:"]) {
+            button.title = SPDFCollectionSelectionIsPaused(selectedRows) ? @"Resume saving new versions" : @"Pause saving new versions";
+            button.toolTip = @"Controls future Collection copies for this document. Existing saved versions and the original file stay unchanged.";
+        }
         BOOL bulk = [@[@"keep:",@"exclude:",@"deleteSelected:"] containsObject:action];
         button.enabled = doc && (single || bulk) && !_mutationPending;
         if ([@[@"preview:",@"exportCopy:",@"keep:",@"compareCurrent:",@"comparePrevious:"] containsObject:action])

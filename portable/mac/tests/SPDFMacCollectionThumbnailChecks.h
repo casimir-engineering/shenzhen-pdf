@@ -37,7 +37,7 @@ static void CheckCollectionThumbnails(void) {
     [fm removeItemAtPath:directory error:nil];
 }
 
-// Run inside the native Collection window suite to exercise the actual grid gate
+// Run inside the native Collection window suite to exercise the actual list cell
 // and asynchronous rendering, not just PDFKit's thumbnail implementation.
 static void CheckCollectionThumbnailRequests(SPDFMacCollectionWindow* manager) {
     NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
@@ -45,7 +45,6 @@ static void CheckCollectionThumbnailRequests(SPDFMacCollectionWindow* manager) {
     [fm createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     SPDFMacCollectionStore* originalStore = manager.store;
     NSArray* originalRows = manager.rows;
-    NSInteger originalLayout = manager.layoutPicker.indexOfSelectedItem;
     SPDFMacCollectionStore* store = [[SPDFMacCollectionStore alloc] initWithRootURL:
         [NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"Collection"]]];
     [store updateSettings:@{@"choice":@"enabled"} error:nil];
@@ -57,20 +56,15 @@ static void CheckCollectionThumbnailRequests(SPDFMacCollectionWindow* manager) {
     Expect(@"Collection fixture records encryption metadata",[version[@"encrypted"] boolValue]);
     manager.store = store; manager.rows = @[@{@"document":document,@"version":version}];
     [manager.table reloadData];
-    [manager.layoutPicker selectItemAtIndex:1];
-    [manager reloadGrid];
-    id<NSCollectionViewDataSource> source = manager.grid.dataSource;
-    [source collectionView:manager.grid itemForRepresentedObjectAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
-    NSString* key = [NSString stringWithFormat:@"%@/%@",document[@"id"],version[@"id"]];
-    Expect(@"encrypted grid document requests its thumbnail",[manager.pendingThumbnails containsObject:key]);
+    (void)[manager resultCellForRow:0];
+    NSString* key = [NSString stringWithFormat:@"%@/%@/0",document[@"id"],version[@"id"]];
+    Expect(@"encrypted list document requests its thumbnail",[manager.pendingThumbnails containsObject:key]);
     [manager.thumbnailQueue waitUntilAllOperationsAreFinished];
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:1];
     while ([manager.pendingThumbnails containsObject:key] && deadline.timeIntervalSinceNow > 0)
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
-    Expect(@"encrypted grid thumbnail resolves to page pixels",[manager.thumbnailCache objectForKey:key]!=nil);
+    Expect(@"encrypted list thumbnail resolves to page pixels",[manager.thumbnailCache objectForKey:key]!=nil);
     manager.store = originalStore; manager.rows = originalRows;
     [manager.table reloadData];
-    [manager.layoutPicker selectItemAtIndex:originalLayout];
-    [manager reloadGrid];
     [fm removeItemAtPath:directory error:nil];
 }
