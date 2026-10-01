@@ -46,6 +46,7 @@
 @property(nonatomic) BOOL mutationPending;
 @property(nonatomic) NSMutableArray<NSButton*>* selectionButtons;
 - (void)buildManagerLayout;
+- (void)returnToReader:(id)sender;
 - (void)buildSettingsPane;
 - (void)updateStoragePolicy;
 - (void)showDocumentMenu:(NSControl*)sender;

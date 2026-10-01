@@ -27,13 +27,14 @@ static NSString* DateLabel(NSDictionary* version) {
     NSDictionary* row = self.rows[(NSUInteger)index];
     NSUInteger count = [row[@"matches"] count];
     NSUInteger visible = [self.expandedResults containsObject:RowKey(row)] ? count : MIN(3,count);
-    return 78 + MAX(110,visible*68) + (count>3 ? 30 : 0) + ([row[@"truncated"] boolValue] ? 36 : 0);
+    return 28 + MAX(88,74 + visible*60) + (count>3 ? 30 : 0) + ([row[@"truncated"] boolValue] ? 36 : 0);
 }
 - (NSView*)resultCellForRow:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)self.rows.count) return [NSView new];
     NSDictionary* row = self.rows[(NSUInteger)index], *doc = row[@"document"], *version = row[@"version"];
-    NSView* cell = [NSView new];
-    NSTextField* title = SPDFCollectionText(version[@"filename"] ?: doc[@"title"] ?: @"Document",13,NSFontWeightSemibold,NO);
+    NSView* cell = [NSView new]; cell.identifier = @"CollectionDocumentRow";
+    NSTextField* title = SPDFCollectionText(version[@"filename"] ?: doc[@"title"] ?: @"Document",12,NSFontWeightSemibold,NO);
+    title.identifier = @"CollectionResultTitle";
     title.lineBreakMode = NSLineBreakByTruncatingMiddle; title.maximumNumberOfLines = 1; title.toolTip = doc[@"path"];
     title.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:title];
     NSButton* history = SPDFCollectionButton(@"History",self,@selector(historyForRow:),@"normal"); history.tag = index;
@@ -42,8 +43,10 @@ static NSString* DateLabel(NSDictionary* version) {
     NSButton* more = SPDFCollectionButton(@"…",self,@selector(showDocumentMenu:),@"quiet"); more.tag = index;
     more.accessibilityLabel = [@"More actions for " stringByAppendingString:doc[@"title"] ?: @"document"];
     more.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:more];
-    NSTextField* metadata = SPDFCollectionText([NSString stringWithFormat:@"%@%@",DateLabel(version),
-        [version[@"keep"] boolValue] ? @" · Kept" : @""],12,NSFontWeightRegular,YES);
+    NSTextField* metadata = SPDFCollectionText([NSString stringWithFormat:@"%@ · %@%@",
+        SPDFCollectionOriginalAvailable(doc) ? @"Original available" : @"Original unavailable", DateLabel(version),
+        [version[@"keep"] boolValue] ? @" · Kept" : @""],11,NSFontWeightRegular,YES);
+    metadata.maximumNumberOfLines = 1; metadata.lineBreakMode = NSLineBreakByTruncatingMiddle;
     NSStackView* meta = [NSStackView stackViewWithViews:@[metadata]]; meta.spacing = 8;
     meta.alignment = NSLayoutAttributeCenterY;
     meta.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:meta];
@@ -61,7 +64,7 @@ static NSString* DateLabel(NSDictionary* version) {
         [self requestThumbnail:thumbnailRow key:key];
     }
     NSStackView* text = [NSStackView stackViewWithViews:@[]]; text.translatesAutoresizingMaskIntoConstraints = NO;
-    text.orientation = NSUserInterfaceLayoutOrientationVertical; text.alignment = NSLayoutAttributeLeading; text.spacing = 8;
+    text.orientation = NSUserInterfaceLayoutOrientationVertical; text.alignment = NSLayoutAttributeLeading; text.spacing = 6;
     [cell addSubview:text];
     NSArray* matches = row[@"matches"] ?: @[];
     NSUInteger visible = [self.expandedResults containsObject:RowKey(row)] ? matches.count : MIN(3,matches.count);
@@ -69,32 +72,32 @@ static NSString* DateLabel(NSDictionary* version) {
         NSDictionary* match = matches[i]; NSString* snippet = match[@"snippet"] ?: @"";
         NSString* prefix = [match[@"page"] integerValue]>0 ? [NSString stringWithFormat:@"p. %@\t",match[@"page"]] : @"Text\t";
         NSMutableAttributedString* caption = [[NSMutableAttributedString alloc] initWithString:[prefix stringByAppendingString:snippet]
-            attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13],NSForegroundColorAttributeName:SPDFCollectionColor(@"text")}];
-        [caption addAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12],NSForegroundColorAttributeName:SPDFCollectionColor(@"secondary")}
+            attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12],NSForegroundColorAttributeName:SPDFCollectionColor(@"text")}];
+        [caption addAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],NSForegroundColorAttributeName:SPDFCollectionColor(@"secondary")}
             range:NSMakeRange(0,prefix.length)];
         for (NSValue* value in match[@"ranges"]) {
             NSRange range = value.rangeValue; range.location += prefix.length;
             if (NSMaxRange(range)<=caption.length) [caption addAttributes:@{NSBackgroundColorAttributeName:SPDFCollectionColor(@"highlight"),
-                NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]} range:range];
+                NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold]} range:range];
         }
         NSButton* hit = SPDFCollectionButton(@"",self,@selector(selectSearchMatch:),@"match");
         hit.alignment = NSTextAlignmentLeft; hit.attributedTitle = caption; hit.cell.wraps = YES;
         hit.cell.lineBreakMode = NSLineBreakByWordWrapping; hit.tag = index; hit.identifier = [NSString stringWithFormat:@"%lu",(unsigned long)i];
         hit.toolTip = [prefix stringByAppendingString:snippet];
         hit.state = row[@"selectedMatchIndex"] && [row[@"selectedMatchIndex"] unsignedIntegerValue]==i ? NSControlStateValueOn : NSControlStateValueOff;
-        [hit.heightAnchor constraintEqualToConstant:60].active = YES; [text addArrangedSubview:hit];
+        [hit.heightAnchor constraintEqualToConstant:54].active = YES; [text addArrangedSubview:hit];
         [hit.widthAnchor constraintEqualToAnchor:text.widthAnchor].active = YES;
         [hit setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     }
-    if (!matches.count) {
-        NSString* status = self.search.stringValue.length ? ([row[@"textAvailable"] boolValue] ?
-            @"Title match · no matching saved text" : @"Title match · saved text is not indexed") :
-            (SPDFCollectionOriginalAvailable(doc) ? @"Original available. Saved copies are read-only." : @"Original unavailable. Saved copies are read-only.");
-        NSTextField* label = SPDFCollectionText(status,12,NSFontWeightRegular,YES); [text addArrangedSubview:label];
-        BOOL live = SPDFCollectionVersionIsLatest(doc,version) && SPDFCollectionOriginalAvailable(doc);
-        NSButton* preview = SPDFCollectionButton(live ? @"Open document" : @"Open saved copy",self,@selector(previewForRow:),@"normal");
-        preview.tag = index; preview.enabled = [version[@"id"] length]>0; [text addArrangedSubview:preview];
+    if (!matches.count && self.search.stringValue.length) {
+        NSString* status = [row[@"textAvailable"] boolValue] ? @"Title match · no matching saved text" : @"Title match · saved text is not indexed";
+        [text addArrangedSubview:SPDFCollectionText(status,11,NSFontWeightRegular,YES)];
     }
+    BOOL live = SPDFCollectionVersionIsLatest(doc,version) && SPDFCollectionOriginalAvailable(doc);
+    NSButton* preview = SPDFCollectionButton(live ? @"Open document" : @"Open saved copy",self,@selector(previewForRow:),@"normal");
+    preview.tag = index; preview.enabled = [version[@"id"] length]>0;
+    NSStackView* actions = [NSStackView stackViewWithViews:@[preview,history]]; actions.spacing = 6;
+    actions.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:actions];
     if (matches.count>3) {
         BOOL expanded = [self.expandedResults containsObject:RowKey(row)];
         NSButton* expand = SPDFCollectionButton(expanded ? @"Show fewer matches" :
@@ -106,17 +109,21 @@ static NSString* DateLabel(NSDictionary* version) {
         row[@"matchCount"] ?: @(matches.count)],12,NSFontWeightRegular,YES)];
     NSView* divider = SPDFCollectionDivider(); divider.translatesAutoresizingMaskIntoConstraints = NO; [cell addSubview:divider];
     [NSLayoutConstraint activateConstraints:@[
-        [title.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:20],[title.topAnchor constraintEqualToAnchor:cell.topAnchor constant:13],
-        [title.trailingAnchor constraintLessThanOrEqualToAnchor:history.leadingAnchor constant:-12],
-        [history.trailingAnchor constraintEqualToAnchor:more.leadingAnchor constant:-6],[history.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [more.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-20],[more.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [meta.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[meta.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
-        [meta.trailingAnchor constraintLessThanOrEqualToAnchor:cell.trailingAnchor constant:-20],
-        [image.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[image.topAnchor constraintEqualToAnchor:meta.bottomAnchor constant:10],
-        [image.widthAnchor constraintEqualToConstant:84],[image.heightAnchor constraintEqualToConstant:110],
-        [text.leadingAnchor constraintEqualToAnchor:image.trailingAnchor constant:16],[text.topAnchor constraintEqualToAnchor:image.topAnchor],
-        [text.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-20],
-        [divider.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[divider.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-20],
+        [image.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:14],
+        [image.topAnchor constraintEqualToAnchor:cell.topAnchor constant:14],
+        [image.widthAnchor constraintEqualToConstant:65],[image.heightAnchor constraintEqualToConstant:88],
+        [title.leadingAnchor constraintEqualToAnchor:image.trailingAnchor constant:14],
+        [title.topAnchor constraintEqualToAnchor:image.topAnchor],
+        [title.trailingAnchor constraintLessThanOrEqualToAnchor:more.leadingAnchor constant:-8],
+        [more.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14],
+        [more.topAnchor constraintEqualToAnchor:cell.topAnchor constant:8], [more.widthAnchor constraintEqualToConstant:26],
+        [meta.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[meta.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:5],
+        [meta.trailingAnchor constraintLessThanOrEqualToAnchor:cell.trailingAnchor constant:-14],
+        [text.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[text.topAnchor constraintEqualToAnchor:meta.bottomAnchor constant:5],
+        [text.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14],
+        [actions.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+        [actions.topAnchor constraintEqualToAnchor:text.bottomAnchor constant:6],
+        [divider.leadingAnchor constraintEqualToAnchor:image.leadingAnchor],[divider.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14],
         [divider.bottomAnchor constraintEqualToAnchor:cell.bottomAnchor constant:-1]]];
     return cell;
 }

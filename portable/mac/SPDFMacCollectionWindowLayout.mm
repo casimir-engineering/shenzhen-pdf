@@ -25,18 +25,41 @@ static void Fill(NSView* child, NSView* parent) {
     NSDictionary* preferences = self.store.settings;
     self.window.backgroundColor = SPDFCollectionColor(@"window");
     NSView* root = SPDFCollectionSurface(@"window"); Fill(root,self.window.contentView);
+    NSView* header = SPDFCollectionSurface(@"window"); header.translatesAutoresizingMaskIntoConstraints = NO;
+    header.identifier = @"CollectionHeader"; [root addSubview:header];
+    NSImageView* library = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"books.vertical" accessibilityDescription:nil]];
+    library.translatesAutoresizingMaskIntoConstraints = NO; [header addSubview:library];
+    NSTextField* heading = SPDFCollectionText(@"Collection",13,NSFontWeightSemibold,NO);
+    heading.translatesAutoresizingMaskIntoConstraints = NO; [header addSubview:heading];
+    NSButton* back = SPDFCollectionButton(@"Return to reader",self,@selector(returnToReader:),@"quiet");
+    back.image = [NSImage imageWithSystemSymbolName:@"arrow.uturn.backward" accessibilityDescription:nil];
+    back.translatesAutoresizingMaskIntoConstraints = NO; [header addSubview:back];
+    NSButton* options = SPDFCollectionButton(@"",self,@selector(showViewOptions:),@"quiet");
+    options.image = [NSImage imageWithSystemSymbolName:@"slider.horizontal.3" accessibilityDescription:nil];
+    options.toolTip = @"Collection view options"; options.accessibilityLabel = options.toolTip;
+    options.translatesAutoresizingMaskIntoConstraints = NO; [header addSubview:options];
+    NSView* headerLine = SPDFCollectionDivider(); headerLine.translatesAutoresizingMaskIntoConstraints = NO; [header addSubview:headerLine];
+    [NSLayoutConstraint activateConstraints:@[
+        [header.leadingAnchor constraintEqualToAnchor:root.leadingAnchor], [header.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [header.topAnchor constraintEqualToAnchor:root.topAnchor], [header.heightAnchor constraintEqualToConstant:48],
+        [library.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:78], [library.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [library.widthAnchor constraintEqualToConstant:16], [library.heightAnchor constraintEqualToConstant:16],
+        [heading.leadingAnchor constraintEqualToAnchor:library.trailingAnchor constant:8], [heading.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [back.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-14], [back.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [options.trailingAnchor constraintEqualToAnchor:back.leadingAnchor constant:-8], [options.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [options.widthAnchor constraintEqualToConstant:30],
+        [headerLine.leadingAnchor constraintEqualToAnchor:header.leadingAnchor], [headerLine.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
+        [headerLine.bottomAnchor constraintEqualToAnchor:header.bottomAnchor]]];
     NSView* sidebar = SPDFCollectionSurface(@"sidebar"); sidebar.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:sidebar];
     [NSLayoutConstraint activateConstraints:@[[sidebar.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
-        [sidebar.topAnchor constraintEqualToAnchor:root.topAnchor],[sidebar.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],
-        [sidebar.widthAnchor constraintEqualToConstant:154]]];
+        [sidebar.topAnchor constraintEqualToAnchor:header.bottomAnchor],[sidebar.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],
+        [sidebar.widthAnchor constraintEqualToConstant:125]]];
     NSStackView* navigation = Stack(NO); navigation.spacing = 4; navigation.translatesAutoresizingMaskIntoConstraints = NO;
     [sidebar addSubview:navigation];
-    [NSLayoutConstraint activateConstraints:@[[navigation.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:9],
-        [navigation.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-9],
-        [navigation.topAnchor constraintEqualToAnchor:sidebar.topAnchor constant:17]]];
-    NSTextField* caption = SPDFCollectionText(@"Collection",12,NSFontWeightSemibold,YES);
-    [navigation addArrangedSubview:caption]; [navigation setCustomSpacing:10 afterView:caption];
+    [NSLayoutConstraint activateConstraints:@[[navigation.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:8],
+        [navigation.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-8],
+        [navigation.topAnchor constraintEqualToAnchor:sidebar.topAnchor constant:10]]];
     self.documentsButton = SPDFCollectionButton(@"Documents",self,@selector(navigate:),@"nav");
     self.settingsButton = SPDFCollectionButton(@"Settings",self,@selector(navigate:),@"nav");
     self.documentsButton.image = [NSImage imageWithSystemSymbolName:@"doc.on.doc" accessibilityDescription:nil];
@@ -45,29 +68,24 @@ static void Fill(NSView* child, NSView* parent) {
     for (NSButton* button in @[self.documentsButton,self.settingsButton]) {
         button.buttonType = NSButtonTypePushOnPushOff; [navigation addArrangedSubview:button];
         [button.widthAnchor constraintEqualToAnchor:navigation.widthAnchor].active = YES;
-        [button.heightAnchor constraintEqualToConstant:32].active = YES;
+        [button.heightAnchor constraintEqualToConstant:30].active = YES;
     }
-    [navigation setCustomSpacing:13 afterView:self.documentsButton];
-    NSTextField* note = SPDFCollectionText(@"Local copies and history.\nYour originals stay where they are.",12,NSFontWeightRegular,YES);
-    [navigation addArrangedSubview:note]; [navigation setCustomSpacing:20 afterView:self.settingsButton];
-    [note.widthAnchor constraintEqualToAnchor:navigation.widthAnchor constant:-10].active = YES;
     NSView* sidebarLine = SPDFCollectionSurface(@"line"); sidebarLine.translatesAutoresizingMaskIntoConstraints = NO;
     [sidebar addSubview:sidebarLine]; [NSLayoutConstraint activateConstraints:@[
         [sidebarLine.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor], [sidebarLine.topAnchor constraintEqualToAnchor:sidebar.topAnchor],
         [sidebarLine.bottomAnchor constraintEqualToAnchor:sidebar.bottomAnchor],[sidebarLine.widthAnchor constraintEqualToConstant:1]]];
     self.contentHost = [NSView new]; self.contentHost.translatesAutoresizingMaskIntoConstraints = NO; [root addSubview:self.contentHost];
     [NSLayoutConstraint activateConstraints:@[[self.contentHost.leadingAnchor constraintEqualToAnchor:sidebar.trailingAnchor],
-        [self.contentHost.trailingAnchor constraintEqualToAnchor:root.trailingAnchor], [self.contentHost.topAnchor constraintEqualToAnchor:root.topAnchor],
+        [self.contentHost.trailingAnchor constraintEqualToAnchor:root.trailingAnchor], [self.contentHost.topAnchor constraintEqualToAnchor:header.bottomAnchor],
         [self.contentHost.bottomAnchor constraintEqualToAnchor:root.bottomAnchor]]];
     NSStackView* documents = Stack(NO); documents.spacing = 0; self.documentsPane = documents; Fill(documents,self.contentHost);
-    NSStackView* toolbar = Stack(NO); toolbar.spacing = 10; toolbar.edgeInsets = NSEdgeInsetsMake(16,20,13,20);
+    NSStackView* toolbar = Stack(NO); toolbar.spacing = 10; toolbar.edgeInsets = NSEdgeInsetsMake(14,14,13,14);
     [documents addArrangedSubview:toolbar]; [toolbar.widthAnchor constraintEqualToAnchor:documents.widthAnchor].active = YES;
-    self.search = SPDFCollectionSearchField(); self.search.placeholderString = @"Search documents and latest saved text";
+    self.search = SPDFCollectionSearchField(); self.search.placeholderString = @"Search Collection titles and text";
     self.search.stringValue = [preferences[@"managerQuery"] isKindOfClass:NSString.class] ? preferences[@"managerQuery"] : @"";
     self.search.target = self; self.search.action = @selector(reload:); self.search.sendsSearchStringImmediately = YES;
-    [toolbar addArrangedSubview:self.search]; [self.search.widthAnchor constraintEqualToAnchor:toolbar.widthAnchor constant:-40].active = YES;
+    [toolbar addArrangedSubview:self.search]; [self.search.widthAnchor constraintEqualToAnchor:toolbar.widthAnchor constant:-28].active = YES;
     [self.search.heightAnchor constraintEqualToConstant:31].active = YES;
-    NSStackView* filters = Stack(YES); filters.spacing = 8;
     self.viewPicker = SPDFCollectionPopUp();
     [self.viewPicker addItemsWithTitles:@[@"All Documents",@"Originals Unavailable",@"Kept",@"Excluded"]];
     NSArray<NSNumber*>* filterTags = @[@0,@2,@3,@4];
@@ -76,35 +94,28 @@ static void Fill(NSView* child, NSView* parent) {
     if (![filterTags containsObject:@(restoredFilter)]) restoredFilter = 0;
     [self.viewPicker selectItemWithTag:restoredFilter];
     self.viewPicker.target = self; self.viewPicker.action = @selector(reload:);
-    [filters addArrangedSubview:SPDFCollectionText(@"Show",13,NSFontWeightRegular,NO)]; [filters addArrangedSubview:self.viewPicker];
-    [toolbar addArrangedSubview:filters];
-    [toolbar addArrangedSubview:SPDFCollectionText(@"Search each document’s latest saved text. Open History for previous versions.",12,NSFontWeightRegular,YES)];
-    NSView* divider = SPDFCollectionDivider(); [documents addArrangedSubview:divider];
-    [divider.widthAnchor constraintEqualToAnchor:documents.widthAnchor].active = YES;
-    NSStackView* resultsHead = Stack(YES); resultsHead.spacing = 8; resultsHead.edgeInsets = NSEdgeInsetsMake(8,20,7,20);
-    self.resultSummary = SPDFCollectionText(@"",12,NSFontWeightRegular,YES); [resultsHead addArrangedSubview:self.resultSummary];
-    NSView* spring = [NSView new]; [resultsHead addArrangedSubview:spring];
+    // View controls remain persisted and accessible from the compact header menu.
+    self.resultSummary = SPDFCollectionText(@"",11,NSFontWeightRegular,YES);
+    self.resultSummary.hidden = YES;
     self.layoutPicker = SPDFCollectionPopUp(); [self.layoutPicker addItemsWithTitles:@[@"List",@"Thumbnails"]];
     [self.layoutPicker selectItemAtIndex:MIN(1,MAX(0,[preferences[@"managerLayout"] integerValue]))];
     self.sortPicker = SPDFCollectionPopUp(); [self.sortPicker addItemsWithTitles:@[@"Newest first",@"Oldest first",@"Name"]];
     [self.sortPicker selectItemAtIndex:MIN(2,MAX(0,[preferences[@"managerSort"] integerValue]))];
-    for (NSPopUpButton* picker in @[self.layoutPicker,self.sortPicker]) {
-        picker.target = self; picker.action = @selector(reload:); [resultsHead addArrangedSubview:picker];
-    }
-    NSButton* more = SPDFCollectionButton(@"More",self,@selector(showDocumentMenu:),@"quiet"); more.tag = -1;
-    [resultsHead addArrangedSubview:more]; [documents addArrangedSubview:resultsHead];
-    [resultsHead.widthAnchor constraintEqualToAnchor:documents.widthAnchor].active = YES;
     self.listScroll = [NSScrollView new]; self.listScroll.hasVerticalScroller = YES; self.listScroll.borderType = NSNoBorder;
     self.listScroll.drawsBackground = NO;
-    self.table = [NSTableView new]; self.table.headerView = nil; self.table.rowHeight = 190;
+    self.table = [NSTableView new]; self.table.style = NSTableViewStylePlain;
+    self.table.columnAutoresizingStyle = NSTableViewUniformColumnAutoresizingStyle; self.table.headerView = nil; self.table.rowHeight = 116;
     self.table.backgroundColor = SPDFCollectionColor(@"window"); self.table.intercellSpacing = NSMakeSize(0,0);
     self.table.allowsMultipleSelection = YES; self.table.dataSource = self; self.table.delegate = self;
     self.table.target = self; self.table.doubleAction = @selector(preview:);
-    NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"document"]; column.width = 750;
+    NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"document"]; column.width = 650; column.resizingMask = NSTableColumnAutoresizingMask;
     [self.table addTableColumn:column]; self.listScroll.documentView = self.table;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Document actions"]; menu.delegate = (id)self; self.table.menu = menu;
     NSView* results = [NSView new]; [documents addArrangedSubview:results]; Fill(self.listScroll,results);
     [self installGridInView:results];
+    self.resultSummary.translatesAutoresizingMaskIntoConstraints = NO; [results addSubview:self.resultSummary];
+    [NSLayoutConstraint activateConstraints:@[[self.resultSummary.leadingAnchor constraintEqualToAnchor:results.leadingAnchor constant:14],
+        [self.resultSummary.topAnchor constraintEqualToAnchor:results.topAnchor constant:14]]];
     [results.widthAnchor constraintEqualToAnchor:documents.widthAnchor].active = YES;
     [results.bottomAnchor constraintEqualToAnchor:documents.bottomAnchor].active = YES;
     // Existing command availability remains shared by the accessible contextual menu.
@@ -117,6 +128,34 @@ static void Fill(NSView* child, NSView* parent) {
     for (NSUInteger i=0;i<titles.count;i++) [self.selectionButtons addObject:SPDFCollectionButton(titles[i],self,NSSelectorFromString(actions[i]),@"normal")];
     [self buildSettingsPane];
     [self showDestination:[preferences[@"managerDestination"] isEqual:@"Settings"] ? @"Settings" : @"Documents"];
+}
+- (void)returnToReader:(id)sender {
+    (void)sender;
+    if (self.returnHandler) self.returnHandler(); else [self.window orderBack:nil];
+}
+- (void)showViewOptions:(NSControl*)sender {
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Collection view options"];
+    NSArray* pickers = @[self.viewPicker,self.layoutPicker,self.sortPicker];
+    NSArray* headings = @[@"Show",@"Layout",@"Sort"];
+    for (NSUInteger group=0;group<pickers.count;group++) {
+        NSMenuItem* heading = [[NSMenuItem alloc] initWithTitle:headings[group] action:nil keyEquivalent:@""];
+        NSMenu* submenu = [[NSMenu alloc] initWithTitle:headings[group]];
+        NSPopUpButton* picker = pickers[group];
+        for (NSInteger index=0;index<picker.numberOfItems;index++) {
+            NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:[picker itemTitleAtIndex:index]
+                action:@selector(changeViewOption:) keyEquivalent:@""];
+            item.target = self; item.representedObject = @[@(group),@(index)];
+            item.state = picker.indexOfSelectedItem == index ? NSControlStateValueOn : NSControlStateValueOff;
+            [submenu addItem:item];
+        }
+        heading.submenu = submenu; [menu addItem:heading];
+    }
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,NSHeight(sender.bounds)) inView:sender];
+}
+- (void)changeViewOption:(NSMenuItem*)sender {
+    NSArray* value = sender.representedObject;
+    NSPopUpButton* picker = @[self.viewPicker,self.layoutPicker,self.sortPicker][[value[0] unsignedIntegerValue]];
+    [picker selectItemAtIndex:[value[1] integerValue]]; [self reload:picker];
 }
 - (void)navigate:(id)sender {
     [self showDestination:sender == self.settingsButton ? @"Settings" : @"Documents"];

@@ -50,6 +50,7 @@ static SPDFCollectionCompanionRuntime* activeRuntime;
             self.manager=[[SPDFMacCollectionWindow alloc] initWithStore:store open:^(NSString* path,BOOL archived) {
                 [weakSelf.pipe send:@{@"kind":@"open",@"path":path,@"archived":@(archived)}];
             }];
+            self.manager.returnHandler=^{ [weakSelf.pipe send:@{@"kind":@"activateReader"}]; };
             self.manager.navigateHandler=^(NSDictionary* document,NSDictionary* version,NSUInteger page,NSString* query,BOOL history) {
                 [weakSelf.pipe send:@{@"kind":@"navigate",@"documentID":document[@"id"] ?: @"",
                     @"versionID":version[@"id"] ?: @"",@"page":@(page),@"query":query ?: @"",@"history":@(history)}];

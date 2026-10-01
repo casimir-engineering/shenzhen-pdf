@@ -46,6 +46,8 @@
             if (document) self->_navigate(document,version,[message[@"page"] unsignedIntegerValue],
                 [message[@"query"] isKindOfClass:NSString.class] ? message[@"query"] : nil,[message[@"history"] boolValue]);
             [NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateAllWindows];
+        } else if ([kind isEqual:@"activateReader"]) {
+            [NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateAllWindows];
         } else if ([kind isEqual:@"settings"]) {
             [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:nil];
         }

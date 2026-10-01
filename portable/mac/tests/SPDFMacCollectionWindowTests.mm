@@ -55,6 +55,7 @@ static BOOL CaptionHasInk(NSCollectionViewItem* item) {
     }
     return lightest - darkest > .3;
 }
+#import "SPDFMacCollectionWorkspaceChecks.h"
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -68,9 +69,13 @@ int main(void) {
                 (void)path; (void)archived;
             }];
             Layout(manager.window,NSMakeSize(1100,690));
+            __block BOOL returnedToReader = NO;
+            manager.returnHandler = ^{ returnedToReader = YES; };
+            [manager returnToReader:nil];
+            Expect(@"Return to reader routes activation without discarding Collection",returnedToReader && manager.window.contentView != nil);
             Expect(@"manager construction starts no capture or thumbnail work",manager.thumbnailQueue.operationCount == 0 &&
                 ![NSFileManager.defaultManager fileExistsAtPath:root.path]);
-            Expect(@"document pane uses the available window width",fabs(NSWidth(manager.documentsPane.frame)-(NSWidth(manager.window.contentView.bounds)-154)) < 1);
+            Expect(@"document pane uses the available window width",fabs(NSWidth(manager.documentsPane.frame)-(NSWidth(manager.window.contentView.bounds)-125)) < 1);
             Expect(@"manager list has a readable viewport",manager.listScroll.frame.size.width > 300 &&
                 manager.listScroll.frame.size.height > 350);
             Expect(@"Collection navigation has only Documents and Settings",manager.documentsButton && manager.settingsButton &&
@@ -87,8 +92,8 @@ int main(void) {
             [manager showDestination:@"Documents"]; Layout(manager.window,NSMakeSize(1100,690));
             Expect(@"Documents removes the permanent options tower",!Label(manager.window.contentView,@"Document options") &&
                 fabs(manager.listScroll.frame.size.width-NSWidth(manager.documentsPane.bounds)) < 1);
-            Expect(@"navigation uses the mockup compact type and height",manager.documentsButton.font.pointSize == 13 &&
-                fabs(manager.documentsButton.frame.size.height-32)<1);
+            Expect(@"navigation uses the mockup compact type and height",manager.documentsButton.font.pointSize == 12 &&
+                fabs(manager.documentsButton.frame.size.height-30)<1);
             Expect(@"navigation accessibility names describe destinations instead of symbols",
                 [manager.documentsButton.accessibilityLabel isEqual:@"Documents"] && [manager.settingsButton.accessibilityLabel isEqual:@"Settings"]);
             NSSearchFieldCell* searchCell = (id)manager.search.cell;
@@ -141,6 +146,20 @@ int main(void) {
             [manager.window.contentView layoutSubtreeIfNeeded]; [manager.grid layoutSubtreeIfNeeded];
             NSIndexPath* fixturePath = [NSIndexPath indexPathForItem:0 inSection:0];
             NSCollectionViewItem* fixtureItem = [manager.grid itemAtIndexPath:fixturePath];
+            if (evidence.length) {
+                [manager.layoutPicker selectItemAtIndex:0]; [manager reloadGrid];
+                Layout(manager.window,NSMakeSize(850,590));
+                NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
+                [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:evidence atomically:YES];
+                [manager showDestination:@"Settings"]; Layout(manager.window,NSMakeSize(680,460));
+                bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
+                [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+                    writeToFile:[evidence.stringByDeletingPathExtension stringByAppendingString:@"-settings.png"] atomically:YES];
+                [manager showDestination:@"Documents"]; [manager.layoutPicker selectItemAtIndex:1]; [manager reloadGrid];
+                Layout(manager.window,NSMakeSize(940,560));
+            }
             Expect(@"thumbnail fixture creates its native item",fixtureItem != nil);
             Expect(@"thumbnail caption contains filename and capture date",
                 fixtureItem.textField.stringValue.length > 20 &&
@@ -196,6 +215,17 @@ int main(void) {
             NSArray* matches = result[@"matches"];
             Expect(@"context highlights are available",[matches.firstObject[@"ranges"] count] > 0);
             if (evidence.length) {
+                NSDate* previewDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
+                while (manager.pendingThumbnails.count && previewDeadline.timeIntervalSinceNow > 0)
+                    [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+                Layout(manager.window,NSMakeSize(850,590));
+                NSView* renderedRow = [manager.table viewAtColumn:0 row:0 makeIfNecessary:YES];
+                [renderedRow layoutSubtreeIfNeeded];
+                NSImageView* renderedPreview = (id)Descendant(renderedRow,NSImageView.class);
+                Expect(@"Collection preview and title use the approved side-by-side geometry",
+                    fabs(NSWidth(renderedPreview.frame)-65)<1 && fabs(NSHeight(renderedPreview.frame)-88)<1 &&
+                    NSMinX(Identified(renderedRow,@"CollectionResultTitle").frame) > NSMaxX(renderedPreview.frame));
+                Expect(@"Collection row fits its viewport without horizontal overflow",NSWidth(renderedRow.bounds) <= NSWidth(manager.listScroll.contentView.bounds)+1);
                 [manager.window.contentView layoutSubtreeIfNeeded];
                 NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
                 [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
@@ -344,7 +374,9 @@ int main(void) {
             historyHost = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,280,620)
                 styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
             historyHost.releasedWhenClosed = NO;
+            history.showsDocumentTitle = NO;
             historyHost.contentViewController = history;
+            Expect(@"integrated History suppresses the duplicate document filename",Identified(history.view,@"HistoryDocumentTitle").hidden);
             Layout(historyHost,NSMakeSize(280,620));
             NSScrollView* list = (id)Descendant(history.view,NSScrollView.class);
             Expect(@"history rows fit the sidebar",list.frame.size.width > 200 && list.frame.size.height > 80);
@@ -391,6 +423,7 @@ int main(void) {
                 Expect(@"uncaptured entries remain visible",reachedUndated);
             }
         }
+        CheckCollectionPDFWorkspace(manager,store);
         dispatch_sync(manager.preferenceQueue,^{});
         [manager.window close]; [historyHost close]; [comparison.window close];
         NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:.15];
