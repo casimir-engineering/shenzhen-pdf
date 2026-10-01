@@ -83,3 +83,6 @@ Compact windows temporarily show one side panel when both would leave less than 
 
 
 The final performance follow-up makes repeated panel-policy evaluation a no-op for raw layout/render setters. A 1,000-request counter test verifies this, and the complete production-window probe passed again after the optimization (`/tmp/sz-workspace-validated.log`). Source-size ratcheting also passed; the main coordinator is reduced from15,730 to15,559 lines through the focused sidebar extraction.
+
+
+Final packaging: `make -C portable mac-app` exited0 and rebuilt `dist/ShenzhenPDF.app` plus its Collection helper. `codesign --verify --deep --strict dist/ShenzhenPDF.app` exited0. The reader executable is newer than every native source/header,42,828,944 bytes. Bundle metadata remains26.9.23/build1 for this local development build. It has not been published or launched.
