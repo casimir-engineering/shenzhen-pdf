@@ -75,7 +75,7 @@ static char kSPDFMacMarkdownDelegateStateKey;
 }
 
 - (BOOL)isMarkdownActive {
-    return self.markdownState.activeSession != nil && spdf_mac_path_is_markdown(_path);
+    return self.markdownState.activeSession != nil && SPDFIsRenderedTextDocumentPath(_path);
 }
 
 - (BOOL)hasActiveDocument {
@@ -95,10 +95,8 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     return MAX((CGFloat)0.5, MIN((CGFloat)3.0, scale));
 }
 
-// The Markdown text-size pill and the reading-theme toggle are the
-// markdown-exclusive toolbar views: hidden for PDF tabs, visible (and clamped
-// at the limits) for the active Markdown tab. Segment tooltips carry the
-// current percentage.
+// Text-size controls apply to every document using the text renderer, including
+// Markdown and source files. Segment tooltips carry the current percentage.
 - (void)updateMarkdownFontControls {
     BOOL markdownActive = [self isMarkdownActive];
     _markdownFontSizeSegments.hidden = !markdownActive;
@@ -107,9 +105,9 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     double percent = round(_markdownFontScale * 100.0);
     [_markdownFontSizeSegments setEnabled:_markdownFontScale > 0.5 forSegment:0];
     [_markdownFontSizeSegments setEnabled:_markdownFontScale < 3.0 forSegment:1];
-    [_markdownFontSizeSegments setToolTip:[NSString stringWithFormat:@"Decrease Markdown Text Size (%.0f%%)", percent]
+    [_markdownFontSizeSegments setToolTip:[NSString stringWithFormat:@"Decrease Text Size (%.0f%%)", percent]
                                forSegment:0];
-    [_markdownFontSizeSegments setToolTip:[NSString stringWithFormat:@"Increase Markdown Text Size (%.0f%%)", percent]
+    [_markdownFontSizeSegments setToolTip:[NSString stringWithFormat:@"Increase Text Size (%.0f%%)", percent]
                                forSegment:1];
 }
 

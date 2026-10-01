@@ -2536,12 +2536,12 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                                enabled:[_findSegments isEnabledForSegment:1]];
     }
     if ([hiddenViews containsObject:_markdownFontSizeSegments]) {
-        [self addOverflowItemWithTitle:@"Decrease Markdown Text Size"
+        [self addOverflowItemWithTitle:@"Decrease Text Size"
                                 action:@selector(decreaseMarkdownFontSize:)
                                   menu:menu
                                  state:NSControlStateValueOff
                                enabled:[_markdownFontSizeSegments isEnabledForSegment:0]];
-        [self addOverflowItemWithTitle:@"Increase Markdown Text Size"
+        [self addOverflowItemWithTitle:@"Increase Text Size"
                                 action:@selector(increaseMarkdownFontSize:)
                                   menu:menu
                                  state:NSControlStateValueOff
@@ -2692,7 +2692,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _markdownFontSizeSegments = spdf_paired_toolbar_segments(self, @selector(markdownFontSizeSegmentsClicked:),
                                                              spdf_markdown_font_size_toolbar_image(NO),
                                                              spdf_markdown_font_size_toolbar_image(YES));
-    _markdownFontSizeSegments.hidden = YES; // markdown-only; updateMarkdownFontControls reveals it
+    _markdownFontSizeSegments.hidden = YES; // text-renderer only; updateMarkdownFontControls reveals it
     [self buildReadingThemeToolbarButton]; // reading-theme toggle, right of the pill
     [self updateMarkdownFontControls];
 
@@ -7118,7 +7118,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         SPDFDocumentTab* tab = _tabs[(NSUInteger)i];
         NSString* path = [tab.path copy];
         if (!path.length) continue;
-        if (spdf_mac_path_is_markdown(path)) continue;
+        if (SPDFIsRenderedTextDocumentPath(path)) continue;
         NSString* standardized = [path.stringByStandardizingPath copy];
         if ([_preloadingPaths containsObject:standardized]) continue;
 
@@ -8464,7 +8464,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self deactivateActiveMarkdownView];
     [self closeActiveDocumentIfUnowned];
 
-    if (spdf_mac_path_is_markdown(path)) {
+    if (SPDFIsRenderedTextDocumentPath(path)) {
         [self loadSelectedMarkdownTab:tab];
         return;
     }

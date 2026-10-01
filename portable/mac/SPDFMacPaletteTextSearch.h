@@ -1,3 +1,4 @@
+#import "markdown/SPDFTextDocumentFormats.h"
 #import "SPDFMacSearchFileCache.h"
 #import "SPDFMacCollectionPaletteModel.h"
 #import "markdown/SPDFMarkdownDocument.h"
@@ -33,10 +34,10 @@ static NSArray<NSString*>* SPDFPaletteTextPages(NSDictionary* candidate, NSProgr
     }, ^id {
         NSMutableDictionary* stamps = [NSMutableDictionary dictionary];
         NSMutableArray* pages = [NSMutableArray array];
-        if ([@[@"md", @"markdown"] containsObject:path.pathExtension.lowercaseString]) {
+        if (SPDFIsRenderedTextDocumentPath(path)) {
             SPDFMarkdownDocument* doc = [SPDFMarkdownDocument documentWithURL:[NSURL fileURLWithPath:path]
                                                                        options:nil error:nil];
-            SPDFPaletteImageStamps(doc.model.blocks,path,stamps);
+            if (!SPDFIsSourceDocumentPath(path)) SPDFPaletteImageStamps(doc.model.blocks,path,stamps);
             SPDFMarkdownPageConfiguration* fallback = [candidate[@"markdownLandscape"] boolValue]
                 ? [SPDFMarkdownPageConfiguration A4LandscapeConfiguration]
                 : [SPDFMarkdownPageConfiguration A4PortraitConfiguration];

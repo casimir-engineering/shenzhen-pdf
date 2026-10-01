@@ -1,5 +1,6 @@
 #import "SPDFMacTabStripViewPrivate.h"
 #import "SPDFMacCollectionPathPolicy.h"
+#import "markdown/SPDFTextDocumentFormats.h"
 
 @protocol SPDFTabCollectionMenuProviding <NSObject>
 - (void)addCollectionItemsToTabMenu:(NSMenu*)menu path:(NSString*)path;
@@ -99,7 +100,7 @@
         move.submenu = moveToGroup; [menu addItem:move];
     }
     NSString* tabPath = self.tabs[(NSUInteger)tabIndex].path;
-    if ([@[@"md", @"markdown"] containsObject:tabPath.pathExtension.lowercaseString]) {
+    if (SPDFIsRenderedTextDocumentPath(tabPath)) {
         NSMenuItem* editor = [menu addItemWithTitle:@"Open in Editor" action:NSSelectorFromString(@"openMarkdownInEditor:")
                                      keyEquivalent:@""];
         editor.target = self.reader; editor.representedObject = tabPath;

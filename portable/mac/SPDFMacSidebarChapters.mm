@@ -5,6 +5,7 @@
 #import "SPDFMacSidebarOutline.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacMarkdownSidebarModel.h"
+#import "markdown/SPDFTextDocumentFormats.h"
 
 // Chapter nesting, end to end.
 //
@@ -277,6 +278,7 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
 }
 
 - (NSString*)sidebarOutlineSummary {
+    if (SPDFIsSourceDocumentPath(_path)) return @"No chapters";
     NSUInteger count = [self isMarkdownActive] ? [self activeMarkdownSession].sidebarModel.chapterItems.count
         : (NSUInteger)MAX(0,_outline.count);
     return [NSString stringWithFormat:@"%@ · %lu %@",[self isMarkdownActive] ? @"Markdown headings" : @"PDF outline",

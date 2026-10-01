@@ -169,6 +169,47 @@ static void TestCapturedPDF(NSURL* root) {
         [store search:@"Plain" titlesOnly:YES excludingPaths:NSSet.set limit:5].count == 1);
     Expect(@"newly captured text is searchable after warming old index",
         [store search:@"without rendered" titlesOnly:NO excludingPaths:NSSet.set limit:5].count == 1);
+    for (NSString* extension in @[@"html",@"py",@"json"]) {
+        NSURL* source=[root.URLByDeletingLastPathComponent URLByAppendingPathComponent:
+            [@"Literal" stringByAppendingPathExtension:extension]];
+        [@"<h1>sourceNeedle</h1>\n![image](missing.png)" writeToURL:source atomically:YES
+            encoding:NSUTF8StringEncoding error:nil];
+        NSDictionary* captured=[store capturePath:source.path reason:@"Opened" error:nil];
+        NSDictionary* version=[captured[@"versions"] lastObject];
+        NSDictionary* index=[store textIndexForVersion:version];
+        Expect(@"storage-only source indexing preserves literal content without inventing pages",
+            captured && [index[@"textPages"][0][@"text"] containsString:@"<h1>sourceNeedle</h1>"] &&
+            [index[@"textPages"][0][@"page"] integerValue]==0);
+        Expect(@"source image examples never archive assets or generate missing-asset warnings",
+            [version[@"assets"] count]==0 && [version[@"assetWarnings"] count]==0);
+        NSString* identifier=version[@"id"];
+        NSURL* indexURL=[[root URLByAppendingPathComponent:@"indexes"] URLByAppendingPathComponent:version[@"indexFile"]];
+        [store transaction:^BOOL(NSMutableDictionary* manifest,NSError** error) {
+            NSMutableDictionary* legacy=[manifest[@"documents"][captured[@"id"]][@"versions"] lastObject];
+            [legacy removeObjectForKey:@"sourceIndexProfile"];
+            return SPDFCollectionAtomicData([NSJSONSerialization dataWithJSONObject:@{@"textPages":@[],@"encrypted":@NO}
+                options:0 error:error],indexURL,0400,error);
+        } error:nil];
+        Expect(@"legacy source fixture initially has no indexed content",
+            [[store textIndexForVersion:version][@"textPages"] count]==0);
+        NSDictionary* migrated=[store capturePath:source.path reason:@"Opened" error:nil];
+        NSDictionary* repaired=[migrated[@"versions"] lastObject];
+        Expect(@"reopen lazily restores source index without creating a history version",
+            [migrated[@"versions"] count]==1 && [repaired[@"id"] isEqual:identifier] &&
+            [repaired[@"hash"] isEqual:version[@"hash"]] &&
+            [repaired[@"sourceIndexProfile"] isEqual:@"source-v1-raw"] &&
+            [store textIndexForVersion:repaired][@"textPages"][0][@"text"]);
+        NSDictionary* indexStamp=SPDFCollectionFingerprint(indexURL.path);
+        [store capturePath:source.path reason:@"Opened" error:nil];
+        Expect(@"repeated unchanged reopen does not rewrite the completed source index",
+            [indexStamp isEqual:SPDFCollectionFingerprint(indexURL.path)]);
+    }
+    NSURL* unicode=[root.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"Unicode.txt"];
+    [[@"Unicode source needle 中文" dataUsingEncoding:NSUTF16StringEncoding] writeToURL:unicode atomically:YES];
+    NSDictionary* unicodeDoc=[store capturePath:unicode.path reason:@"Opened" error:nil];
+    NSDictionary* unicodeIndex=[store textIndexForVersion:[unicodeDoc[@"versions"] lastObject]];
+    Expect(@"storage-only source index shares reader Unicode decoding",
+        [unicodeIndex[@"textPages"][0][@"text"] containsString:@"Unicode source needle 中文"]);
     NSProgress* cancelled = [NSProgress progressWithTotalUnitCount:1]; [cancelled cancel];
     Expect(@"cancelled Collection query returns no stale hits",
         [store search:@"needle" titlesOnly:NO excludingPaths:NSSet.set limit:5 progress:cancelled].count == 0);

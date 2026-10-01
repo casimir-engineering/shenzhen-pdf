@@ -241,7 +241,7 @@ void spdf_discard_launch_prerender(void) {
       // cloud open (loadSelectedTab); do not race a second synchronous open
       // against it. Same predicate as that deferral (CloudStorage file
       // providers plus any non-apfs/hfs mount).
-      if (path.length == 0 || spdf_mac_path_is_markdown(path) || [self pathIsOnCloudStorage:path]) {
+      if (path.length == 0 || SPDFIsRenderedTextDocumentPath(path) || [self pathIsOnCloudStorage:path]) {
           [result.ownership workerDidFinish];
           return;
       }

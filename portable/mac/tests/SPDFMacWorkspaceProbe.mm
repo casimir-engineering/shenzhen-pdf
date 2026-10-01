@@ -154,6 +154,19 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     Check(done && ready && session.navigationReady && session.pageCount>0,@"actual Markdown renderer populates the native reader host");
     [self rebuildSidebar]; [self updateControls];
 }
+- (void)checkTextSizeActions {
+    SPDFMacMarkdownSession* session=self.activeMarkdownSession;
+    for (NSNumber* segment in @[@1,@0]) {
+        CGFloat before=session.fontScale; id rendered=session.renderedDocument;
+        if (segment.integerValue) [self increaseMarkdownFontSize:nil];
+        else [self decreaseMarkdownFontSize:nil];
+        Check(segment.integerValue ? session.fontScale>before : session.fontScale<before,@"text size buttons update the active text session");
+        NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:10];
+        while(session.renderedDocument==rendered && deadline.timeIntervalSinceNow>0)
+            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Check(session.renderedDocument!=rendered && session.pageCount>0,@"text size action repaginates the current document");
+    }
+}
 - (void)checkResponsivePanels {
     _sidebarPreferredVisible=YES; _minimapPreferredVisible=YES; _sidebarWidth=240;
     [self prioritizeWorkspaceSidebar];
@@ -244,6 +257,15 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     if (!_presentationMode) {
         Check([self isMarkdownActive] ? (!_markdownFontSizeSegments.hidden && [_markdownFontSizeSegments isDescendantOf:_toolbar]) : _markdownFontSizeSegments.hidden,
             @"Markdown text size stays directly reachable and takes no toolbar space for PDF");
+        Check([_zoomSegments isDescendantOf:_toolbar] && !_zoomSegments.hidden,@"zoom buttons remain directly reachable");
+        if ([self isMarkdownActive]) {
+            NSRect zoom=[_toolbar convertRect:[_zoomSegments alignmentRectForFrame:_zoomSegments.frame] fromView:_zoomSegments.superview];
+            NSRect text=[_toolbar convertRect:[_markdownFontSizeSegments alignmentRectForFrame:_markdownFontSizeSegments.frame] fromView:_markdownFontSizeSegments.superview];
+            Check(NSMinX(text)>=NSMaxX(zoom) && NSMinX(text)-NSMaxX(zoom)<=8 && fabs(NSMidY(text)-NSMidY(zoom))<1,
+                @"text size is immediately to the right of zoom on the same row");
+            Check(_zoomSegments.segmentStyle==NSSegmentStyleSeparated && _markdownFontSizeSegments.segmentStyle==_zoomSegments.segmentStyle,
+                @"zoom and text size share the compact flat toolbar style");
+        }
         CGFloat titleWidth=[_fitModePopup.titleOfSelectedItem sizeWithAttributes:@{NSFontAttributeName:_fitModePopup.font}].width;
         Check(NSWidth(_fitModePopup.frame)>=ceil(titleWidth)+18,@"zoom selection keeps its full readable title");
         NSMutableArray<NSControl*>* controls=[NSMutableArray array]; VisibleControls(_toolbar,controls);
@@ -394,9 +416,20 @@ int main(int argc,const char* argv[]) {
                 width:1280 sidebar:NO map:NO];
             [reader setProbePresentation:NO];
             [reader prepareMarkdown:markdownURL];
-            [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-markdown.png" : @"reader-light-markdown.png"] : nil
-                width:1280 sidebar:YES map:YES];
+            [reader checkTextSizeActions];
+            for (NSNumber* width in @[@1280,@880,@560]) {
+                NSString* name=[NSString stringWithFormat:@"reader-%@-markdown-%@.png",dark.boolValue ? @"dark" : @"light",width];
+                [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil
+                    width:width.doubleValue sidebar:YES map:YES];
+            }
         }
+        NSURL* textURL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Plain text.txt"]];
+        [@"# This remains plain text, not a heading.\n\nText size applies to plain text too."
+            writeToURL:textURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        WorkspaceReaderProbe* textReader=[WorkspaceReaderProbe new]; [textReader prepare:URL width:1280 dark:NO];
+        [textReader prepareMarkdown:textURL]; [textReader checkTextSizeActions];
+        [textReader capture:output.length ? [output stringByAppendingPathComponent:@"reader-light-text.png"] : nil
+            width:1280 sidebar:YES map:YES];
         Check(NSApp.windows.count>0,@"probe constructed actual reader windows");
         for (NSWindow* window in NSApp.windows) Check(!window.visible,@"no window was displayed");
         [NSFileManager.defaultManager removeItemAtPath:root error:nil];

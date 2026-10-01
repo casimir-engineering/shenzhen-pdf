@@ -120,7 +120,7 @@
     // window blanks and comes back, and a document being saved repeatedly reads
     // as the whole screen flashing. The session instead re-reads the file and
     // swaps the result under the live view, keeping the viewport.
-    if ([self isMarkdownActive] && spdf_mac_path_is_markdown(tab.path)) {
+    if ([self isMarkdownActive] && SPDFIsRenderedTextDocumentPath(tab.path)) {
         [self rememberActiveMarkdownStateForTab:tab];
         // Move the change baseline with the content: the watcher compares the
         // file against these, so leaving them behind would report the same edit

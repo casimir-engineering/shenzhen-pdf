@@ -122,7 +122,7 @@ static void test_persistence_and_settings(void) {
     NSMenu* settings = [[NSMenu alloc] initWithTitle:@"Settings"];
     SPDFMacInstallMarkdownEditorSettingsMenu(settings);
     CHECK(settings.numberOfItems == 1, "editor settings row was not installed");
-    CHECK([settings.itemArray.firstObject.title isEqualToString:@"Choose Markdown Editor..."],
+    CHECK([settings.itemArray.firstObject.title isEqualToString:@"Choose Text Editor..."],
           "editor settings row title changed");
 
     if (saved) [defaults setObject:saved forKey:SPDFMacMarkdownEditorPreferenceDefaultsKey];
@@ -142,6 +142,11 @@ int main(void) {
         NSString* source = make_source();
         test_stored_editor_launches_directly(source);
         test_first_use_picks_persists_then_launches(source);
+        for (NSString* ext in @[@"txt", @"py", @"html"]) {
+            NSString* code = [source.stringByDeletingPathExtension stringByAppendingPathExtension:ext];
+            [@"literal source" writeToFile:code atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            test_stored_editor_launches_directly(code);
+        }
         test_invalid_source_is_rejected();
         test_persistence_and_settings();
         test_picker_starts_in_applications();

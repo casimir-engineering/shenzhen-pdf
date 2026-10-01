@@ -1,3 +1,4 @@
+#import "markdown/SPDFTextDocumentFormats.h"
 #import "SPDFMacCollectionStorePrivate.h"
 #import <PDFKit/PDFKit.h>
 
@@ -61,14 +62,34 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
                 if (text.length) [pages addObject:@{@"page":@(i+1),@"text":text}]; chars += text.length;
             }
         }
-    } else if ([@[@"md",@"markdown",@"mdown"] containsObject:extension]) {
+    } else if (SPDFIsRenderedTextDocumentPath(path)) {
         [pages addObjectsFromArray:SPDFCollectionMarkdownTextPages(data,path,assets,root)];
-    } else if ([extension isEqual:@"txt"]) {
-        NSString* text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        if (text.length > 2*1024*1024) text = [text substringToIndex:2*1024*1024];
-        if (text.length) [pages addObject:@{@"page":@0,@"text":text}];
     }
     return @{@"textPages":pages,@"encrypted":@(encrypted)};
+}
+// Upgrade only a reopened source's existing index, never scan history at launch.
+// A storage-only process may provide raw text; it must not block a later native
+// reader from replacing that index with exact rendered page locations.
+static NSString* SourceIndexProfile(void) {
+    return NSClassFromString(@"SPDFMarkdownDocument") ? @"source-v1-rendered" : @"source-v1-raw";
+}
+static BOOL NeedsSourceIndex(NSDictionary* document, NSString* path) {
+    NSDictionary* latest=[document[@"versions"] lastObject];
+    if (!latest || !SPDFIsSourceDocumentPath(path)) return NO;
+    NSString* profile=latest[@"sourceIndexProfile"];
+    return ![profile isEqual:@"source-v1-rendered"] && ![profile isEqual:SourceIndexProfile()];
+}
+static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, NSString* path,
+                             NSURL* root, NSError** error) {
+    if ([index[@"encrypted"] boolValue]) return YES;
+    NSData* bytes=[NSJSONSerialization dataWithJSONObject:index options:0 error:error];
+    NSString* filename=[version[@"id"] stringByAppendingPathExtension:@"json"];
+    NSURL* URL=[[root URLByAppendingPathComponent:@"indexes"] URLByAppendingPathComponent:filename];
+    if (!bytes || !SPDFCollectionMakeDirectory(URL.URLByDeletingLastPathComponent,error) ||
+        !SPDFCollectionAtomicData(bytes,URL,0400,error)) return NO;
+    version[@"indexFile"]=filename;
+    if (SPDFIsSourceDocumentPath(path)) version[@"sourceIndexProfile"]=SourceIndexProfile();
+    return YES;
 }
 @implementation SPDFMacCollectionStore (Capture)
 - (NSDictionary*)captureLockedPath:(NSString*)path reason:(NSString*)reason
@@ -79,7 +100,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
         if ([row[@"path"] isEqual:path] && ![row[@"sourceReplaced"] boolValue]) { doc = row; break; }
     if (![self captureEpochIsCurrentForPath:path document:doc]) return nil;
     if ([doc[@"excluded"] boolValue]) return nil;
-    if ((!documentID.length || [doc[@"id"] isEqual:documentID]) && [self canReuseProtection:doc path:path]) {
+    if ((!documentID.length || [doc[@"id"] isEqual:documentID]) && !NeedsSourceIndex(doc,path) && [self canReuseProtection:doc path:path]) {
         [self recordCaptureUserOpenInDocument:doc path:path]; return doc;
     }
     NSData* bytes; struct stat before = {}, after = {}; BOOL stable = NO;
@@ -140,6 +161,17 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
             if (![SPDFCollectionHashURL([self blobURL:asset[@"hash"]],error) isEqual:asset[@"hash"]]) {
                 if(error && !*error)*error=SPDFCollectionError(3,@"A retained asset failed its integrity check."); return nil;
             }
+        if (NeedsSourceIndex(doc,path)) {
+            NSDictionary* index=TextIndex(bytes,path,dependencies[@"entries"],self.rootURL);
+            struct stat current={};
+            if (stat(path.fileSystemRepresentation,&current)!=0 || !SameSource(after,current)) {
+                if(error)*error=SPDFCollectionError(5,@"Source changed during indexing; retry capture."); return nil;
+            }
+            NSMutableDictionary* updated=[last mutableCopy];
+            if (!InstallTextIndex(index,updated,path,self.rootURL,error)) return nil;
+            NSMutableArray* versions=[doc[@"versions"] mutableCopy];
+            versions[versions.count-1]=updated; doc[@"versions"]=versions;
+        }
         if (!RelinkSourceStillLost(relinkedSource,error)) return nil;
         NSMutableArray* aliases=[doc[@"aliases"] mutableCopy] ?: [NSMutableArray array];
         if (doc[@"path"] && ![aliases containsObject:doc[@"path"]]) [aliases addObject:doc[@"path"]];
@@ -174,14 +206,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
         @"filename":path.lastPathComponent,@"capturedAt":now,@"modifiedAt":@((double)after.st_mtimespec.tv_sec+after.st_mtimespec.tv_nsec/1e9),
         @"reason":reason ?: @"Opened",@"keep":@NO,@"assets":assets,@"assetWarnings":dependencies[@"warnings"]} mutableCopy];
     version[@"encrypted"]=index[@"encrypted"];
-    if (![index[@"encrypted"] boolValue]) {
-        NSData* indexBytes=[NSJSONSerialization dataWithJSONObject:index options:0 error:error];
-        NSString* indexFile=[version[@"id"] stringByAppendingPathExtension:@"json"];
-        NSURL* indexURL=[[self.rootURL URLByAppendingPathComponent:@"indexes"] URLByAppendingPathComponent:indexFile];
-        if (!indexBytes || !SPDFCollectionMakeDirectory(indexURL.URLByDeletingLastPathComponent,error) ||
-            !SPDFCollectionAtomicData(indexBytes,indexURL,0400,error)) return nil;
-        version[@"indexFile"]=indexFile;
-    }
+    if (!InstallTextIndex(index,version,path,self.rootURL,error)) return nil;
     if (!RelinkSourceStillLost(relinkedSource,error)) return nil;
     if (!doc) {
         doc = [@{@"id":NSUUID.UUID.UUIDString,@"path":path,@"aliases":[NSMutableArray array],
@@ -213,7 +238,7 @@ static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NS
     NSDictionary* existing=[self documentForPath:path];
     if (![self captureEpochIsCurrentForPath:path document:existing]) return nil;
     if (![self captureUserOpenCountForPath:path] && (!documentID.length || [existing[@"id"] isEqual:documentID]) &&
-        [self canReuseProtection:existing path:path]) return existing;
+        !NeedsSourceIndex(existing,path) && [self canReuseProtection:existing path:path]) return existing;
     __block NSDictionary* result; NSError* failure;
     BOOL ok = [self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
         if (![self captureRequestIsCurrentForPath:path]) return NO;

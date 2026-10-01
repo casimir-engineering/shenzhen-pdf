@@ -1,12 +1,9 @@
 #import "SPDFMarkdownParser.h"
-
+#import "SPDFTextDocumentParser.h"
 #import "SPDFMarkdownHTML.h"
 #import "SPDFMarkdownParserInternal.h"
-
 #include "../../../ext/md4c/md4c.h"
-
 NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdown";
-
 @implementation SPDFMarkdownBlockBuilder
 - (instancetype)init {
     self = [super init];
@@ -19,7 +16,6 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
     return self;
 }
 @end
-
 @interface SPDFMarkdownSpanFrame : NSObject
 @property(nonatomic) SPDFMarkdownInlineTraits previousTraits;
 @property(nonatomic, copy, nullable) NSString* previousDestination;
@@ -30,7 +26,6 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
 @end
 @implementation SPDFMarkdownSpanFrame
 @end
-
 @interface SPDFMarkdownParseContext : NSObject
 @property(nonatomic) SPDFMarkdownBlockBuilder* root;
 @property(nonatomic) NSMutableArray<SPDFMarkdownBlockBuilder*>* stack;
@@ -46,7 +41,6 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
 @property(nonatomic) SPDFMarkdownErrorCode failureCode;
 @property(nonatomic, copy, nullable) NSString* debugMessage;
 @end
-
 @implementation SPDFMarkdownParseContext
 - (instancetype)init {
     self = [super init];
@@ -61,7 +55,6 @@ NSErrorDomain const SPDFMarkdownErrorDomain = @"com.intuition.shenzhenpdf.markdo
     return self;
 }
 @end
-
 static NSString* SPDFString(const char* bytes, NSUInteger length) {
     if (!bytes || length == 0) return @"";
     NSString* value = [[NSString alloc] initWithBytes:bytes length:length encoding:NSUTF8StringEncoding];
@@ -444,6 +437,11 @@ static NSString* SPDFExtractFrontMatter(NSString* input, NSDictionary** metadata
                                            userInfo:@{NSLocalizedDescriptionKey: @"Markdown document is too large."}];
         return nil;
     }
+    NSString* language = SPDFSourceLanguageForPath(sourceURL.path);
+    if (language) {
+        NSString* source = SPDFDecodeSourceDocument(data, error);
+        return source ? SPDFSourceDocumentModel(source, sourceURL, language) : nil;
+    }
     NSString* input = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!input) {
         if (error) *error = [NSError errorWithDomain:SPDFMarkdownErrorDomain
@@ -462,6 +460,8 @@ static NSString* SPDFExtractFrontMatter(NSString* input, NSDictionary** metadata
                                            userInfo:@{NSLocalizedDescriptionKey: @"Markdown document is too large."}];
         return nil;
     }
+    NSString* language = SPDFSourceLanguageForPath(sourceURL.path);
+    if (language) return SPDFSourceDocumentModel(markdown, sourceURL, language);
     if ([markdown hasPrefix:@"\uFEFF"]) markdown = [markdown substringFromIndex:1];
     markdown = [markdown stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
     markdown = [markdown stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];

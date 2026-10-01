@@ -100,6 +100,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownDocument.mm
 TESTS=""
 for TEST in \
     SPDFMarkdownParserTests \
+    SPDFTextDocumentTests \
     SPDFMarkdownHTMLTests \
     SPDFMarkdownInlineFormattingTests \
     SPDFMarkdownMathTests \

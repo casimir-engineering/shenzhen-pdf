@@ -1,6 +1,7 @@
 #pragma once
 
 #import <Foundation/Foundation.h>
+#import "markdown/SPDFTextDocumentFormats.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 NS_ASSUME_NONNULL_BEGIN
