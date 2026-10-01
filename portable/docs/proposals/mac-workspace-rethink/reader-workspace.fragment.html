@@ -132,10 +132,6 @@
 #sz-workspace .sz-shell{--sz-rail-width:0px;--sz-pane-width:240px}
 #sz-workspace .sz-rail{display:none}
 #sz-workspace .sz-pane-head{padding:0 8px 0 12px;gap:8px}
-#sz-workspace .sz-view-picker{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
-#sz-workspace .sz-view-picker select{font-size:13px;font-weight:500;height:28px;min-width:0;width:100%;border:0;border-radius:5px;background:transparent;color:var(--sz-text);padding:2px 4px}
-#sz-workspace .sz-view-picker select:hover{background:var(--sz-hover)}
-#sz-workspace .sz-view-picker option,#sz-workspace .sz-view-picker optgroup{background:var(--sz-surface);color:var(--sz-text)}
 #sz-workspace .sz-shell:has(.sz-pane:not([hidden])) .sz-readingbar .sz-panel-toggle{display:none}
 #sz-workspace .sz-readingbar .sz-panel-toggle{display:flex;justify-content:center;width:28px;height:28px;min-height:28px;padding:6px;border:0;border-radius:5px}
 #sz-workspace .sz-panel-toggle .sz-mode-label{display:none}
@@ -174,6 +170,17 @@
 #sz-workspace .sz-map-pages{flex:1;min-height:0;overflow:auto;padding:12px 5px 8px}
 #sz-workspace .sz-map-pages button{flex-shrink:0}
 @container sz-reader (max-width:650px){#sz-workspace .sz-readingbar{grid-column:1/4}#sz-workspace .sz-minimap{grid-column:4;grid-row:1/3}}
+/* Lean document surfaces and direct, one-click sidebar modes. */
+#sz-workspace .sz-browser-group.is-expanded{flex:0 1 auto;max-width:none}
+#sz-workspace .sz-browser-tab{flex:0 1 var(--tab-width);width:var(--tab-width);max-width:200px;height:24px;border-radius:6px}
+#sz-workspace .sz-browser-tab .sz-tab{height:24px;min-height:24px;padding:4px 22px;border-radius:6px}
+#sz-workspace .sz-browser-tab:not(.selected) .sz-tab{padding-left:10px;padding-right:10px}
+#sz-workspace .sz-browser-tab:not(.selected):is(:hover,:focus-within) .sz-tab{padding-left:22px;padding-right:22px}
+#sz-workspace .sz-tab-close{width:20px;height:20px;min-height:20px;padding:3px;top:2px;right:2px;border-radius:4px}
+#sz-workspace .sz-pane-head{padding:0 8px;gap:4px}
+#sz-workspace .sz-pane-modes{display:flex;align-items:center;gap:4px;min-width:0;flex:1}
+#sz-workspace .sz-pane-modes button{display:flex;align-items:center;justify-content:center;width:28px;height:28px;min-height:28px;padding:6px;margin:0;border-radius:5px}
+#sz-workspace .sz-pane-head>button{margin-left:auto}
 </style>
 <script>
 (() => {
@@ -187,20 +194,21 @@
   const state={layout:'rail',mode:'chapters',pane:true,doc:0,page:1,version:'latest',missing:false,compare:false,map:true,zoom:'Fit width',query:'',groupQuery:'',filter:'',expanded:['Hardware'],hidden:[],kept:[],memories:{},paneScrolls:{},revisionLocations:{},linked:true,...(window.openai?.widgetState?.privateContent||{}),...saved};
   state.closedTabs=state.closedTabs||[];state.tabExpanded=state.tabExpanded||[docs[state.doc]?.group||'Hardware'];
   const openDocs=()=>docs.map((d,i)=>({...d,i})).filter(d=>!state.closedTabs.includes(d.i));
+  const tabMeasure=document.createElement('canvas').getContext('2d');
+  function preferredTabWidth(doc){tabMeasure.font=`${doc.i===state.doc?600:400} 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;return Math.min(200,Math.max(96,Math.ceil(tabMeasure.measureText(doc.title).width)+(doc.i===state.doc?44:20)));}
   let barGroups=new Set();
   function visibleTabCounts(){
     const available=q('.sz-tabs').clientWidth;
     const open=openDocs(),expanded=state.tabExpanded.at(-1),members=open.filter(d=>d.group===expanded);
+    const selected=members.find(d=>d.i===state.doc),ordered=selected?[selected,...members.filter(d=>d.i!==state.doc)]:members;
     const labels=groupData.filter(([name])=>name!==expanded&&!state.hidden.includes(name)&&open.some(d=>d.group===name));
     const labelWidth=members.length?Math.min(100,expanded.length*7+14)+12:0;
-    const utilities=root.clientWidth>500?96:44;
-    const budget=available-labelWidth-utilities;
-    let count=Math.min(members.length,Math.max(1,Math.floor((budget+4)/144)));
-    if(count<members.length)count=Math.max(1,Math.floor((budget-36+4)/144));
-    count=Math.min(members.length,count);
-    // First maximize readable document slots, then use every remaining slot
-    // for other group labels. The manager always lists all groups, separately.
-    let spare=budget-count*144-(count<members.length?36:0);
+    const utilities=root.clientWidth>500?96:44,budget=available-labelWidth-utilities;
+    const allWidth=ordered.reduce((sum,d)=>sum+preferredTabWidth(d)+4,0);
+    const room=budget-(allWidth>budget?36:0);
+    let count=0,used=0;
+    for(const doc of ordered){const width=preferredTabWidth(doc)+4;if(count&&used+width>room)break;count++;used+=width;}
+    let spare=budget-used-(count<members.length?36:0);
     barGroups=new Set(expanded?[expanded]:[]);
     for(const [name] of labels){const needed=Math.min(100,name.length*7+14)+8;if(needed<=spare){barGroups.add(name);spare-=needed;}}
     return new Map([[expanded,count]]);
@@ -228,7 +236,7 @@
     const tabCounts=visibleTabCounts();
     q('.sz-tabs').innerHTML=groupData.filter(g=>g[1]&&!state.hidden.includes(g[0])&&barGroups.has(g[0])).map(([name,count])=>{
       const expanded=state.tabExpanded.includes(name),members=openDocs().filter(v=>v.group===name),selected=members.find(v=>v.i===state.doc),limit=tabCounts.get(name)||1,shown=selected?[selected,...members.filter(v=>v.i!==state.doc).slice(0,limit-1)].sort((a,b)=>a.i-b.i):members.slice(0,limit);
-      return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}" style="--group-width:${84+shown.length*224+(count>shown.length?36:0)}px"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}" data-tooltip="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
+      return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}" style="--tab-width:${preferredTabWidth(v)}px"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}" data-tooltip="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
     }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-action="group-picker" aria-label="All groups" aria-expanded="false" data-tooltip="All groups">${icon('layers')}</button>`;
     q('.sz-mode-label').textContent=state.mode==='groups'?'Groups':modes().find(x=>x[0]===state.mode)?.[2]||'Chapters';
     q('.sz-page-number').value=state.page;q('.sz-zoom').value=state.zoom;
@@ -243,7 +251,7 @@
     renderDocument();symbols();if(q('.sz-list')){q('.sz-list').dataset.owner=paneOwner;q('.sz-list').scrollTop=state.paneScrolls[paneOwner]||0;}
     if(focusAttr)root.querySelector(`[${focusAttr}="${CSS.escape(focusValue)}"]`)?.focus();
   }
-  function head(name,subtitle){const items=[['groups','panels-top-left','Groups'],...modes()],current=items.find(x=>x[0]===state.mode);return `<div class="sz-pane-head"><label class="sz-view-picker">${icon(current[1])}<select aria-label="Sidebar view" data-sidebar-mode><optgroup label="Document">${modes().map(([id,i,label])=>`<option value="${id}" ${state.mode===id?'selected':''}>${label}</option>`).join('')}</optgroup><optgroup label="Workspace"><option value="groups" ${state.mode==='groups'?'selected':''}>Groups</option></optgroup></select></label><button data-action="close-pane" aria-label="Close ${name} panel">${icon('panel-left-close')}</button></div><div class="sz-pane-subtitle">${esc(subtitle)}</div>`;}
+  function head(name,subtitle){const items=[['groups','layers','Groups'],...modes()];return `<div class="sz-pane-head"><nav class="sz-pane-modes" aria-label="Sidebar panels">${items.map(([id,i,label])=>`<button data-mode="${id}" aria-label="${label}" data-tooltip="${label}" aria-pressed="${state.mode===id}">${icon(i)}</button>`).join('')}</nav><button data-action="close-pane" aria-label="Close ${name} panel" data-tooltip="Hide sidebar">${icon('panel-left-close')}</button></div><div class="sz-pane-subtitle">${esc(subtitle)}</div>`;}
   function filter(placeholder,value,kind){return `<label class="sz-pane-filter">${icon('search')}<input aria-label="${placeholder}" data-input="${kind}" placeholder="${placeholder}" value="${esc(value)}"></label>`;}
   function panel(){
     if(state.mode==='groups')return head('Groups',`${openDocs().length} open documents · ${groupData.filter(g=>g[1]).length} groups`)+filter('Search group names',state.groupQuery,'groups')+`<div class="sz-list">${groupList()}</div><div class="sz-pane-foot">${state.hidden.length} hidden · documents stay open</div>`;
@@ -326,7 +334,7 @@
     if(kind==='collection')q('.sz-collection-results').innerHTML=collectionRows(value);
     if(kind==='command')q('.sz-command-results').innerHTML=commandRows(value);symbols();if(['find','groups','chapters','comments'].includes(kind))persist();
   });
-  root.addEventListener('change',e=>{if(e.target.matches('[data-sidebar-mode]')){state.mode=e.target.value;state.filter='';render();persist();return;}if(e.target.matches('[data-regex]')){state.regex=e.target.checked;render();persist();}if(e.target.matches('[data-linked]'))state.linked=e.target.checked;if(e.target.matches('.sz-page-number')){state.page=Math.max(1,Math.min(20,Number(e.target.value)||1));render();persist();}if(e.target.matches('.sz-zoom')){state.zoom=e.target.value;renderDocument();persist();}});
+  root.addEventListener('change',e=>{if(e.target.matches('[data-regex]')){state.regex=e.target.checked;render();persist();}if(e.target.matches('[data-linked]'))state.linked=e.target.checked;if(e.target.matches('.sz-page-number')){state.page=Math.max(1,Math.min(20,Number(e.target.value)||1));render();persist();}if(e.target.matches('.sz-zoom')){state.zoom=e.target.value;renderDocument();persist();}});
   root.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&!q('.sz-group-picker').hidden){q('.sz-group-picker').hidden=true;q('.sz-tab-more').setAttribute('aria-expanded','false');q('.sz-tab-more').focus();return;}
     if(!q('.sz-overlay').hidden){if(e.key==='Escape'){e.preventDefault();closeOverlay();return;}if(e.key==='Tab'){const items=[...q('.sz-overlay').querySelectorAll('button,input,select,a')].filter(x=>!x.disabled&&x.getClientRects().length),first=items[0],last=items.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}if(e.key==='Enter'&&e.target.matches('[data-input=command]')){q('.sz-command-result')?.click();}return;}

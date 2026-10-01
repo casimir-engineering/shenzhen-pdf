@@ -18,7 +18,7 @@ python3 "$SIDEBAR_VISUALIZE_RENDERER" reader-workspace.fragment.html prototype.h
 python3 -m http.server 61208 --bind 127.0.0.1
 ```
 
-The current proposal uses one 240px sidebar with a labeled view selector.
+The current proposal uses one 240px sidebar with direct panel icons and hover labels.
 The expanded group's documents get tab-strip space before other group labels.
 The preview wrapper contributes a 16px margin around the mock window. The
 design controls expose reader height and document condition; rejected tab
