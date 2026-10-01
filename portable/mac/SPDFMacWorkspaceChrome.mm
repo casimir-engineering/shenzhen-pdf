@@ -1,3 +1,4 @@
+#import "SPDFMacChromeColors.h"
 #import "SPDFMacWorkspaceChrome.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
@@ -44,9 +45,9 @@ static char chromeKey;
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(frame,1,1) xRadius:6 yRadius:6];
     if (self.highlighted) { [SPDFCollectionColor(@"selected") setFill]; [shape fill]; }
     NSImage* image = [self.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]] ?: self.image;
-    image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFCollectionColor(@"text")]]] ?: image;
+    image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]] ?: image;
     [image drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)
-        fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : .35 respectFlipped:view.isFlipped hints:nil];
+        fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:view.isFlipped hints:nil];
     if (view.window.firstResponder == view) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
@@ -145,13 +146,14 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.mapHeader = SPDFCollectionSurface(@"pane"); state.mapHeader.translatesAutoresizingMaskIntoConstraints = NO;
     [_documentContainer addSubview:state.mapHeader];
     NSButton* closeMap = Icon(@"sidebar.right",@"Hide document map",self,@selector(toggleMinimap:));
+    closeMap.identifier = @"WorkspaceMapToggle";
     [state.mapHeader addSubview:closeMap];
     [NSLayoutConstraint activateConstraints:@[
         [state.mapHeader.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
         [state.mapHeader.leadingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor],
         [state.mapHeader.trailingAnchor constraintEqualToAnchor:_minimapView.trailingAnchor],
         [state.mapHeader.heightAnchor constraintEqualToConstant:44],
-        [closeMap.centerXAnchor constraintEqualToAnchor:state.mapHeader.centerXAnchor],
+        [closeMap.trailingAnchor constraintEqualToAnchor:state.mapHeader.trailingAnchor constant:-8],
         [closeMap.centerYAnchor constraintEqualToAnchor:state.mapHeader.centerYAnchor]]];
     state.toolbarRight = [_toolbar.trailingAnchor constraintEqualToAnchor:_minimapDividerView.leadingAnchor];
     state.toolbarRight.active = YES;

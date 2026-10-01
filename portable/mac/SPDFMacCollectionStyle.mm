@@ -1,3 +1,4 @@
+#import "SPDFMacChromeColors.h"
 #import "SPDFMacCollectionStyle.h"
 static NSColor* Hex(unsigned value) {
     return [NSColor colorWithSRGBRed:((value>>16)&255)/255.0 green:((value>>8)&255)/255.0 blue:(value&255)/255.0 alpha:1];
@@ -54,8 +55,8 @@ NSColor* SPDFCollectionColor(NSString* token) {
         NSRect icon = NSMakeRect(NSMinX(titleRect),floor(NSMidY(self.bounds)-7.5),15,15);
         NSImage* symbol = self.image;
         if (@available(macOS 12.0,*)) symbol = [symbol imageWithSymbolConfiguration:
-            [NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFCollectionColor(@"text")]]] ?: symbol;
-        [symbol drawInRect:icon fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : .55 respectFlipped:YES hints:nil];
+            [NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]] ?: symbol;
+        [symbol drawInRect:icon fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
         titleRect.origin.x += 24; titleRect.size.width -= 24;
     }
     NSMutableAttributedString* title = [self.attributedTitle mutableCopy];
@@ -69,7 +70,7 @@ NSColor* SPDFCollectionColor(NSString* token) {
         [title addAttribute:NSParagraphStyleAttributeName value:paragraph range:NSMakeRange(0,title.length)];
     } else {
         [title addAttributes:@{NSFontAttributeName:self.font ?: [NSFont systemFontOfSize:13],
-            NSForegroundColorAttributeName:[SPDFCollectionColor([self.kind isEqual:@"link"] ? @"accent" : @"text") colorWithAlphaComponent:self.enabled ? 1 : .55],
+            NSForegroundColorAttributeName:(self.enabled ? SPDFCollectionColor([self.kind isEqual:@"link"] ? @"accent" : @"text") : SPDFChromeIconColor(NO)),
             NSParagraphStyleAttributeName:paragraph} range:NSMakeRange(0,title.length)];
     }
     NSRect measured = [title boundingRectWithSize:titleRect.size options:NSStringDrawingUsesLineFragmentOrigin];

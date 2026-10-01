@@ -1,8 +1,10 @@
+#import "SPDFMacChromeColors.h"
 #import "SPDFMacSidebarModeControl.h"
 
 static const CGFloat RowHeight = 28;
 static NSString* Symbol(NSInteger mode) {
     switch (mode) {
+        case -1: return @"sidebar.left";
         case SPDFSidebarModeComments: return @"text.bubble";
         case SPDFSidebarModeSearch: return @"magnifyingglass";
         case SPDFSidebarModeHistory: return @"clock.arrow.circlepath";
@@ -31,7 +33,7 @@ static NSString* Symbol(NSInteger mode) {
     if (selected && self.window.firstResponder == self.superview) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
-    NSColor* color = self.enabled ? NSColor.labelColor : NSColor.disabledControlTextColor;
+    NSColor* color = SPDFChromeIconColor(self.enabled);
     NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
@@ -50,8 +52,8 @@ static NSString* Symbol(NSInteger mode) {
 }
 - (NSRect)focusRingMaskBounds { return NSInsetRect(self.bounds,.5,.5); }
 - (void)drawFocusRingMask { [[NSBezierPath bezierPathWithRoundedRect:self.focusRingMaskBounds xRadius:7 yRadius:7] fill]; }
-- (NSString*)accessibilityRole { return NSAccessibilityRadioButtonRole; }
-- (id)accessibilityValue { return @(self.state == NSControlStateValueOn); }
+- (NSString*)accessibilityRole { return self.mode < 0 ? NSAccessibilityButtonRole : NSAccessibilityRadioButtonRole; }
+- (id)accessibilityValue { return self.mode < 0 ? nil : @(self.state == NSControlStateValueOn); }
 @end
 
 @implementation SPDFSidebarNavigationControl {
@@ -72,11 +74,9 @@ static NSString* Symbol(NSInteger mode) {
 }
 - (void)setCollapseTarget:(id)target action:(SEL)action {
     if (!_collapse) {
-        _collapse = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:nil]
-                                      target:target action:action];
-        _collapse.bordered = NO;
-        _collapse.contentTintColor = NSColor.labelColor;
-        _collapse.image = [_collapse.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]]; _collapse.toolTip = @"Hide side panel";
+        SPDFSidebarNavigationRow* collapse = [SPDFSidebarNavigationRow new]; collapse.mode = -1;
+        collapse.target = target; collapse.action = action; collapse.bordered = NO;
+        _collapse = collapse; _collapse.toolTip = @"Hide side panel";
         _collapse.accessibilityLabel = @"Hide side panel"; [self addSubview:_collapse];
     }
 }

@@ -1,3 +1,4 @@
+#import "SPDFMacChromeColors.h"
 #import "SPDFMacSupport.h"
 
 #include <sys/sysctl.h>
@@ -318,13 +319,43 @@ NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger) {
     return image;
 }
 
+// Native segment tracking/AX remains intact; custom drawing prevents the
+// inactive-window and disabled tints from fading an icon a second time.
+@interface SPDFReadableToolbarSegments : NSSegmentedControl
+@end
+@implementation SPDFReadableToolbarSegments
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty; if (!self.segmentCount) return;
+    NSRect bounds = NSInsetRect(self.bounds,1,2);
+    if (self.segmentCount > 1 || self.cell.highlighted) {
+        [[NSColor.labelColor colorWithAlphaComponent:.06] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5] fill];
+    }
+    for (NSInteger segment=0; segment<self.segmentCount; segment++) {
+        NSRect frame = NSMakeRect(NSMinX(bounds)+segment*NSWidth(bounds)/self.segmentCount,
+            NSMinY(bounds),NSWidth(bounds)/self.segmentCount,NSHeight(bounds));
+        NSColor* color = SPDFChromeIconColor(self.enabled && [self isEnabledForSegment:segment]);
+        NSImage* image = [self imageForSegment:segment];
+        NSImage* tinted = [NSImage imageWithSize:NSMakeSize(16,16) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+            [image drawInRect:rect]; [color setFill]; NSRectFillUsingOperation(rect,NSCompositingOperationSourceIn); return YES;
+        }];
+        [tinted drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)
+            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:self.isFlipped hints:nil];
+    }
+    if (self.window.firstResponder == self) {
+        [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly);
+        [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5] fill]; [NSGraphicsContext restoreGraphicsState];
+    }
+}
+@end
+
 // Compact two-segment momentary "pill" for a paired back/forward style toolbar
 // action; the shared action switches on selectedSegment (0 = leading,
 // 1 = trailing).
 // One configuration for every toolbar pill, so a single-segment control and a
 // paired one share background, height and icon tint exactly.
 static NSSegmentedControl* spdf_toolbar_segments(id target, SEL action, NSInteger segmentCount) {
-    NSSegmentedControl* control = [[NSSegmentedControl alloc] init];
+    NSSegmentedControl* control = [[SPDFReadableToolbarSegments alloc] init];
     control.segmentCount = segmentCount;
     control.segmentStyle = NSSegmentStyleRounded;
     control.trackingMode = NSSegmentSwitchTrackingMomentary;
