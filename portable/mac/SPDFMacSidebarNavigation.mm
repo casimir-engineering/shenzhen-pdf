@@ -104,7 +104,7 @@ static NSString* Symbol(NSInteger mode) {
     for (NSUInteger i=0;i<_rows.count;i++) {
         SPDFSidebarNavigationRow* row = _rows[i];
         row.title = [self labelForSegment:i] ?: @""; row.mode = [self tagForSegment:i];
-        row.accessibilityLabel = row.title; row.toolTip = row.title;
+        row.accessibilityLabel = row.title; row.toolTip = row.mode == SPDFSidebarModeHistory ? @"History (⌘H)" : row.title;
         row.enabled = [self isEnabledForSegment:i];
         row.state = self.selectedSegment == (NSInteger)i ? NSControlStateValueOn : NSControlStateValueOff;
         row.needsDisplay = YES;

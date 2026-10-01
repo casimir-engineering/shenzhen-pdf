@@ -702,3 +702,17 @@ All added inspection is invoked by opening Properties. Non-images return before 
 These are hidden AppKit panel renders over an explicit window background, using small generated fixtures. Missing metadata is omitted; the PNG fixture has no embedded DPI. No screenshot of the running application was taken.
 
 Final local packaging updated `dist/ShenzhenPDF.app` and its Collection helper. Strict deep signature verification passed, and the reader executable is newer than every native production source. No publication or app restart was performed.
+
+
+## 2 October — search hierarchy and direct navigation shortcuts
+
+Search result metadata and snippets are indented twelve points beneath their chapter headings. The existing text sizes, highlight treatment and full-width row hit areas remain, so grouped results are easier to distinguish without reducing the clickable area.
+
+View → Version History now uses Command+H, as requested. The sidebar History icon advertises the shortcut on hover. Hide Shenzhen PDF remains in the application menu without claiming Command+H. Go → Previous Document now uses Command+D and the existing previous-document controller; pressing it twice returns to the starting document, including when the previous tab had been closed. Command+D also works when a search field has focus. The shortcut reference and accessibility help reflect the new assignment. The old Command+Backspace assignment is replaced, leaving that editing shortcut to text fields.
+
+
+![Indented search matches beneath chapter headings, rendered by the actual hidden reader](../../proposals/mac-workspace-rethink/evidence/native-search-chapter-indent.png)
+
+Validation: sidebar layout tests passed at 176, 240 and 400 points, including aligned result metadata/context and preserved highlighted matches. Previous-document tests verify two-press return and reopening a closed target with its original viewport and group. The complete offscreen workspace probe passed across light/dark appearance and narrow/wide layouts; it verifies unique Command+H / Command+D menu bindings, actual AppKit key dispatch and the updater route. No user window was opened or captured.
+
+The final `dist/ShenzhenPDF.app` build and strict deep signature verification passed. Its executable is newer than all native frontend sources. The running app was left untouched.

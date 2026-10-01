@@ -351,6 +351,30 @@ static void CheckUpdaterMenu(WorkspaceReaderProbe* reader) {
     method_setImplementation(method,original);
     Check(updaterInvoked,@"native menu route requests a user-initiated update check");
 }
+static NSUInteger historyShortcutCalls, previousShortcutCalls;
+static void NavigationShortcutSpy(id object,SEL action,id sender) {
+    (void)object; (void)sender;
+    if (action==NSSelectorFromString(@"showCollectionHistory:")) historyShortcutCalls++;
+    else previousShortcutCalls++;
+}
+static void CheckNavigationShortcuts(WorkspaceReaderProbe* reader) {
+    for (NSString* key in @[@"h",@"d"]) {
+        NSString* actionName=[key isEqual:@"h"] ? @"showCollectionHistory:" : @"returnToPreviousTab:";
+        NSMenuItem* found=nil; NSUInteger count=0;
+        for (NSMenuItem* top in NSApp.mainMenu.itemArray) for (NSMenuItem* item in top.submenu.itemArray)
+            if ([item.keyEquivalent isEqual:key] && item.keyEquivalentModifierMask==NSEventModifierFlagCommand) { found=item; count++; }
+        Check(count==1 && found.target==reader && found.action==NSSelectorFromString(actionName),@"reader navigation shortcut has one unambiguous menu target");
+        if (!found) continue;
+        Method method=class_getInstanceMethod(ShenzhenMacDelegate.class,found.action);
+        IMP original=method_setImplementation(method,(IMP)NavigationShortcutSpy);
+        BOOL autoenable=found.menu.autoenablesItems; found.menu.autoenablesItems=NO; found.enabled=YES;
+        NSEvent* event=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand
+            timestamp:0 windowNumber:0 context:nil characters:key charactersIgnoringModifiers:key isARepeat:NO keyCode:[key isEqual:@"h"] ? 4 : 2];
+        Check([found.menu performKeyEquivalent:event],@"AppKit dispatches the requested navigation key");
+        found.menu.autoenablesItems=autoenable; method_setImplementation(method,original);
+    }
+    Check(historyShortcutCalls>0 && previousShortcutCalls>0,@"History and Previous Document commands were dispatched");
+}
 static NSURL* Fixture(NSString* root) {
     NSURL* URL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Interface specification.pdf"]];
     NSMutableData* data=[NSMutableData data];
@@ -391,7 +415,7 @@ int main(int argc,const char* argv[]) {
             writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
-            CheckUpdaterMenu(reader);
+            CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader);
             [reader checkResponsivePanels];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];

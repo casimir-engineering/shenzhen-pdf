@@ -59,7 +59,7 @@ NSTableCellView* SPDFSidebarFindCell(NSTableView* table, NSDictionary* item, NSA
         if (result) text.lineBreakMode = NSLineBreakByWordWrapping;
         cell.textField = text; [cell addSubview:text];
         [NSLayoutConstraint activateConstraints:@[
-            [text.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:16],
+            [text.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:result ? 28 : 16],
             [text.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-16]]];
         if (result) {
             NSTextField* metadata = Label(@"metadata",10,YES); metadata.maximumNumberOfLines = 1;

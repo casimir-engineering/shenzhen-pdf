@@ -27,8 +27,10 @@ int main(void) {
             Check(NSMinY(metadata.frame) >= NSMaxY(cell.textField.frame)+2,
                 @"metadata is above the context without overlap in AppKit bottom-up coordinates");
             NSRect textAlignment = [cell.textField alignmentRectForFrame:cell.textField.frame];
-            Check(NSMinX(textAlignment)>=15 && NSMaxX(textAlignment)<=width.doubleValue-15,
-                @"context retains consistent side insets at narrow and wide widths");
+            Check(fabs(NSMinX(textAlignment)-28)<.5 && NSMaxX(textAlignment)<=width.doubleValue-15,
+                @"results use a twelve-point indent beneath the sixteen-point chapter heading inset");
+            NSRect metaAlignment=[metadata alignmentRectForFrame:metadata.frame];
+            Check(fabs(NSMinX(metaAlignment)-NSMinX(textAlignment))<.5,@"page metadata and result context share the nested alignment");
             Check(NSMinY(cell.textField.frame)>=5,@"two-line context remains within its row");
             Check(cell.textField.maximumNumberOfLines==2,@"context wraps rather than losing everything after one short line");
             NSAttributedString* text = cell.textField.attributedStringValue;

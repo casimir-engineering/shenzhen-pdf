@@ -168,7 +168,8 @@ does not re-trigger the macOS access prompt.
   results arrive asynchronously from lazy, bounded caches; changed files invalidate
   cached text, and superseded queries cannot overwrite newer results. No indexing
   work is added to launch.
-- **Cmd+Backspace on Mac:** return to the previous active document, including a recently closed tab; press twice to switch back. Editable text controls retain their normal shortcut behavior.
+- **Cmd+H on Mac:** open the current document’s Version History panel. Also available from View → Version History.
+- **Cmd+D on Mac:** return to the previous active document, including a recently closed tab; press twice to switch back. The shortcut also works while a search field is focused.
 
 <p align="center"><img src="images/portable/macos-search-highlights.webp" alt="A search with in-page highlights, chapter-grouped results and a current / total counter" width="880"></p>
 
