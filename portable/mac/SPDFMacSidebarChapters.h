@@ -14,6 +14,7 @@
 // coordinator should have to know about.
 - (NSTableCellView*)sidebarCellForTableView:(NSTableView*)tableView;
 - (void)styleSidebarCell:(NSTableCellView*)cell item:(NSDictionary*)item;
+- (NSString*)sidebarOutlineSummary;
 
 // Hide the rows under a collapsed chapter, then reload. Replaces a bare
 // -reloadData at the end of both sidebar builders.

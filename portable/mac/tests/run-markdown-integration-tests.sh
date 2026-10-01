@@ -87,6 +87,7 @@ $PORTABLE/mac/SPDFMacCollectionWindow.mm
 $PORTABLE/mac/SPDFMacCollectionManagerWindow.mm
 $PORTABLE/mac/SPDFMacCollectionStyle.mm
 $PORTABLE/mac/SPDFMacPaletteAppearance.mm
+$PORTABLE/mac/SPDFMacSidebarPresentation.mm
 $PORTABLE/mac/SPDFMacCollectionWindowActions.mm
 $PORTABLE/mac/SPDFMacCollectionWindowGrid.mm
 $PORTABLE/mac/SPDFMacCollectionWindowLayout.mm
@@ -157,6 +158,7 @@ $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 
 TESTS="
 SPDFMacPaletteAppearanceTests
+SPDFMacSidebarPresentationTests
 SPDFMacCollectionCompareLatestTests
 SPDFMacCollectionComparePresentationTests
 SPDFMacCollectionWindowTests

@@ -6,6 +6,9 @@
 #import "SPDFMacTabGroups.h"
 #import "SPDFUpdater.h"
 #import "SPDFMacWorkspaceChrome.h"
+#import "SPDFMacWorkspacePanels.h"
+#import "SPDFMacSidebarChapters.h"
+#import "SPDFMacCollectionStore.h"
 #import "SPDFMacCollectionReaderNavigation.h"
 #import <PDFKit/PDFKit.h>
 #import <objc/runtime.h>
@@ -20,6 +23,11 @@ static void VisibleControls(NSView* view,NSMutableArray<NSControl*>* controls) {
     if([view isKindOfClass:NSControl.class]) { [controls addObject:(id)view]; return; }
     for(NSView* child in view.subviews) VisibleControls(child,controls);
 }
+static NSTableView* FindHistoryTable(NSView* view) {
+    if ([view isKindOfClass:NSTableView.class] && [view.accessibilityLabel isEqual:@"Saved document versions"]) return (id)view;
+    for (NSView* child in view.subviews) { NSTableView* found=FindHistoryTable(child); if(found) return found; }
+    return nil;
+}
 static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger other) {
     (void)object; (void)action; (void)place; (void)other;
     fprintf(stderr,"FAIL: headless reader attempted to order a window\n");
@@ -33,6 +41,8 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
 - (void)startFindForCurrentQueryResetSavedIndex:(BOOL)reset revealMatch:(BOOL)reveal;
 - (void)sidebarModeChanged:(id)sender;
 - (void)updateTabStripFrame;
+- (void)toggleMinimap:(id)sender;
+- (void)toggleSidebar:(id)sender;
 @end
 @interface WorkspaceReaderProbe : ShenzhenMacDelegate
 @property PDFDocument* fixturePDF;
@@ -42,6 +52,8 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
 - (void)setProbePresentation:(BOOL)value;
 - (void)setProbeFind:(BOOL)value;
 - (void)setProbeVersion:(BOOL)value;
+- (void)checkResponsivePanels;
+- (void)setProbeHistory:(BOOL)value;
 @end
 @implementation WorkspaceReaderProbe
 // These are disk boundaries, not UI code. Keeping them inert makes the full
@@ -56,7 +68,7 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     SPDFTabGroup* design=[SPDFTabGroup groupWithColor:@"Teal"]; design.name=@"Design"; design.collapsed=YES;
     NSArray* titles=@[@"Interface specification.pdf",@"Hardware reference.pdf",@"Project notes.md",@"Product brief.pdf",@"Visual guidelines.pdf"];
     for (NSUInteger i=0;i<titles.count;i++) {
-        SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.title=titles[i];
+        SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.title=[titles[i] stringByDeletingPathExtension];
         tab.path=i ? [URL.URLByDeletingLastPathComponent.path stringByAppendingPathComponent:titles[i]] : URL.path;
         tab.group=i<3 ? research : i==3 ? general : design;
         tab.showSidebar=YES; tab.showMinimap=YES; tab.zoom=1; tab.fitMode=SPDFFitModeWidth;
@@ -91,7 +103,7 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     [self rebuildSidebar]; [self updateControls];
 }
 - (void)prepareMarkdown:(NSURL*)URL {
-    _selectedTabIndex=2; _path=URL.path; _tabs[2].path=URL.path; _tabs[2].title=URL.lastPathComponent;
+    _selectedTabIndex=2; _path=URL.path; _tabs[2].path=URL.path; _tabs[2].title=URL.lastPathComponent.stringByDeletingPathExtension;
     if (_doc) { spdf_close(_doc); _doc=NULL; }
     spdf_free_outline(&_outline);
     [self installMarkdownHostInDocumentContainer];
@@ -111,13 +123,51 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     Check(done && ready && session.navigationReady && session.pageCount>0,@"actual Markdown renderer populates the native reader host");
     [self rebuildSidebar]; [self updateControls];
 }
+- (void)checkResponsivePanels {
+    _sidebarPreferredVisible=YES; _minimapPreferredVisible=YES; _sidebarWidth=240;
+    [self prioritizeWorkspaceSidebar];
+    [self setSidebarActuallyVisible:YES]; [self setMinimapActuallyVisible:YES];
+    [_window setContentSize:NSMakeSize(560,780)]; [_window.contentView layoutSubtreeIfNeeded];
+    [self applyWorkspacePanelPolicy];
+    Check(_sidebarVisible && !_minimapVisible && _sidebarWidth==240 && _sidebarPreferredVisible && _minimapPreferredVisible,
+        @"compact layout preserves preferred panels/width and prioritizes sidebar");
+    [self toggleMinimap:nil]; [_window.contentView layoutSubtreeIfNeeded];
+    Check(!_sidebarVisible && _minimapVisible,@"show map reveals it immediately at compact width");
+    [self toggleSidebar:nil]; [_window.contentView layoutSubtreeIfNeeded];
+    Check(_sidebarVisible && !_minimapVisible,@"show sidebar restores navigation at compact width");
+    [_window setContentSize:NSMakeSize(1280,780)]; [_window.contentView layoutSubtreeIfNeeded];
+    [self applyWorkspacePanelPolicy]; [_window.contentView layoutSubtreeIfNeeded];
+    Check(_sidebarVisible && _minimapVisible && _sidebarWidth==240,@"widening restores both panels and preferred width");
+}
+- (void)setProbeHistory:(BOOL)value {
+    if (value) {
+        SPDFMacCollectionStore* store=SPDFMacCollectionStore.defaultStore;
+        [store updateSettings:@{@"choice":@"enabled"} error:nil];
+        NSDictionary* first=[store capturePath:_path reason:@"opened" error:nil];
+        Check(first!=nil,@"initial History capture succeeds");
+        PDFDocument* changed=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:_path]];
+        changed.documentAttributes=@{PDFDocumentTitleAttribute:[@"History fixture " stringByAppendingString:NSUUID.UUID.UUIDString]};
+        [changed writeToURL:[NSURL fileURLWithPath:_path]];
+        NSDictionary* second=[store capturePath:_path reason:@"saved" continuingDocumentID:first[@"id"] error:nil];
+        Check([second[@"versions"] count]>=2,@"changed PDF stays in the same document history");
+        [self showCollectionHistory:nil];
+        NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:10];
+        while(FindHistoryTable(_sidebarContainer).numberOfRows<2 && deadline.timeIntervalSinceNow>0)
+            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Check(FindHistoryTable(_sidebarContainer).numberOfRows>=2,@"actual History loads both captured versions before capture");
+        Check(_sidebarModeControl.spdf_selectedSidebarMode==SPDFSidebarModeHistory,@"real captured document exposes History");
+    } else {
+        _sidebarModeControl.spdf_selectedSidebarMode=SPDFSidebarModeChapters; [self sidebarModeChanged:_sidebarModeControl];
+        _sidebarWidth=240; [self restoreSidebarWidth];
+    }
+}
 - (void)setProbeVersion:(BOOL)value {
     NSDictionary* info=value ? @{@"document":@{@"id":@"fixture",@"path":@"/missing/fixture.pdf",@"latestVersionID":@"latest"},
         @"version":@{@"id":@"older",@"capturedAt":@1790812800}} : nil;
     [self collectionSetVersionInfo:info forTab:_tabs[0]];
 }
 - (void)setProbeFind:(BOOL)value {
-    if(value) { _sidebarWidth=176; [self restoreSidebarWidth]; }
+    if(value) { _sidebarWidth=240; [self restoreSidebarWidth]; }
     _searchField.stringValue=value ? @"workspace" : @"";
     [self startFindForCurrentQueryResetSavedIndex:YES revealMatch:NO];
     NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:10];
@@ -143,11 +193,16 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     if (![self isMarkdownActive]) for(SPDFRenderedPage* page in _renderedPages) {
         // Real resize invalidates cached map images. The probe has no render
         // service, so refill these fixtures from the same PDF before capture.
+        PDFPage* original=[self.fixturePDF pageAtIndex:page.pageIndex];
+        page.image=[original thumbnailOfSize:[original boundsForBox:kPDFDisplayBoxMediaBox].size forBox:kPDFDisplayBoxMediaBox];
+        page.imagePointWidth=page.pageWidth; page.imagePointHeight=page.pageHeight; page.imageZoom=1; page.imageScale=1;
         page.minimapImage=[[self.fixturePDF pageAtIndex:page.pageIndex]
             thumbnailOfSize:NSMakeSize(140,198) forBox:kPDFDisplayBoxMediaBox];
         page.minimapImageZoom=140/page.pageWidth; page.minimapImageScale=1;
         [_minimapView noteThumbnailLoadedForPageIndex:page.pageIndex];
     }
+    [self syncSidebarTableColumnWidth];
+    _pageView.needsDisplay=YES;
     [_window.contentView layoutSubtreeIfNeeded];
     Check(!_window.visible,@"reader window stays offscreen");
     Check(NSWidth(_pageScrollView.frame)>100 && NSHeight(_pageScrollView.frame)>100,@"document retains a usable viewport");
@@ -179,7 +234,18 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
                 Check(NSMinX(rect)>=0 && NSMaxX(rect)<=NSWidth(_sidebarContainer.bounds),@"Find controls fit in the minimum sidebar width");
             }
         }
-        Check([((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle isEqual:_tabs[(NSUInteger)_selectedTabIndex].title],@"sidebar retains the full document filename");
+        if (_sidebarModeControl.spdf_selectedSidebarMode==SPDFSidebarModeChapters && _sidebarVisible) {
+            [self selectCurrentSidebarRow];
+            Check(fabs(NSWidth(_sidebarTable.frame)-NSWidth(_sidebarTable.enclosingScrollView.contentView.bounds))<1,
+                @"outline table fits sidebar clip width after resize");
+            if (_sidebarItems.count && _sidebarTable.selectedRow>=0) {
+                NSTableCellView* cell=[_sidebarTable viewAtColumn:0 row:_sidebarTable.selectedRow makeIfNecessary:YES];
+                NSTextField* page=[cell viewWithTag:8802];
+                Check(cell.textField.font.pointSize==12,@"outline uses compact regular text");
+                Check(NSMaxX(page.frame)<=NSWidth(_sidebarTable.enclosingScrollView.contentView.bounds)-8,@"trailing chapter page remains visible");
+            }
+        }
+        Check([((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle isEqual:_tabs[(NSUInteger)_selectedTabIndex].path.lastPathComponent],@"sidebar retains the full document filename");
     }
     NSView* view=_window.contentView;
     for (NSView* child in @[_tabStrip,_toolbar,_sidebarModeControl,_pageScrollView]) {
@@ -264,10 +330,15 @@ int main(int argc,const char* argv[]) {
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             CheckUpdaterMenu(reader);
+            [reader checkResponsivePanels];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil width:width.doubleValue sidebar:YES map:YES];
             }
+            [reader setProbeHistory:YES];
+            [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-history.png" : @"reader-light-history.png"] : nil
+                width:1280 sidebar:YES map:YES];
+            [reader setProbeHistory:NO];
             [reader setProbeVersion:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-version.png" : @"reader-light-version.png"] : nil
                 width:640 sidebar:YES map:YES];

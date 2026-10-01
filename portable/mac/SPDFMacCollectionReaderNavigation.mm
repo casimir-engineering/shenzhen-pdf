@@ -61,6 +61,9 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
         });
     });
 }
+- (BOOL)collectionTabIsSavedVersion:(SPDFDocumentTab*)tab {
+    return tab && objc_getAssociatedObject(tab,&versionInfoKey) != nil;
+}
 - (void)collectionSetVersionInfo:(NSDictionary*)info forTab:(SPDFDocumentTab*)tab {
     if (!tab) return;
     objc_setAssociatedObject(tab,&versionInfoKey,info,OBJC_ASSOCIATION_COPY_NONATOMIC);

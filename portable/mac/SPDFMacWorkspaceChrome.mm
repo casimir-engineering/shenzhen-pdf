@@ -2,7 +2,10 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarWorkspace.h"
+#import "SPDFMacSidebarChapters.h"
 #import "SPDFMacCollectionIntegration.h"
+#import "SPDFMacCollectionReaderNavigation.h"
+#import "SPDFMacWorkspacePanels.h"
 #import "SPDFMacCollectionStyle.h"
 #import <objc/runtime.h>
 
@@ -19,7 +22,9 @@ static char chromeKey;
 @property NSButton* next;
 @property NSLayoutConstraint* toolbarRight;
 @property NSView* footer;
-@property NSTextField* pageStatus;
+@property NSTextField* sourceStatus;
+@property NSTextField* outlineSummary;
+@property NSLayoutConstraint* sidebarBottom;
 @property NSLayoutConstraint* splitBottom;
 @property NSStackView* primaryRow;
 @property NSStackView* headerRow;
@@ -30,11 +35,35 @@ static char chromeKey;
 @implementation SPDFWorkspaceChromeState
 @end
 
+// Explicit icon drawing keeps inactive windows legible and gives every direct
+// action the same optical size, while NSButton keeps its normal input/AX behavior.
+@interface SPDFWorkspaceIconCell : NSButtonCell
+@end
+@implementation SPDFWorkspaceIconCell
+- (void)drawWithFrame:(NSRect)frame inView:(NSView*)view {
+    NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(frame,1,1) xRadius:6 yRadius:6];
+    if (self.highlighted) { [SPDFCollectionColor(@"selected") setFill]; [shape fill]; }
+    NSImage* image = [self.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]] ?: self.image;
+    image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFCollectionColor(@"text")]]] ?: image;
+    [image drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)
+        fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : .35 respectFlipped:view.isFlipped hints:nil];
+    if (view.window.firstResponder == view) {
+        [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
+    }
+}
+@end
+static void StyleIcon(NSButton* button) {
+    NSImage* image = button.image; NSString* title = button.title;
+    id target = button.target; SEL action = button.action; BOOL enabled = button.enabled;
+    SPDFWorkspaceIconCell* cell = [[SPDFWorkspaceIconCell alloc] initImageCell:image];
+    cell.title = title; cell.bordered = NO; cell.imagePosition = NSImageOnly;
+    button.cell = cell; button.target = target; button.action = action; button.enabled = enabled;
+}
 static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) {
     NSImage* image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
     [image setTemplate:YES];
     NSButton* button = [NSButton buttonWithImage:image target:target action:action];
-    button.bordered = NO; button.toolTip = title; button.accessibilityLabel = title;
+    StyleIcon(button); button.bordered = NO; button.toolTip = title; button.accessibilityLabel = title;
     button.translatesAutoresizingMaskIntoConstraints = NO;
     [button.widthAnchor constraintEqualToConstant:28].active = YES;
     [button.heightAnchor constraintEqualToConstant:28].active = YES;
@@ -63,6 +92,23 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
             [surface.topAnchor constraintEqualToAnchor:host.topAnchor],
             [surface.bottomAnchor constraintEqualToAnchor:host.bottomAnchor]]];
     }
+    for (NSSearchField* field in @[_sidebarFilterField,_searchField]) {
+        SPDFCollectionConfigureSearchField(field); field.font = [NSFont systemFontOfSize:12];
+        [field.heightAnchor constraintEqualToConstant:30].active = YES;
+    }
+    for (NSLayoutConstraint* constraint in _sidebarContainer.constraints)
+        if (constraint.firstItem == _sidebarFilterField && constraint.firstAttribute == NSLayoutAttributeLeading)
+            constraint.constant = 12;
+    state.outlineSummary = SPDFCollectionText(@"",11,NSFontWeightRegular,YES);
+    state.outlineSummary.translatesAutoresizingMaskIntoConstraints = NO;
+    [_sidebarContainer addSubview:state.outlineSummary];
+    [NSLayoutConstraint activateConstraints:@[
+        [state.outlineSummary.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:16],
+        [state.outlineSummary.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-12],
+        [state.outlineSummary.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor constant:-10]]];
+    for (NSLayoutConstraint* constraint in _sidebarContainer.constraints)
+        if (constraint.firstItem == _sidebarTable.enclosingScrollView && constraint.firstAttribute == NSLayoutAttributeBottom)
+            state.sidebarBottom = constraint;
     _sidebarTable.backgroundColor = NSColor.clearColor; _sidebarTable.enclosingScrollView.drawsBackground = NO;
     _toolbar.edgeInsets = NSEdgeInsetsMake(8,8,8,8); _toolbar.spacing = 4;
     // Replace the crowded global toolbar with document controls; Cmd+F's real
@@ -72,8 +118,9 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     _pageField.font = [NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
     for (NSLayoutConstraint* c in _pageField.constraints) if (c.firstAttribute == NSLayoutAttributeWidth) c.constant = 30;
     _fitModePopup.bordered = NO; _fitModePopup.font = [NSFont systemFontOfSize:12];
-    _ocrButton.bordered = NO; _translateButton.bordered = NO;
-    _readingThemeButton.segmentStyle = NSSegmentStyleSmallSquare;
+    StyleIcon(_ocrButton); StyleIcon(_translateButton);
+    _readingThemeButton.segmentStyle = NSSegmentStyleSeparated;
+    [(NSCell*)_readingThemeButton.cell setBordered:NO];
     state.previous = Icon(@"chevron.left",@"Previous page",self,@selector(previousPage:));
     state.next = Icon(@"chevron.right",@"Next page",self,@selector(nextPage:));
     state.collection = Icon(@"books.vertical",@"Collection",self,@selector(showCollectionManager:));
@@ -132,21 +179,19 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [_searchField.topAnchor constraintEqualToAnchor:state.searchControls.topAnchor],
         [_searchField.leadingAnchor constraintEqualToAnchor:state.searchControls.leadingAnchor],
         [_searchField.trailingAnchor constraintEqualToAnchor:state.searchControls.trailingAnchor],
-        [_searchField.heightAnchor constraintEqualToConstant:28],
+        [_searchField.heightAnchor constraintEqualToConstant:30],
         [options.topAnchor constraintEqualToAnchor:_searchField.bottomAnchor constant:4],
         [options.leadingAnchor constraintEqualToAnchor:state.searchControls.leadingAnchor],
         [options.trailingAnchor constraintLessThanOrEqualToAnchor:state.searchControls.trailingAnchor]]];
-    _sidebarScrollBelowModeConstraint.constant = 78;
+    _sidebarScrollBelowModeConstraint.constant = 82;
     state.footer = SPDFCollectionSurface(@"pane"); state.footer.translatesAutoresizingMaskIntoConstraints = NO;
     [_window.contentView addSubview:state.footer];
     _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _statusLabel.font = [NSFont systemFontOfSize:11]; _statusLabel.textColor = NSColor.secondaryLabelColor;
     [state.footer addSubview:_statusLabel];
-    state.pageStatus = [NSTextField labelWithString:@""];
-    state.pageStatus.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
-    state.pageStatus.textColor = NSColor.secondaryLabelColor;
-    state.pageStatus.translatesAutoresizingMaskIntoConstraints = NO;
-    [state.footer addSubview:state.pageStatus];
+    state.sourceStatus = SPDFCollectionText(@"",11,NSFontWeightRegular,YES);
+    state.sourceStatus.translatesAutoresizingMaskIntoConstraints = NO;
+    [state.footer addSubview:state.sourceStatus];
     for (NSLayoutConstraint* c in _window.contentView.constraints)
         if (c.firstItem == _splitView && c.firstAttribute == NSLayoutAttributeBottom) state.splitBottom = c;
     [NSLayoutConstraint activateConstraints:@[
@@ -154,16 +199,23 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [state.footer.trailingAnchor constraintEqualToAnchor:_window.contentView.trailingAnchor],
         [state.footer.bottomAnchor constraintEqualToAnchor:_window.contentView.bottomAnchor],
         [state.footer.heightAnchor constraintEqualToConstant:28],
-        [_statusLabel.leadingAnchor constraintEqualToAnchor:state.footer.leadingAnchor constant:16],
-        [_statusLabel.centerYAnchor constraintEqualToAnchor:state.footer.centerYAnchor],
-        [_statusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:state.pageStatus.leadingAnchor constant:-16],
-        [state.pageStatus.trailingAnchor constraintEqualToAnchor:state.footer.trailingAnchor constant:-16],
-        [state.pageStatus.centerYAnchor constraintEqualToAnchor:state.footer.centerYAnchor]]];
+        [state.sourceStatus.leadingAnchor constraintEqualToAnchor:state.footer.leadingAnchor constant:16],
+        [state.sourceStatus.centerYAnchor constraintEqualToAnchor:state.footer.centerYAnchor],
+        [state.sourceStatus.trailingAnchor constraintLessThanOrEqualToAnchor:_statusLabel.leadingAnchor constant:-16],
+        [_statusLabel.trailingAnchor constraintEqualToAnchor:state.footer.trailingAnchor constant:-16],
+        [_statusLabel.centerYAnchor constraintEqualToAnchor:state.footer.centerYAnchor]]];
     [self syncWorkspaceChrome];
 }
 - (void)syncWorkspaceChrome {
     SPDFWorkspaceChromeState* state = objc_getAssociatedObject(self,&chromeKey); if (!state) return;
-    ((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle = [self selectedTab].title ?: _path.lastPathComponent ?: @"No document";
+    ((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle = [self selectedTab].path.lastPathComponent ?: _path.lastPathComponent ?: @"No document";
+    BOOL chapters = _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters;
+    state.outlineSummary.hidden = !chapters;
+    state.outlineSummary.stringValue = chapters ? [self sidebarOutlineSummary] : @"";
+    state.sidebarBottom.constant = chapters ? -36 : 0;
+    // Source identity and the existing live status each appear once. Errors,
+    // search progress and zoom continue through the original status label.
+    state.sourceStatus.stringValue = [self collectionTabIsSavedVersion:[self selectedTab]] ? @"Saved version · Read-only" : (_path.length ? @"Original file" : @"No document");
     state.searchControls.hidden = _sidebarModeControl.spdf_selectedSidebarMode != SPDFSidebarModeSearch;
     state.mapHeader.hidden = !_minimapVisible || _presentationMode;
     state.command.hidden = _presentationMode;
@@ -179,7 +231,6 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         if ([view.identifier isEqualToString:@"CollectionVersionIndicator"] && !view.hidden) revision = YES;
     _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 76 : 44) + (revision ? 28 : 0);
     state.footer.hidden = _presentationMode; state.splitBottom.constant = _presentationMode ? 0 : -28;
-    state.pageStatus.stringValue = _pageField.stringValue.length ? [NSString stringWithFormat:@"Page %@ %@",_pageField.stringValue,_pageCountLabel.stringValue] : @"";
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _minimapVisible;
     _toolbarOverflowButton.hidden = YES;
@@ -190,12 +241,14 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     _findSegments.hidden = !_searchField.stringValue.length;
 }
 - (void)showGroupsSidebar:(id)sender {
+    [self prioritizeWorkspaceSidebar];
     (void)sender;
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
     _sidebarPreferredVisible = YES;
     [self rebuildSidebar]; [self syncWorkspaceChrome]; [self rememberSidebarWorkspaceMode];
 }
 - (void)revealWorkspaceFind {
+    [self prioritizeWorkspaceSidebar];
     if (!_sidebarModeControl) return;
     _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
     _sidebarPreferredVisible = YES;

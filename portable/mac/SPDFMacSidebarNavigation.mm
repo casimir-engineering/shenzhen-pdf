@@ -24,7 +24,8 @@ static NSString* Symbol(NSInteger mode) {
     NSRect bounds = NSInsetRect(self.bounds,.5,.5);
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7 yRadius:7];
     if (selected || self.highlighted || _hovered) {
-        NSColor* fill = [NSColor.labelColor colorWithAlphaComponent:selected ? .085 : (self.highlighted ? .065 : .035)];
+        BOOL dark = [[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
+        NSColor* fill = selected ? (dark ? [NSColor colorWithSRGBRed:.216 green:.294 blue:.380 alpha:1] : [NSColor colorWithSRGBRed:.859 green:.898 blue:.941 alpha:1]) : [NSColor.labelColor colorWithAlphaComponent:self.highlighted ? .065 : .035];
         [fill setFill]; [shape fill];
     }
     if (selected && self.window.firstResponder == self.superview) {
@@ -32,9 +33,9 @@ static NSString* Symbol(NSInteger mode) {
     }
     NSColor* color = self.enabled ? NSColor.labelColor : NSColor.disabledControlTextColor;
     NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
-    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:13 weight:selected ? NSFontWeightSemibold : NSFontWeightRegular]];
+    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-14)/2),7,14,14) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    [icon drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-16)/2),6,16,16) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
 
 }
 - (void)updateTrackingAreas {
@@ -73,7 +74,9 @@ static NSString* Symbol(NSInteger mode) {
     if (!_collapse) {
         _collapse = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:nil]
                                       target:target action:action];
-        _collapse.bordered = NO; _collapse.toolTip = @"Hide side panel";
+        _collapse.bordered = NO;
+        _collapse.contentTintColor = NSColor.labelColor;
+        _collapse.image = [_collapse.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]]; _collapse.toolTip = @"Hide side panel";
         _collapse.accessibilityLabel = @"Hide side panel"; [self addSubview:_collapse];
     }
 }

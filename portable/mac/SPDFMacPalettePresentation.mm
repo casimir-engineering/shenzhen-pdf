@@ -2,6 +2,7 @@
 #import "SPDFMacCollectionPalette.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacPaletteAppearance.h"
+#import "SPDFMacSidebarPresentation.h"
 static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(value,low),high); }
 
 @implementation ShenzhenMacDelegate (SPDFMacPalettePresentation)
@@ -228,6 +229,7 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
 }
 - (NSTableRowView*)tableView:(NSTableView*)tableView rowViewForRow:(NSInteger)row {
     (void)row;
-    return tableView == _paletteTable ? SPDFPaletteRowView() : nil;
+    if (tableView == _paletteTable) return SPDFPaletteRowView();
+    return tableView == _sidebarTable ? SPDFSidebarRowView() : nil;
 }
 @end

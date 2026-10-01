@@ -58,6 +58,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacPropertiesPanel.h"
 #import "SPDFMacSelectionAdapter.h"
 #import "SPDFMacSidebarChapters.h"
+#import "SPDFMacSidebarPresentation.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabViewState.h"
 #import "SPDFMacWindowPlacement.h"
@@ -97,8 +98,6 @@ static const CGFloat kSidebarMaxWidthFraction = 0.34;
 static const CGFloat kMinimapDividerWidth = 5.0;
 static const CGFloat kSidebarDividerWidth = kMinimapDividerWidth;
 static const CGFloat kTopChromeResizeCornerSize = 16.0;
-static const CGFloat kSidebarSearchLeadingInset = 0.0;
-static const CGFloat kSidebarSearchTrailingInset = 8.0;
 // Comment rows carry the full annotation text, so they wrap to a few lines.
 // Size the row to the wrapped text plus a little vertical breathing room above
 // and below (mirroring the comfortable spacing chapter rows get for free).
@@ -2849,7 +2848,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _sidebarTable = [[SPDFSidebarTableView alloc] init];
     ((SPDFSidebarTableView*)_sidebarTable).reader = self;
     _sidebarTable.headerView = nil;
-    _sidebarTable.rowHeight = 25.0;
+    _sidebarTable.rowHeight = 32.0;
+    _sidebarTable.intercellSpacing = NSZeroSize;
+    _sidebarTable.style = NSTableViewStylePlain;
     _sidebarTable.dataSource = self;
     _sidebarTable.delegate = self;
     _sidebarTable.target = self;
@@ -9225,15 +9226,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)syncSidebarTableColumnWidth {
     if (!_sidebarTable || _sidebarTable.tableColumns.count == 0) return;
-    CGFloat width = 0.0;
-    NSScrollView* scrollView = _sidebarTable.enclosingScrollView;
-    if (scrollView) width = NSWidth(scrollView.contentView.bounds);
-    if (!isfinite(width) || width < 80.0) width = NSWidth(_sidebarTable.bounds);
-    if (!isfinite(width) || width < 80.0) width = [self clampedSidebarWidth];
-    width = MAX(80.0, floor(width));
-    NSTableColumn* column = _sidebarTable.tableColumns.firstObject;
-    if (fabs(column.width - width) > 0.5) {
-        column.width = width;
+    if (SPDFSidebarFitTableToViewport(_sidebarTable)) {
         // Comment rows wrap to the column width, so their heights change with it.
         NSMutableIndexSet* commentRows = [NSMutableIndexSet indexSet];
         for (NSUInteger i = 0; i < _sidebarItems.count; ++i)
@@ -15201,8 +15194,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         if (row >= 0 && row < (NSInteger)_sidebarItems.count) {
             NSDictionary* item = _sidebarItems[(NSUInteger)row];
             NSString* kind = item[@"kind"];
-            if ([kind isEqualToString:@"findResult"]) return 46.0;
-            if ([kind isEqualToString:@"findDivider"]) return 30.0;
+            if ([kind isEqualToString:@"findResult"] || [kind isEqualToString:@"findDivider"])
+                return SPDFSidebarFindRowHeight(item);
             if ([kind isEqualToString:@"findStatus"]) {
                 CGFloat visibleHeight = NSHeight(tableView.enclosingScrollView.contentView.bounds);
                 return MAX(36.0, floor(visibleHeight));
@@ -15293,180 +15286,11 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
     NSDictionary* item = _sidebarItems[(NSUInteger)row];
     NSString* kind = item[@"kind"];
-    if ([kind isEqualToString:@"findDivider"]) {
-        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarFindDividerCell" owner:self];
-        NSView* capsule = nil;
-        NSView* line = nil;
-        NSLayoutConstraint* capsuleWidth = nil;
-        if (!cell) {
-            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 30)];
-            cell.identifier = @"SidebarFindDividerCell";
-
-            capsule = [[NSView alloc] init];
-            capsule.translatesAutoresizingMaskIntoConstraints = NO;
-            capsule.identifier = @"dividerCapsule";
-            capsule.wantsLayer = YES;
-            capsule.layer.cornerRadius = 8.0;
-            capsule.layer.masksToBounds = YES;
-            [cell addSubview:capsule];
-
-            NSTextField* field = [NSTextField labelWithString:@""];
-            field.translatesAutoresizingMaskIntoConstraints = NO;
-            field.alignment = NSTextAlignmentLeft;
-            field.lineBreakMode = NSLineBreakByTruncatingTail;
-            field.maximumNumberOfLines = 1;
-            field.cell.usesSingleLineMode = YES;
-            [field setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
-                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
-            cell.textField = field;
-            [capsule addSubview:field];
-
-            line = [[NSView alloc] init];
-            line.translatesAutoresizingMaskIntoConstraints = NO;
-            line.identifier = @"dividerLine";
-            line.wantsLayer = YES;
-            [cell addSubview:line];
-
-            capsuleWidth = [capsule.widthAnchor constraintEqualToConstant:120.0];
-            capsuleWidth.identifier = @"dividerCapsuleWidth";
-            [NSLayoutConstraint activateConstraints:@[
-                [capsule.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:kSidebarSearchLeadingInset],
-                [capsule.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-                [capsule.heightAnchor constraintEqualToConstant:20.0], capsuleWidth,
-                [field.leadingAnchor constraintEqualToAnchor:capsule.leadingAnchor constant:9],
-                [field.trailingAnchor constraintEqualToAnchor:capsule.trailingAnchor constant:-9],
-                [field.centerYAnchor constraintEqualToAnchor:capsule.centerYAnchor],
-                [line.leadingAnchor constraintEqualToAnchor:capsule.trailingAnchor constant:9],
-                [line.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-kSidebarSearchTrailingInset],
-                [line.heightAnchor constraintEqualToConstant:1.0],
-                [line.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
-            ]];
-        }
-        for (NSView* subview in cell.subviews) {
-            if ([subview.identifier isEqualToString:@"dividerCapsule"]) capsule = subview;
-            if ([subview.identifier isEqualToString:@"dividerLine"]) line = subview;
-        }
-        for (NSLayoutConstraint* constraint in capsule.constraints) {
-            if ([constraint.identifier isEqualToString:@"dividerCapsuleWidth"]) {
-                capsuleWidth = constraint;
-                break;
-            }
-        }
-        cell.textField.stringValue = item[@"title"] ?: @"";
-        NSFont* dividerFont = [NSFont systemFontOfSize:11.0 weight:NSFontWeightSemibold];
-        cell.textField.font = [[NSFontManager sharedFontManager] convertFont:dividerFont toHaveTrait:NSItalicFontMask];
-        cell.textField.textColor = NSColor.secondaryLabelColor;
-        CGFloat rowWidth = tableColumn ? tableColumn.width : NSWidth(tableView.bounds);
-        if (!isfinite(rowWidth) || rowWidth < 120.0) rowWidth = NSWidth(cell.bounds);
-        if (!isfinite(rowWidth) || rowWidth < 120.0) rowWidth = 230.0;
-        CGFloat availableWidth = MAX(80.0, rowWidth - kSidebarSearchLeadingInset - kSidebarSearchTrailingInset);
-        CGFloat titleWidth =
-            [cell.textField.stringValue sizeWithAttributes:@{NSFontAttributeName : cell.textField.font}].width + 18.0;
-        CGFloat meaningfulLineWidth = 42.0;
-        CGFloat lineGap = 9.0;
-        CGFloat maxCompactWidth = availableWidth - lineGap - meaningfulLineWidth;
-        CGFloat compactWidth = MAX(64.0, MIN(ceil(titleWidth), maxCompactWidth));
-        BOOL showLine = maxCompactWidth >= 88.0 && titleWidth <= maxCompactWidth + 0.5;
-        CGFloat expandedWidth = availableWidth;
-        capsuleWidth.constant = floor(showLine ? compactWidth : expandedWidth);
-        line.alphaValue = showLine ? 1.0 : 0.0;
-        NSColor* capsuleColor = [NSColor.secondaryLabelColor colorWithAlphaComponent:0.15];
-        NSColor* lineColor = [NSColor.secondaryLabelColor colorWithAlphaComponent:0.24];
-        capsule.layer.backgroundColor = capsuleColor.CGColor;
-        line.layer.backgroundColor = lineColor.CGColor;
-        return cell;
-    }
-
-    if ([kind isEqualToString:@"findStatus"]) {
-        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarFindStatusCell" owner:self];
-        if (!cell) {
-            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 36)];
-            cell.identifier = @"SidebarFindStatusCell";
-            NSTextField* field = [NSTextField labelWithString:@""];
-            field.translatesAutoresizingMaskIntoConstraints = NO;
-            field.alignment = NSTextAlignmentCenter;
-            field.lineBreakMode = NSLineBreakByTruncatingTail;
-            field.maximumNumberOfLines = 1;
-            field.cell.usesSingleLineMode = YES;
-            cell.textField = field;
-            [cell addSubview:field];
-            [NSLayoutConstraint activateConstraints:@[
-                [field.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],
-                [field.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-8],
-                [field.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor]
-            ]];
-        }
-        cell.textField.stringValue = item[@"title"] ?: @"";
-        cell.textField.font = [NSFont systemFontOfSize:12.0];
-        cell.textField.textColor = NSColor.secondaryLabelColor;
-        return cell;
-    }
-
-    if ([kind isEqualToString:@"findResult"]) {
-        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"SidebarFindResultCell" owner:self];
-        NSTextField* subtitle = nil;
-        if (!cell) {
-            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 230, 46)];
-            cell.identifier = @"SidebarFindResultCell";
-            NSTextField* title = [NSTextField labelWithString:@""];
-            title.translatesAutoresizingMaskIntoConstraints = NO;
-            title.lineBreakMode = NSLineBreakByTruncatingTail;
-            title.maximumNumberOfLines = 1;
-            title.cell.usesSingleLineMode = YES;
-            title.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium];
-            cell.textField = title;
-            [cell addSubview:title];
-
-            subtitle = [NSTextField labelWithString:@""];
-            subtitle.translatesAutoresizingMaskIntoConstraints = NO;
-            subtitle.identifier = @"subtitle";
-            subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
-            subtitle.maximumNumberOfLines = 1;
-            subtitle.cell.usesSingleLineMode = YES;
-            subtitle.font = [NSFont systemFontOfSize:11.0];
-            subtitle.textColor = NSColor.secondaryLabelColor;
-            [title setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
-                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
-            [subtitle setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
-                                               forOrientation:NSLayoutConstraintOrientationHorizontal];
-            [cell addSubview:subtitle];
-
-            [NSLayoutConstraint activateConstraints:@[
-                [title.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:kSidebarSearchLeadingInset],
-                [title.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor
-                                                     constant:-kSidebarSearchTrailingInset],
-                [title.topAnchor constraintEqualToAnchor:cell.topAnchor constant:7],
-                [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-                [subtitle.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
-                [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2]
-            ]];
-        }
-        for (NSView* subview in cell.subviews)
-            if ([subview.identifier isEqualToString:@"subtitle"]) subtitle = (NSTextField*)subview;
-        cell.textField.lineBreakMode = NSLineBreakByTruncatingTail;
-        cell.textField.maximumNumberOfLines = 1;
-        cell.textField.cell.usesSingleLineMode = YES;
-        NSString* titleText = item[@"title"] ?: @"";
-        NSMutableParagraphStyle* paragraph = [[NSMutableParagraphStyle alloc] init];
-        paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
-        NSDictionary* titleAttributes = @{
-            NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightMedium],
-            NSForegroundColorAttributeName : NSColor.labelColor,
-            NSParagraphStyleAttributeName : paragraph
-        };
-        NSMutableAttributedString* titleString = [[NSMutableAttributedString alloc] initWithString:titleText
-                                                                                        attributes:titleAttributes];
-        NSDictionary* matchAttributes = @{
-            NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightBold],
-            NSForegroundColorAttributeName : NSColor.labelColor,
-            NSParagraphStyleAttributeName : paragraph
-        };
-        for (NSValue* value in [self rangesOfPaletteQuery:item[@"query"] ?: @"" inString:titleText limit:0])
-            [titleString addAttributes:matchAttributes range:value.rangeValue];
-        cell.textField.attributedStringValue = titleString;
-        subtitle.stringValue = item[@"subtitle"] ?: @"";
-        subtitle.textColor = NSColor.secondaryLabelColor;
-        return cell;
+    if ([kind isEqualToString:@"findDivider"] || [kind isEqualToString:@"findStatus"] ||
+        [kind isEqualToString:@"findResult"]) {
+        NSArray<NSValue*>* matches = [kind isEqualToString:@"findResult"]
+            ? [self rangesOfPaletteQuery:item[@"query"] ?: @"" inString:item[@"title"] ?: @"" limit:0] : @[];
+        return SPDFSidebarFindCell(tableView,item,matches);
     }
 
     NSTableCellView* cell = [self sidebarCellForTableView:tableView];

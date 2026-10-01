@@ -108,6 +108,12 @@ static NSBezierPath* SearchShape(NSRect bounds) {
 @property(nonatomic) BOOL editingRectPrepared;
 @end
 @implementation SPDFCollectionSearchCell
+- (void)drawWithFrame:(NSRect)frame inView:(NSView*)view {
+    NSBezierPath* shape = SearchShape(frame);
+    [SPDFCollectionColor(@"pane") setFill]; [shape fill];
+    [SPDFCollectionColor(@"line") setStroke]; [shape stroke];
+    [super drawWithFrame:frame inView:view];
+}
 - (NSRect)focusRingMaskBoundsForFrame:(NSRect)frame inView:(NSView*)view { (void)view; return frame; }
 - (void)drawFocusRingMaskWithFrame:(NSRect)frame inView:(NSView*)view { (void)view; [SearchShape(frame) fill]; }
 // Borderless search chrome needs the same inset for static text and the AppKit field editor.
@@ -144,11 +150,7 @@ static NSBezierPath* SearchShape(NSRect bounds) {
 - (NSRect)focusRingMaskBounds { return self.bounds; }
 - (void)drawFocusRingMask { [SearchShape(self.bounds) fill]; }
 - (NSEdgeInsets)alignmentRectInsets { return NSEdgeInsetsMake(0,0,0,0); }
-- (void)drawRect:(NSRect)dirty {
-    NSBezierPath* shape = SearchShape(self.bounds);
-    [SPDFCollectionColor(@"pane") setFill]; [shape fill]; [SPDFCollectionColor(@"line") setStroke]; [shape stroke];
-    [super drawRect:dirty];
-}
+
 @end
 NSButton* SPDFCollectionButton(NSString* title,id target,SEL action,NSString* kind) {
     SPDFCollectionFlatButton* button = [[SPDFCollectionFlatButton alloc] init]; button.kind = kind;
