@@ -47,13 +47,25 @@ static void CheckCollectionPDFWorkspace(SPDFMacCollectionWindow* manager, SPDFMa
         [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Expect(@"readable saved PDF produces an actual lazy page preview",[manager.thumbnailCache objectForKey:preview.identifier] != nil);
     NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_WINDOW_EVIDENCE"];
-    if (evidence.length) for (NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
+    for (NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
         manager.window.appearance = [NSAppearance appearanceNamed:appearance];
         [manager.window.contentView layoutSubtreeIfNeeded];
-        NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
-        [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
-        NSString* output = [evidence.stringByDeletingPathExtension stringByAppendingFormat:@"-pdf-%@.png",appearance];
-        [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:output atomically:YES];
+        NSBitmapImageRep* previewPixels = [preview bitmapImageRepForCachingDisplayInRect:preview.bounds];
+        [preview cacheDisplayInRect:preview.bounds toBitmapImageRep:previewPixels];
+        CGFloat pageScale = MIN(NSWidth(preview.bounds)/preview.image.size.width,NSHeight(preview.bounds)/preview.image.size.height);
+        CGFloat left = (NSWidth(preview.bounds)-preview.image.size.width*pageScale)/2;
+        CGFloat pixelScale = previewPixels.pixelsWide/NSWidth(preview.bounds);
+        NSColor* edge = [[previewPixels colorAtX:(NSInteger)floor((left+.5)*pixelScale) y:previewPixels.pixelsHigh/2]
+            colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        NSColor* paper = [[previewPixels colorAtX:(NSInteger)floor((left+3)*pixelScale) y:previewPixels.pixelsHigh/2]
+            colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        Expect(@"real Collection page preview has a subtle visible boundary in both appearances",paper.redComponent-edge.redComponent>.04);
+        if (evidence.length) {
+            NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];
+            [manager.window.contentView cacheDisplayInRect:manager.window.contentView.bounds toBitmapImageRep:bitmap];
+            NSString* output = [evidence.stringByDeletingPathExtension stringByAppendingFormat:@"-pdf-%@.png",appearance];
+            [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:output atomically:YES];
+        }
     }
     [NSFileManager.defaultManager removeItemAtPath:directory error:nil];
 }

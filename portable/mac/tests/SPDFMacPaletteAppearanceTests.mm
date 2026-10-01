@@ -43,7 +43,12 @@ int main(void) {
         window.contentView = SPDFPaletteContentView(search,table,nil);
         [window.contentView layoutSubtreeIfNeeded]; [table reloadData]; [table layoutSubtreeIfNeeded];
         Expect(@"palette render remains headless",!window.visible);
-        Expect(@"search uses full width less close-button inset",fabs(NSWidth([search alignmentRectForFrame:search.frame])-(NSWidth(window.contentView.bounds)-62))<1);
+        Expect(@"search uses full width less close-button inset",fabs(NSWidth([search alignmentRectForFrame:search.frame])-(NSWidth(window.contentView.bounds)-78))<1);
+        NSButton* close = (id)Find(window.contentView,@"PaletteClose");
+        Expect(@"palette shows a readable Escape close affordance",[close.title isEqual:@"Esc"] && !close.image &&
+            [close.accessibilityLabel isEqual:@"Close search (Escape)"] &&
+            close.action == NSSelectorFromString(@"closePalette:") && NSWidth(close.frame)>=42);
+        Expect(@"close affordance never overlaps the query",NSMaxX(search.frame)<NSMinX(close.frame));
         Expect(@"title and group share a line in compact results",SPDFPaletteResultHeight(fixture.rows[1])==30);
         Expect(@"text hits retain room for context",SPDFPaletteResultHeight(fixture.rows.lastObject)==50);
         NSView* row = [table viewAtColumn:0 row:1 makeIfNecessary:YES]; [row layoutSubtreeIfNeeded];
