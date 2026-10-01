@@ -204,8 +204,8 @@ void spdf_set_menu_item_system_symbol(NSMenuItem* item, NSString* symbolName) {
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    (void)sender;
-    return NSDragOperationCopy;
+    return SPDFDocumentPathsFromPasteboard(sender.draggingPasteboard).count
+        ? NSDragOperationCopy : NSDragOperationNone;
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {

@@ -1,4 +1,5 @@
 #import "SPDFMacTabStripViewPrivate.h"
+#import "SPDFMacDocumentFormats.h"
 
 static NSString* spdf_tab_strip_json_string_from_object(id object) {
     NSData* data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
@@ -170,6 +171,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     } else {
         [self clearDropIndicator];
     }
+    if (operation == NSDragOperationNone && SPDFDocumentPathsFromPasteboard(sender.draggingPasteboard).count)
+        operation = NSDragOperationCopy;
     return operation;
 }
 
@@ -188,6 +191,10 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    if (![sender.draggingPasteboard availableTypeFromArray:@[SPDFTabDragPasteboardType]]) {
+        [self clearDropIndicator];
+        return [self.reader openFilesFromPasteboard:sender.draggingPasteboard];
+    }
     NSString* json = [sender.draggingPasteboard stringForType:SPDFTabDragPasteboardType];
     NSDictionary* payload = spdf_tab_strip_json_dictionary_from_string(json);
     NSArray* groupTabs = payload[@"groupTabs"];

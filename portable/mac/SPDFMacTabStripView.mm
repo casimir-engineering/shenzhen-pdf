@@ -31,7 +31,7 @@
         _groupDropTabIndex = -1;
         _groupDropBoundaryX = NAN;
         _groupHoverIndex = -1;
-        [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType ]];
+        [self registerForDraggedTypes:@[ SPDFTabDragPasteboardType, NSPasteboardTypeFileURL ]];
     }
     return self;
 }

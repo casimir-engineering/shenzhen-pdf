@@ -216,7 +216,7 @@ do
     # shellcheck disable=SC2086
     spdf_job "$CXX" -isysroot "$SDKROOT" $SANITIZER_FLAGS \
         $SHARED_OBJS "$BUILD_DIR/test-$TEST.o" "$BUILD_DIR/md4c.o" "$BUILD_DIR/spdf_recolor.o" $GUMBO_OBJS \
-        -framework Foundation -framework AppKit -framework CoreText -framework PDFKit \
+        -framework Foundation -framework AppKit -framework CoreText -framework PDFKit -framework ImageIO \
         -framework UniformTypeIdentifiers -framework QuartzCore -o "$BUILD_DIR/$TEST"
 done
 spdf_join

@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import "SPDFMacDocumentFormats.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 NSArray<UTType*>* spdf_document_content_types(void);

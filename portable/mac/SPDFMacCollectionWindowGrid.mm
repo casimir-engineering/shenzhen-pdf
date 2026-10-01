@@ -212,6 +212,8 @@ static const CGFloat GridWidth = 152, GridHeight = 226, GridGap = 8, GridInset =
                 NSBitmapImageRep* bitmap = [SPDFMacMarkdownPrintAdapter imageRepForPageAtIndex:MIN(MAX(0,[row[@"selectedPage"] integerValue]-1),(NSInteger)plan.pages.count-1) paginationPlan:plan
                     attributedString:markdown.renderedDocument.attributedString scale:MIN(300/config.paperSize.width,300/config.paperSize.height)];
                 if (bitmap) { image = [[NSImage alloc] initWithSize:bitmap.size]; [image addRepresentation:bitmap]; }
+            } else if (URL && ![URL.pathExtension.lowercaseString isEqual:@"pdf"]) {
+                image = SPDFCollectionImageThumbnail(URL,[row[@"selectedPage"] integerValue]);
             } else if (URL) {
                 image = SPDFCollectionPDFThumbnail(URL,[row[@"selectedPage"] integerValue],^(PDFDocument* pdf) {
                     // Resolve lazily: standalone Collection UI tests need no core/password runtime.
