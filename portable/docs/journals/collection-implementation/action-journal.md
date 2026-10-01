@@ -580,3 +580,6 @@ Verification was strengthened where the previous fixtures were misleading. Reade
 ![Apply belongs to the storage cap](../../proposals/mac-workspace-rethink/evidence/native-collection-settings-light.png)
 
 The full ranked review trail and test methodology are in [native verification](../../proposals/mac-workspace-rethink/native-verification.md). Scores describe the interface under the tested states; real PDF content, zoom and minimap rendering are deliberately preserved rather than imitated from the mockup.
+
+
+Packaging completed after the accepted critique: the reader and Collection helper were rebuilt into `dist/ShenzhenPDF.app`, the strict deep signature check passed, and source timestamps confirm this bundle contains the new native code. This is the local development build (26.9.23/build1), not a published release. The user's running app was left untouched.
