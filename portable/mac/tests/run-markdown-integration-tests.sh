@@ -116,6 +116,7 @@ $PORTABLE/mac/SPDFMacCollectionStoreFingerprint.mm
 $PORTABLE/mac/SPDFMacCollectionStoreLocation.mm
 $PORTABLE/mac/SPDFMacCollectionStoreMarkdown.mm
 $PORTABLE/mac/SPDFMacCollectionStoreSearch.mm
+$PORTABLE/mac/SPDFMacSearchFileCache.mm
 $PORTABLE/mac/SPDFMacCollectionStoreScheduling.mm
 $PORTABLE/mac/SPDFMacCollectionCompareEngine.mm
 $PORTABLE/mac/SPDFMacCollectionCompareLoad.mm

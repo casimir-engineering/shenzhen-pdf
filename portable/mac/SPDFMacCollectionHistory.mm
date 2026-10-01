@@ -41,6 +41,7 @@
     BOOL _restoringSelection;
     NSStackView* _recoveryActions;
     BOOL _showsDocumentTitle;
+    BOOL _storageLimited;
 }
 @synthesize showsDocumentTitle = _showsDocumentTitle;
 - (void)setShowsDocumentTitle:(BOOL)value { _showsDocumentTitle = value; _title.hidden = !value; }
@@ -48,8 +49,12 @@
                          open:(SPDFCollectionOpenHandler)open {
     if (!(self = [super initWithNibName:nil bundle:nil])) return nil;
     _store = store; _documentID = documentID.copy; _open = [open copy]; _versions = @[]; _showsDocumentTitle = YES;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(collectionSettingsChanged:)
+        name:@"SPDFCollectionSettingsChanged" object:nil];
     return self;
 }
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)collectionSettingsChanged:(NSNotification*)note { (void)note; if (self.isViewLoaded) [self reload]; }
 - (void)loadView {
     self.view = [[NSView alloc] initWithFrame:NSMakeRect(0,0,280,650)];
     _title = [NSTextField labelWithString:@"Loading…"];
@@ -71,10 +76,12 @@
     scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.drawsBackground = NO;
     scroll.identifier = @"HistoryVersionsViewport";
     _compareButton = SPDFCollectionButton(@"Compare with Latest",self,@selector(compareCurrent:),@"normal");
-    _keepButton = SPDFCollectionButton(@"Keep",self,@selector(keep:),@"quiet");
+    _keepButton = SPDFCollectionButton(@"Keep forever",self,@selector(keep:),@"quiet");
     _keepButton.buttonType = NSButtonTypePushOnPushOff;
-    _keepButton.accessibilityLabel = @"Keep selected version";
-    _keepButton.toolTip = @"Keep this version during automatic Collection cleanup.";
+    _keepButton.hidden = YES; // Reveal only after the applied cap has been loaded.
+    _keepButton.identifier = @"HistoryKeepForever";
+    _keepButton.toolTip = @"Keeping any version protects this document’s entire history from automatic storage cleanup. "
+        @"Removing all Keep forever marks allows cleanup; it does not delete anything immediately. Manual deletion is still available.";
     _actionsMenu = SPDFCollectionPopUp(); _actionsMenu.pullsDown = YES;
     _actionsMenu.identifier = @"HistoryVersionActions";
     _actionsMenu.controlSize = NSControlSizeSmall; _actionsMenu.font = [NSFont systemFontOfSize:11];
@@ -89,9 +96,9 @@
         item.target = self; [_actionsMenu.menu addItem:item];
     }
     NSView* flexible = [NSView new];
-    NSStackView* secondary = [NSStackView stackViewWithViews:@[_keepButton,flexible,_actionsMenu]];
+    NSStackView* secondary = [NSStackView stackViewWithViews:@[flexible,_actionsMenu]];
     secondary.orientation = NSUserInterfaceLayoutOrientationHorizontal; secondary.spacing = 6;
-    NSStackView* actions = [NSStackView stackViewWithViews:@[_compareButton,secondary]];
+    NSStackView* actions = [NSStackView stackViewWithViews:@[_compareButton,_keepButton,secondary]];
     actions.orientation = NSUserInterfaceLayoutOrientationVertical;
     actions.alignment = NSLayoutAttributeLeading; actions.spacing = 4;
     NSButton* find = [NSButton buttonWithTitle:@"Find Document…" target:self action:@selector(findDocument:)];
@@ -137,6 +144,7 @@
         [scroll.heightAnchor constraintGreaterThanOrEqualToConstant:112],
         [actions.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [_compareButton.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [_keepButton.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [secondary.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [_recoveryActions.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [find.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
@@ -160,10 +168,11 @@
         NSDictionary* found = nil;
         for (NSDictionary* doc in [self->_store documents]) if ([doc[@"id"] isEqual:identifier]) { found = doc; break; }
         NSArray* versions = [[found[@"versions"] reverseObjectEnumerator] allObjects] ?: @[];
+        BOOL storageLimited = [self->_store.settings[@"storageLimitBytes"] unsignedLongLongValue] > 0;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation != self->_generation) return;
             NSString* selected = [self selectedVersion][@"id"];
-            self->_document = found; self->_versions = versions;
+            self->_document = found; self->_versions = versions; self->_storageLimited = storageLimited;
             self->_title.stringValue = found[@"title"] ?: @"No protected history";
             self->_title.toolTip = found[@"path"];
             BOOL available = SPDFCollectionOriginalAvailable(found);
@@ -238,7 +247,10 @@
         @"Comparison is unavailable for an encrypted saved version." : latest ?
         @"Select an earlier version to compare with Latest. Compare with Previous is in Actions." :
         @"Compare this version with the latest document.";
-    _keepButton.enabled = version != nil;
+    _keepButton.hidden = !_storageLimited;
+    _keepButton.enabled = version != nil && _storageLimited;
+    _keepButton.title = [version[@"keep"] boolValue] ? @"Stop keep forever" : @"Keep forever";
+    _keepButton.accessibilityLabel = _keepButton.title;
     _keepButton.state = [version[@"keep"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
     [_actionsMenu itemAtIndex:1].enabled = version != nil && !encrypted && _table.selectedRow+1 < (NSInteger)_versions.count;
     [_actionsMenu itemAtIndex:2].enabled = version != nil;
@@ -319,6 +331,7 @@
     }];
 }
 - (void)keep:(id)sender {
+    if (!_storageLimited || ![_store.settings[@"storageLimitBytes"] unsignedLongLongValue]) return;
     (void)sender; NSDictionary* version = [self selectedVersion]; if (!version) return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError* error = nil;

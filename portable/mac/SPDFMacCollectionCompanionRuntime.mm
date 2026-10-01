@@ -87,7 +87,9 @@ static SPDFCollectionCompanionRuntime* activeRuntime;
 - (void)applicationDidBecomeActive:(NSNotification*)notification {
     (void)notification; [self.manager reload:nil];
 }
-- (void)settingsChanged:(NSNotification*)notification { (void)notification; [_pipe send:@{@"kind":@"settings"}]; }
+- (void)settingsChanged:(NSNotification*)notification {
+    [_pipe send:@{@"kind":@"settings",@"storageLimitOnly":@([notification.userInfo[@"storageLimitOnly"] boolValue])}];
+}
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)application { (void)application; return YES; }
 - (void)applicationWillTerminate:(NSNotification*)notification { (void)notification; [_pipe close]; }
 @end

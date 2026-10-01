@@ -170,15 +170,12 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         NSString* action = NSStringFromSelector(button.action);
         if ([action isEqual:@"keep:"]) {
             BOOL kept = SPDFCollectionSelectionIsKept(selectedRows);
-            button.title = selectedRows.count > 1 ? (kept ? @"Stop keeping selected versions" : @"Keep selected versions")
-                : (kept ? @"Stop keeping this version" : @"Keep this version");
+            button.title = kept ? @"Stop keep forever" : @"Keep forever";
+            button.hidden = [self.store.settings[@"storageLimitBytes"] unsignedLongLongValue] == 0;
             button.toolTip = @"Keeping any version protects this document’s entire history from automatic storage cleanup. "
-                @"Removing all Keep marks allows cleanup; it does not delete anything immediately. Manual deletion is still available.";
-        } else if ([action isEqual:@"exclude:"]) {
-            button.title = SPDFCollectionSelectionIsPaused(selectedRows) ? @"Resume saving new versions" : @"Pause saving new versions";
-            button.toolTip = @"Controls future Collection copies for this document. Existing saved versions and the original file stay unchanged.";
+                @"Removing all Keep forever marks allows cleanup; it does not delete anything immediately. Manual deletion is still available.";
         }
-        BOOL bulk = [@[@"keep:",@"exclude:",@"deleteSelected:"] containsObject:action];
+        BOOL bulk = [@[@"keep:",@"deleteSelected:"] containsObject:action];
         button.enabled = doc && (single || bulk) && !_mutationPending;
         if ([@[@"preview:",@"exportCopy:",@"keep:",@"compareCurrent:",@"comparePrevious:"] containsObject:action])
             button.enabled &= archived;

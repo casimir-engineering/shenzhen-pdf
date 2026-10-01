@@ -49,7 +49,8 @@
         } else if ([kind isEqual:@"activateReader"]) {
             [NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateAllWindows];
         } else if ([kind isEqual:@"settings"]) {
-            [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:nil];
+            [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:nil
+                userInfo:@{@"storageLimitOnly":@([message[@"storageLimitOnly"] boolValue])}];
         }
     });
 }

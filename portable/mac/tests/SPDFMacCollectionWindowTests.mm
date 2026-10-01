@@ -107,7 +107,7 @@ int main(void) {
             Expect(@"zero custom cap describes unlimited accurately",[manager.storagePolicy.stringValue containsString:@"No automatic deletion"]);
             [manager.limitPicker selectItemAtIndex:0]; [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
             NSMenu* actions = [NSMenu new]; [manager populateDocumentMenu:actions];
-            Expect(@"all secondary document commands remain accessible in More",actions.numberOfItems == 10 &&
+            Expect(@"unlimited Collection exposes document commands without retention or capture toggles",actions.numberOfItems == 8 &&
                 [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Delete Selected Copies…"]);
             NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_WINDOW_EVIDENCE"];
             if (evidence.length) {

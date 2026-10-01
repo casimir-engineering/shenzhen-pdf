@@ -62,11 +62,14 @@ static NSView* Identified(NSView* view, NSString* identifier) {
 @property NSString* fixturePath;
 @property NSUInteger materializations;
 @property BOOL empty;
+@property BOOL kept;
+@property unsigned long long storageLimit;
 @end
 @implementation HistoryFixtureStore
+- (NSDictionary*)settings { return @{@"storageLimitBytes":@(self.storageLimit)}; }
 - (NSArray*)documents {
     return @[@{@"id":@"fixture",@"title":@"Garden notes.md",@"status":@"Protected local copies",@"path":self.fixturePath ?: @"/missing/Notes.md",@"versions":(self.empty ? @[] : @[
-        @{@"id":@"old",@"capturedAt":@1780358400,@"size":@1240,@"reason":@"Before edit"},@{@"id":@"new",@"capturedAt":@1790121600,@"size":@1510,@"reason":@"Saved"}])}];
+        @{@"id":@"old",@"capturedAt":@1780358400,@"size":@1240,@"reason":@"Before edit"},@{@"id":@"new",@"keep":@(self.kept),@"capturedAt":@1790121600,@"size":@1510,@"reason":@"Saved"}])}];
 }
 - (NSURL*)materializeVersionID:(NSString*)version documentID:(NSString*)document error:(NSError**)error {
     (void)document; (void)error;
@@ -281,6 +284,20 @@ int main(void) {
         [container layoutSubtreeIfNeeded];
         [viewport.contentView scrollToPoint:NSZeroPoint];
         Capture(container,evidence,@"linked");
+        NSButton* keep = (id)Identified(history.view,@"HistoryKeepForever");
+        Expect(keep.hidden,"unlimited storage hides History retention action");
+        store.storageLimit = 1000000000;
+        [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:store];
+        Expect(Await(^BOOL { return !keep.hidden; }),"applying a cap reveals retention without reopening History");
+        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        Expect([keep.title isEqual:@"Keep forever"] && keep.enabled,"unkept history selection offers Keep forever");
+        store.kept = YES; [history reload];
+        Expect(Await(^BOOL { return [keep.title isEqual:@"Stop keep forever"]; }),"kept history selection offers Stop keep forever");
+        [host setContentSize:NSMakeSize(176,296)]; [container layoutSubtreeIfNeeded];
+        Expect(NSWidth(keep.frame) <= NSWidth(history.view.bounds),"full retention label fits minimum-width History");
+        store.storageLimit = 0;
+        [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:store];
+        Expect(Await(^BOOL { return keep.hidden; }) && store.kept,"unlimited storage hides retention without clearing existing marks");
         store.empty = YES; [history reload];
         Expect(Await(^BOOL { return table.numberOfRows == 0; }),"empty History reloads without opening a document");
         Expect(!Button(history.view,@"Compare with Latest").enabled &&

@@ -168,13 +168,17 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     }
 }
 - (void)checkRepeatedMapClicks {
-    [_window setContentSize:NSMakeSize(1280,780)];
+    for (NSNumber* width in @[@1280,@880,@560]) {
+    [_window setContentSize:NSMakeSize(width.doubleValue,780)]; [self prioritizeWorkspaceMap];
     [self setMinimapActuallyVisible:YES]; [_window.contentView layoutSubtreeIfNeeded];
+    NSView* persistentButton=nil;
     NSPoint point=NSMakePoint(NSWidth(_window.contentView.bounds)-22,NSHeight(_window.contentView.bounds)-66);
     for (NSInteger count=1;count<=4;count++) {
         NSView* hit=[_window.contentView hitTest:point];
         Check([hit isKindOfClass:NSButton.class],@"stationary map click still hits a button after toggling");
         if (![hit isKindOfClass:NSButton.class]) break;
+        if (!persistentButton) persistentButton=hit;
+        Check(hit==persistentButton,@"map show/hide retains the same control beneath a stationary pointer");
         NSButton* button=(id)hit; BOOL before=_minimapVisible;
         Check(button.action==@selector(toggleMinimap:),@"stationary pointer targets the map toggle");
         NSEvent* down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:count*.1
@@ -182,6 +186,7 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
         [button mouseDown:down];
         [_window.contentView layoutSubtreeIfNeeded];
         Check(_minimapVisible!=before,@"every stationary click toggles the map, including the second click");
+    }
     }
     [self prioritizeWorkspaceSidebar];
 }
