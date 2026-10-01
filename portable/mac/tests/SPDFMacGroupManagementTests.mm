@@ -88,10 +88,19 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     Check(changes == 2 && [action isEqual:@"jump"] && [target isEqual:@"group-2"],"Return activates selected group independently of old mouse row");
     search.stringValue = @"Conference";
     [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]];
-    Check(table.numberOfRows == 0,"document-title text never matches group-name search");
+    Check(table.numberOfRows == 12,"document-name search reveals matching documents under each owning group");
+    NSArray* matchedRows = [manager valueForKey:@"rows"];
+    Check([matchedRows[1][@"document"][@"title"] isEqual:@"Conference notes.md"],"search excludes unrelated siblings");
+    Check([manager.viewState[@"expandedGroups"] count] == 0,"temporary search expansion does not change saved groups");
+    search.stringValue = @".MD";
+    [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]];
+    Check(table.numberOfRows == 12,"filename extension search is case insensitive");
+    search.stringValue = @"";
+    [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]];
+    Check(table.numberOfRows == 6,"clearing search restores saved collapsed groups");
     search.stringValue = @"rEsEaRcH";
     [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]];
-    Check(table.numberOfRows == 1,"group-name search is case insensitive");
+    Check(table.numberOfRows == 3,"group-name search is case insensitive and shows its documents");
     Check([manager.viewState[@"groupQuery"] isEqual:@"rEsEaRcH"],"search is exposed for YAML persistence");
     [manager updateGroups:fixtureGroups state:@{@"expandedGroups":@[@"group-1"],@"groupScroll":@100}];
     [host.contentView layoutSubtreeIfNeeded];
@@ -107,7 +116,7 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     [manager updateGroups:fixtureGroups state:@{@"expandedGroups":@[@"group-1"]}];
     [host.contentView layoutSubtreeIfNeeded];
     if (hiddenActive) [host makeFirstResponder:search];
-    if (variant == 2) { search.stringValue = @"Conference"; [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]]; }
+    if (variant == 2) { search.stringValue = @"No such document"; [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]]; }
     [table layoutSubtreeIfNeeded];
     NSView* visibleResearch = table.numberOfRows > 1 ? [table viewAtColumn:0 row:1 makeIfNecessary:YES] : nil;
     NSButton* eye = Button(visibleResearch,hiddenActive ? @"Show Research in tab bar" : @"Hide Research from tab bar");

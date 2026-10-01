@@ -20,6 +20,7 @@ static void Layout(NSWindow* window, NSSize size) {
     [window.contentView layoutSubtreeIfNeeded];
     Expect(@"headless layout never shows a window",!window.visible);
 }
+#import "SPDFMacCollectionGridChecks.h"
 static NSView* Label(NSView* view, NSString* string) {
     if ([view isKindOfClass:NSTextField.class] && [[(NSTextField*)view stringValue] isEqual:string]) return view;
     for (NSView* child in view.subviews) { NSView* found = Label(child,string); if (found) return found; }
@@ -140,6 +141,7 @@ int main(void) {
                 @"path": @"/tmp/Bridge Notes.pdf", @"versions": @[]};
             NSDictionary* fixtureVersion = @{@"id": @"fixture-version", @"capturedAt": @1727092800,
                 @"encrypted": @YES};
+            CheckCompactCollectionGrid(manager,@{@"document":fixtureDocument,@"version":fixtureVersion},evidence);
             manager.rows = @[@{@"document": fixtureDocument, @"version": fixtureVersion}];
             [manager.table reloadData]; [manager reloadGrid];
             [manager.window.contentView layoutSubtreeIfNeeded]; [manager.grid layoutSubtreeIfNeeded];
@@ -169,7 +171,7 @@ int main(void) {
                 fixtureItem.textField.superview == fixtureItem.view &&
                     NSIntersectsRect(fixtureItem.textField.frame,fixtureItem.view.bounds));
             Expect(@"thumbnail caption has stable layout and rendered pixels",
-                !fixtureItem.textField.hasAmbiguousLayout && fixtureItem.textField.frame.size.height == 50 &&
+                !fixtureItem.textField.hasAmbiguousLayout && fixtureItem.textField.frame.size.height == 36 &&
                     CaptionHasInk(fixtureItem));
             Expect(@"thumbnail item is a named accessibility element",fixtureItem.view.isAccessibilityElement &&
                 [fixtureItem.view.accessibilityLabel containsString:@"Bridge Notes.pdf"] &&
