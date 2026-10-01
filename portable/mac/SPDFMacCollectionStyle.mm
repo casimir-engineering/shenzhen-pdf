@@ -3,7 +3,7 @@ static NSColor* Hex(unsigned value) {
     return [NSColor colorWithSRGBRed:((value>>16)&255)/255.0 green:((value>>8)&255)/255.0 blue:(value&255)/255.0 alpha:1];
 }
 NSColor* SPDFCollectionColor(NSString* token) {
-    NSDictionary* palette = @{@"window":@[@0xffffff,@0x292b2e],@"sidebar":@[@0xf6f6f5,@0x232426],
+    NSDictionary* palette = @{@"titlebar":@[@0xe8e8eb,@0x202125],@"window":@[@0xffffff,@0x292b2e],@"sidebar":@[@0xf6f6f5,@0x232426],
         @"pane":@[@0xf6f6f5,@0x232426],@"text":@[@0x26282b,@0xeceef1],@"secondary":@[@0x61666d,@0xb3b7be],
         @"line":@[@0xdddfdf,@0x414448],@"control":@[@0xf6f6f5,@0x232426],@"selected":@[@0xdbe5f0,@0x374b61],
         @"accent":@[@0x286398,@0xa1c9ed],@"hover":@[@0xe8ebed,@0x393d42],@"highlight":@[@0xffe59a,@0x685521]};

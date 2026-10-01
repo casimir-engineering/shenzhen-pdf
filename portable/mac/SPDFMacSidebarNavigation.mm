@@ -1,12 +1,12 @@
 #import "SPDFMacSidebarModeControl.h"
 
-static const CGFloat RowHeight = 26, RowGap = 0;
+static const CGFloat RowHeight = 28;
 static NSString* Symbol(NSInteger mode) {
     switch (mode) {
         case SPDFSidebarModeComments: return @"text.bubble";
         case SPDFSidebarModeSearch: return @"magnifyingglass";
         case SPDFSidebarModeHistory: return @"clock.arrow.circlepath";
-        case SPDFSidebarModeGroups: return @"rectangle.3.group";
+        case SPDFSidebarModeGroups: return @"square.3.layers.3d";
         default: return @"list.bullet.indent";
     }
 }
@@ -34,12 +34,8 @@ static NSString* Symbol(NSInteger mode) {
     NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:13 weight:selected ? NSFontWeightSemibold : NSFontWeightRegular]];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:NSMakeRect(10,6,14,14) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-    NSMutableParagraphStyle* paragraph = [NSMutableParagraphStyle new]; paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
-    NSDictionary* attributes = @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:selected ? NSFontWeightSemibold : NSFontWeightRegular],
-        NSForegroundColorAttributeName:color,NSParagraphStyleAttributeName:paragraph};
-    CGFloat height = [self.title sizeWithAttributes:attributes].height;
-    [self.title drawInRect:NSMakeRect(32,floor((NSHeight(self.bounds)-height)/2),MAX(0,NSWidth(self.bounds)-42),height) withAttributes:attributes];
+    [icon drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-14)/2),7,14,14) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+
 }
 - (void)updateTrackingAreas {
     [super updateTrackingAreas]; if (_hoverArea) [self removeTrackingArea:_hoverArea];
@@ -49,7 +45,7 @@ static NSString* Symbol(NSInteger mode) {
 - (void)mouseEntered:(NSEvent*)event { (void)event; _hovered = YES; self.needsDisplay = YES; }
 - (void)mouseExited:(NSEvent*)event { (void)event; _hovered = NO; self.needsDisplay = YES; }
 - (void)keyDown:(NSEvent*)event {
-    if (event.keyCode == 125 || event.keyCode == 126 || event.keyCode == 49 || event.keyCode == 36 || event.keyCode == 76) [self.superview keyDown:event]; else [super keyDown:event];
+    if (event.keyCode == 125 || event.keyCode == 126 || event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 49 || event.keyCode == 36 || event.keyCode == 76) [self.superview keyDown:event]; else [super keyDown:event];
 }
 - (NSRect)focusRingMaskBounds { return NSInsetRect(self.bounds,.5,.5); }
 - (void)drawFocusRingMask { [[NSBezierPath bezierPathWithRoundedRect:self.focusRingMaskBounds xRadius:7 yRadius:7] fill]; }
@@ -59,6 +55,7 @@ static NSString* Symbol(NSInteger mode) {
 
 @implementation SPDFSidebarNavigationControl {
     NSMutableArray<SPDFSidebarNavigationRow*>* _rows;
+    NSButton* _collapse;
 }
 - (BOOL)isFlipped { return YES; }
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -66,7 +63,26 @@ static NSString* Symbol(NSInteger mode) {
     return self;
 }
 - (NSSize)intrinsicContentSize {
-    return NSMakeSize(NSViewNoIntrinsicMetric,self.segmentCount ? self.segmentCount*RowHeight+(self.segmentCount-1)*RowGap+9 : 0);
+    return NSMakeSize(NSViewNoIntrinsicMetric,self.spdf_selectedSidebarMode == SPDFSidebarModeGroups ? 44 : 72);
+}
+- (void)setDocumentTitle:(NSString*)title {
+    if ([_documentTitle isEqualToString:title]) return;
+    _documentTitle = [title copy]; self.needsDisplay = YES;
+}
+- (void)setCollapseTarget:(id)target action:(SEL)action {
+    if (!_collapse) {
+        _collapse = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:nil]
+                                      target:target action:action];
+        _collapse.bordered = NO; _collapse.toolTip = @"Hide side panel";
+        _collapse.accessibilityLabel = @"Hide side panel"; [self addSubview:_collapse];
+    }
+}
+- (NSArray<SPDFSidebarNavigationRow*>*)visualRows {
+    NSMutableArray* result = [NSMutableArray array];
+    for (NSNumber* mode in @[@(SPDFSidebarModeGroups),@(SPDFSidebarModeChapters),@(SPDFSidebarModeSearch),
+                             @(SPDFSidebarModeComments),@(SPDFSidebarModeHistory)])
+        for (SPDFSidebarNavigationRow* row in _rows) if (row.mode == mode.integerValue) [result addObject:row];
+    return result;
 }
 - (void)rebuildRows {
     if (!_rows) return;
@@ -92,22 +108,39 @@ static NSString* Symbol(NSInteger mode) {
     }
 }
 - (void)setSegmentCount:(NSInteger)count { [super setSegmentCount:count]; [self rebuildRows]; }
-- (void)setSelectedSegment:(NSInteger)index { [super setSelectedSegment:index]; [self syncRows]; }
+- (void)setSelectedSegment:(NSInteger)index { [super setSelectedSegment:index]; [self syncRows]; [self invalidateIntrinsicContentSize]; self.needsDisplay = YES; }
 - (void)setTag:(NSInteger)tag forSegment:(NSInteger)segment { [super setTag:tag forSegment:segment]; [self syncRows]; }
 - (void)setLabel:(NSString*)label forSegment:(NSInteger)segment { [super setLabel:label forSegment:segment]; [self syncRows]; }
 - (void)setEnabled:(BOOL)enabled forSegment:(NSInteger)segment { [super setEnabled:enabled forSegment:segment]; [self syncRows]; }
 - (void)setWidth:(CGFloat)width forSegment:(NSInteger)segment { (void)width; (void)segment; }
 - (void)layout {
     [super layout];
-    for (NSUInteger i=0;i<_rows.count;i++) _rows[i].frame = NSMakeRect(0,i*(RowHeight+RowGap),NSWidth(self.bounds),RowHeight);
+    NSArray* rows = [self visualRows];
+    CGFloat width = MIN(28, floor((NSWidth(self.bounds)-16-(_collapse ? 28 : 0))/MAX(1,rows.count)));
+    CGFloat x = 0;
+    for (SPDFSidebarNavigationRow* row in rows) {
+        row.frame = NSMakeRect(x,8,width,RowHeight); x += width;
+        if (row.mode == SPDFSidebarModeGroups) x += 16;
+    }
+    _collapse.frame = NSMakeRect(NSWidth(self.bounds)-28,8,28,28);
 }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty; [[NSColor.labelColor colorWithAlphaComponent:.13] setFill];
-    NSRectFillUsingOperation(NSMakeRect(0,NSHeight(self.bounds)-1,NSWidth(self.bounds),.5),NSCompositingOperationSourceOver);
+    NSRectFill(NSMakeRect(-8,43,NSWidth(self.bounds)+16,.5));
+    SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
+    NSRectFill(NSMakeRect(NSMaxX(group.frame)+7,14,.5,16));
+    if (self.spdf_selectedSidebarMode != SPDFSidebarModeGroups) {
+        NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,53,MAX(0,NSWidth(self.bounds)-8),16)
+            withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],
+                NSForegroundColorAttributeName:NSColor.secondaryLabelColor,NSParagraphStyleAttributeName:style}];
+    }
 }
+
 - (NSView*)hitTest:(NSPoint)point {
     NSPoint local = [self convertPoint:point fromView:self.superview];
     if (self.hidden || !NSPointInRect(local,self.bounds)) return nil;
+    if (_collapse && NSPointInRect(local,_collapse.frame)) return _collapse;
     for (NSView* row in _rows) if (NSPointInRect(local,row.frame)) return row;
     return self;
 }
@@ -128,11 +161,14 @@ static NSString* Symbol(NSInteger mode) {
         if (selected >= 0 && selected < (NSInteger)_rows.count) [self chooseRow:_rows[selected]];
         return;
     }
-    NSInteger direction = event.keyCode == 125 ? 1 : event.keyCode == 126 ? -1 : 0;
+    NSInteger direction = (event.keyCode == 125 || event.keyCode == 124) ? 1 : (event.keyCode == 126 || event.keyCode == 123) ? -1 : 0;
     if (!direction) { [super keyDown:event]; return; }
-    for (NSInteger i=self.selectedSegment+direction;i>=0 && i<self.segmentCount;i+=direction)
-        if ([self isEnabledForSegment:i]) { [self chooseRow:_rows[i]]; return; }
+    NSArray* ordered = [self visualRows];
+    if (self.selectedSegment < 0 || self.selectedSegment >= (NSInteger)_rows.count) return;
+    NSInteger current = [ordered indexOfObject:_rows[self.selectedSegment]];
+    for (NSInteger i=current+direction;i>=0 && i<(NSInteger)ordered.count;i+=direction)
+        if ([ordered[i] isEnabled]) { [self chooseRow:ordered[i]]; return; }
 }
-- (NSArray*)accessibilityChildren { return _rows.copy; }
+- (NSArray*)accessibilityChildren { return _collapse ? [(NSArray*)[self visualRows] arrayByAddingObject:_collapse] : [self visualRows]; }
 - (NSString*)accessibilityRole { return NSAccessibilityTabGroupRole; }
 @end

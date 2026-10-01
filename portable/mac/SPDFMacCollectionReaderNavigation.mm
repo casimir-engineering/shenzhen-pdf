@@ -90,9 +90,10 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
         pill.translatesAutoresizingMaskIntoConstraints = NO;
         [pill.widthAnchor constraintLessThanOrEqualToConstant:330].active = YES;
         pill.lineBreakMode = NSLineBreakByTruncatingMiddle;
-        NSUInteger index = [_toolbar.arrangedSubviews indexOfObjectIdenticalTo:_findRegexCheckbox];
-        if (index == NSNotFound) return;
-        [_toolbar insertArrangedSubview:pill atIndex:index+1];
+        // The compact reader gives archival status its own line, so a long
+        // date/recovery label never squeezes page navigation or document tools.
+        [_toolbar addArrangedSubview:pill];
+        [pill.widthAnchor constraintLessThanOrEqualToAnchor:_toolbar.widthAnchor constant:-16].active = YES;
         objc_setAssociatedObject(self,&versionIndicatorKey,pill,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     NSDictionary* doc = info[@"document"], *version = info[@"version"];

@@ -99,7 +99,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     [NSLayoutConstraint activateConstraints:@[
         [view.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],
         [view.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor],
-        [view.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:4],
+        [view.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:(_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch ? 78 : 4)],
         [view.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor]]];
 }
 - (void)focusSidebarSearch:(id)sender { (void)sender; [_window makeFirstResponder:_searchField]; }
@@ -137,10 +137,9 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     } else if (!searchView) {
         NSTextField* title = [NSTextField labelWithString:@"Find in this document"];
         title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
-        NSTextField* help = [NSTextField wrappingLabelWithString:@"Search from the toolbar or press ⌘F. Results will appear here."];
+        NSTextField* help = [NSTextField wrappingLabelWithString:@"Type above to find text in this document. Results will appear here."];
         help.textColor = NSColor.secondaryLabelColor;
-        NSButton* button = [NSButton buttonWithTitle:@"Find…" target:self action:@selector(focusSidebarSearch:)];
-        NSStackView* stack = [NSStackView stackViewWithViews:@[title,help,button]];
+        NSStackView* stack = [NSStackView stackViewWithViews:@[title,help]];
         stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeLeading; stack.spacing = 10;
         searchView = [NSView new]; [self attachSidebarWorkspaceView:searchView];
         stack.translatesAutoresizingMaskIntoConstraints = NO; [searchView addSubview:stack];

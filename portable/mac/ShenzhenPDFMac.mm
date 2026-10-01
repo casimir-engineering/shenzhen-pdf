@@ -1,3 +1,5 @@
+#import "SPDFMacPalettePresentation.h"
+#import "SPDFMacWorkspaceChrome.h"
 #import "SPDFMacCollectionCompanion.h"
 #import "SPDFMacSidebarWorkspace.h"
 #import <Cocoa/Cocoa.h>
@@ -82,7 +84,7 @@ static const CGFloat kPageGap = 26.0;
 // declared in SPDFMacLaunchPrerenderPrivate.h.
 const CGFloat kMinZoom = 0.10;
 const CGFloat kMaxZoom = 16.00;
-static const CGFloat kTabStripHeight = 42.0;
+static const CGFloat kTabStripHeight = 44.0;
 static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 126.5;
@@ -2593,49 +2595,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_toolbarOverflowMenu popUpMenuPositioningItem:nil atLocation:point inView:_toolbarOverflowButton];
 }
 - (void)updateToolbarOverflow {
-    if (!_toolbar || !_toolbarOverflowButton) return;
     if (_suppressToolbarOverflowUpdates) return;
     [self collectionUpdateVersionIndicator];
-    NSArray<NSArray<NSView*>*>* groups = @[
-        @[ _ocrButton, _translateButton, _ocrSeparator ],
-        @[ _findCountLabel ],
-        @[ _findSegments ],
-        @[ _findRegexCheckbox ],
-        @[ _markdownFontSizeSegments, _readingThemeButton ],
-        @[ _fitModePopup, _zoomSegments ],
-    ];
-    NSMutableSet<NSView*>* hiddenViews = [NSMutableSet set];
-    for (NSArray<NSView*>* group in groups)
-        for (NSView* view in group) view.hidden = NO;
-    // The Markdown text-size buttons are markdown-only: re-hide them for PDF
-    // tabs after the blanket reset above so their group never claims width.
-    [self updateMarkdownFontControls];
-    BOOL hasQuery = _searchField.stringValue.length > 0;
-    _findCountLabel.hidden = !hasQuery;
-    _findSegments.hidden = !hasQuery;
-    _toolbarOverflowButton.hidden = YES;
-    [_toolbar layoutSubtreeIfNeeded];
-
-    CGFloat availableWidth = NSWidth(_toolbar.bounds);
-    for (NSArray<NSView*>* group in groups) {
-        BOOL hasVisibleView = NO;
-        for (NSView* view in group) {
-            if (!view.hidden) {
-                hasVisibleView = YES;
-                break;
-            }
-        }
-        if (!hasVisibleView) continue;
-        if (availableWidth <= 0 || _toolbar.fittingSize.width <= availableWidth) break;
-        _toolbarOverflowButton.hidden = NO;
-        for (NSView* view in group) {
-            view.hidden = YES;
-            [hiddenViews addObject:view];
-        }
-        [_toolbar layoutSubtreeIfNeeded];
-    }
-    _toolbarOverflowButton.hidden = hiddenViews.count == 0;
-    [self rebuildToolbarOverflowMenuWithHiddenViews:hiddenViews];
+    [self syncWorkspaceChrome];
 }
 
 - (void)buildWindow {
@@ -2925,7 +2887,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [sidebarScroll.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:8];
     _sidebarScrollBelowModeConstraint.active = NO;
     [NSLayoutConstraint activateConstraints:@[
-        [_sidebarModeControl.topAnchor constraintEqualToAnchor:_sidebarContainer.topAnchor constant:8],
+        [_sidebarModeControl.topAnchor constraintEqualToAnchor:_sidebarContainer.topAnchor],
         [_sidebarModeControl.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:8],
         [_sidebarModeControl.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
         _sidebarFilterTopConstraint,
@@ -2970,6 +2932,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _documentContainer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)];
     _documentContainer.translatesAutoresizingMaskIntoConstraints = NO;
     [_documentContainer addSubview:_pageScrollView];
+    [_documentContainer addSubview:_toolbar];
 
     _minimapDividerView = [[SPDFMinimapDividerView alloc] init];
     _minimapDividerView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -2991,14 +2954,14 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _pageScrollFullWidthConstraint.active = NO;
 
     [NSLayoutConstraint activateConstraints:@[
-        [_pageScrollView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
+        [_pageScrollView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
         [_pageScrollView.leadingAnchor constraintEqualToAnchor:_documentContainer.leadingAnchor],
         [_pageScrollView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
         _pageScrollToMinimapConstraint,
         [_minimapDividerView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
         [_minimapDividerView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
         [_minimapDividerView.trailingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor],
-        _minimapDividerWidthConstraint, [_minimapView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
+        _minimapDividerWidthConstraint, [_minimapView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
         [_minimapView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor],
         [_minimapView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor], _minimapWidthConstraint
     ]];
@@ -3016,15 +2979,15 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _statusLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
 
     _tabStripHeightConstraint = [_tabStrip.heightAnchor constraintEqualToConstant:kTabStripHeight];
-    _toolbarHeightConstraint = [_toolbar.heightAnchor constraintEqualToConstant:42.0];
+    _toolbarHeightConstraint = [_toolbar.heightAnchor constraintEqualToConstant:44.0];
     [NSLayoutConstraint activateConstraints:@[
         [_tabStrip.topAnchor constraintEqualToAnchor:content.topAnchor],
         [_tabStrip.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [_tabStrip.trailingAnchor constraintEqualToAnchor:content.trailingAnchor], _tabStripHeightConstraint,
-        [_toolbar.topAnchor constraintEqualToAnchor:_tabStrip.bottomAnchor],
-        [_toolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [_toolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor], _toolbarHeightConstraint,
-        [_splitView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
+        [_tabStrip.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-44], _tabStripHeightConstraint,
+        [_toolbar.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
+        [_toolbar.leadingAnchor constraintEqualToAnchor:_documentContainer.leadingAnchor],
+        _toolbarHeightConstraint,
+        [_splitView.topAnchor constraintEqualToAnchor:_tabStrip.bottomAnchor],
         [_splitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [_splitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [_splitView.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
@@ -3034,6 +2997,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_sidebarDividerView.centerXAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor]
     ]];
 
+    [self installWorkspaceChrome];
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.viewsAndConstraints done at %.1fms",
                                 spdf_zoom_profile_now_ms() - launchWindowStart);
@@ -9155,6 +9119,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _minimapWidth = spdf_clamp_cg(_minimapWidth - deltaX, 72.0, maxWidth);
     _minimapWidthConstraint.constant = _minimapWidth;
     [_documentContainer layoutSubtreeIfNeeded];
+    [self syncWorkspaceChrome];
     [self resizeDocumentView];
     [self renderVisiblePageCropsForCurrentViewportIfNeeded];
     [_pageView setNeedsDisplay:YES];
@@ -9204,6 +9169,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)splitViewDidResizeSubviews:(NSNotification*)notification {
     if (notification.object != _splitView || !_sidebarVisible) return;
+    [self syncWorkspaceChrome];
     [self normalizeSidebarModeControlWidths];
     [self syncSidebarTableColumnWidth];
     if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && _sidebarItems.count > 0)
@@ -9251,6 +9217,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _sidebarFilterField.stringValue = [self sidebarFilterTextForCurrentMode];
     _sidebarFilterField.enabled = !search;
     _updatingSidebarFilterField = NO;
+    [self syncWorkspaceChrome];
 }
 
 - (void)syncSidebarTableColumnWidth {
@@ -10039,6 +10006,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     NSString* typed = event.characters ?: @"";
     if (typed.length == 0 || [typed rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location != NSNotFound)
         return NO;
+    [self revealWorkspaceFind];
     [_window makeFirstResponder:_searchField];
     _searchField.stringValue = typed;
     [_searchField.currentEditor setSelectedRange:NSMakeRange(typed.length, 0)];
@@ -10131,6 +10099,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [_pageSegments setEnabled:hasDoc && _pageIndex > 0 forSegment:0];
     [_pageSegments setEnabled:hasDoc && _pageIndex + 1 < pageCount forSegment:1];
     _pageField.stringValue = hasDoc ? [NSString stringWithFormat:@"%ld", (long)_pageIndex + 1] : @"";
+    [self syncWorkspaceChrome];
 }
 
 // Coalesced off-frame follow-up for a page change. The instant a scroll crosses
@@ -11958,6 +11927,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
         [self startSearchForText:selection];
         return;
     }
+    [self revealWorkspaceFind];
     [_window makeFirstResponder:_searchField];
     [_searchField selectText:nil];
 }
@@ -11977,6 +11947,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 - (void)startSearchForText:(NSString*)query {
+    [self revealWorkspaceFind];
     [_window makeFirstResponder:_searchField];
     _searchField.stringValue = query;
     [_searchField selectText:nil];
@@ -12072,169 +12043,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (void)showFindPalette:(id)sender {
     [self focusFind:sender];
-}
-
-- (void)showPaletteWithTitle:(NSString*)title {
-    if (!_palettePanel) {
-        _palettePanel = [[NSPanel alloc]
-            initWithContentRect:NSMakeRect(0, 0, 650, 390)
-                      styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskClosable
-                        backing:NSBackingStoreBuffered
-                          defer:NO];
-        _palettePanel.floatingPanel = YES;
-        _palettePanel.hidesOnDeactivate = YES;
-        _palettePanel.releasedWhenClosed = NO;
-
-        NSView* content = [[NSView alloc] initWithFrame:_palettePanel.contentView.bounds];
-        content.translatesAutoresizingMaskIntoConstraints = NO;
-        _palettePanel.contentView = content;
-
-        _paletteSearchField = [[SPDFPaletteSearchField alloc] init];
-        ((SPDFPaletteSearchField*)_paletteSearchField).reader = self;
-        _paletteSearchField.translatesAutoresizingMaskIntoConstraints = NO;
-        _paletteSearchField.delegate = self;
-        _paletteSearchField.font = [NSFont systemFontOfSize:15 weight:NSFontWeightRegular];
-        [content addSubview:_paletteSearchField];
-
-        NSScrollView* scroll = [[NSScrollView alloc] init];
-        scroll.translatesAutoresizingMaskIntoConstraints = NO;
-        scroll.hasVerticalScroller = YES;
-        scroll.autohidesScrollers = YES;
-        scroll.borderType = NSNoBorder;
-        scroll.drawsBackground = NO;
-        [content addSubview:scroll];
-
-        _paletteTable = [[NSTableView alloc] init];
-        _paletteTable.headerView = nil;
-        _paletteTable.rowHeight = 42.0;
-        _paletteTable.intercellSpacing = NSMakeSize(0, 0);
-        _paletteTable.backgroundColor = NSColor.clearColor;
-        _paletteTable.columnAutoresizingStyle = NSTableViewUniformColumnAutoresizingStyle;
-        _paletteTable.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
-        _paletteTable.allowsEmptySelection = NO;
-        _paletteTable.dataSource = self;
-        _paletteTable.delegate = self;
-        _paletteTable.target = self;
-        _paletteTable.action = @selector(activatePaletteSelection:);
-        _paletteTable.doubleAction = @selector(activatePaletteSelection:);
-        NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"result"];
-        column.width = 620;
-        column.resizingMask = NSTableColumnAutoresizingMask;
-        [_paletteTable addTableColumn:column];
-        scroll.documentView = _paletteTable;
-
-        [NSLayoutConstraint activateConstraints:@[
-            [_paletteSearchField.topAnchor constraintEqualToAnchor:content.topAnchor constant:14],
-            [_paletteSearchField.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:14],
-            [_paletteSearchField.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-14],
-            [_paletteSearchField.heightAnchor constraintEqualToConstant:34],
-            [scroll.topAnchor constraintEqualToAnchor:_paletteSearchField.bottomAnchor constant:8],
-            [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-            [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-            [scroll.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-8]
-        ]];
-    }
-
-    _palettePanel.title = title;
-    _paletteSearchField.stringValue = @"";
-    _paletteSearchField.placeholderString = @"Documents, groups, text, or col: for Collection";
-    _paletteAllDocsCheckbox.hidden = YES;
-    _paletteFavoritePendingDelete = nil;
-    _paletteMenuCommandCandidates = [self paletteMenuCommandCandidates];
-    [self refreshPaletteResults];
-    [self updatePalettePanelFramePreservingTop:NO];
-    [_palettePanel makeKeyAndOrderFront:nil];
-    [self installPaletteEventMonitor];
-    [_palettePanel makeFirstResponder:_paletteSearchField];
-}
-
-- (BOOL)isSelectablePaletteResult:(NSDictionary*)result {
-    NSString* kind = result[@"kind"];
-    return ![kind isEqualToString:@"header"] && ![kind isEqualToString:@"separator"] &&
-           ![kind isEqualToString:@"status"];
-}
-
-- (void)scrollPaletteRowToVisibleWithHeader:(NSInteger)row {
-    if (row < 0 || row >= (NSInteger)_paletteResults.count) return;
-    NSInteger visibleRow = row;
-    if (row > 0 && [_paletteResults[(NSUInteger)row - 1][@"kind"] isEqualToString:@"header"]) visibleRow = row - 1;
-    [_paletteTable scrollRowToVisible:visibleRow];
-    [_paletteTable scrollRowToVisible:row];
-}
-
-- (void)selectFirstPaletteResult {
-    for (NSInteger i = 0; i < (NSInteger)_paletteResults.count; ++i) {
-        if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)i]]) {
-            [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)i] byExtendingSelection:NO];
-            [self scrollPaletteRowToVisibleWithHeader:i];
-            return;
-        }
-    }
-    [_paletteTable deselectAll:nil];
-}
-
-- (void)restorePaletteSelectionAfterReloadFromRow:(NSInteger)previousRow {
-    NSInteger row = previousRow;
-    if (row >= 0 && row < (NSInteger)_paletteResults.count &&
-        [self isSelectablePaletteResult:_paletteResults[(NSUInteger)row]]) {
-        [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
-        [self scrollPaletteRowToVisibleWithHeader:row];
-        return;
-    }
-    if (_paletteTable.selectedRow >= 0 && _paletteTable.selectedRow < (NSInteger)_paletteResults.count &&
-        [self isSelectablePaletteResult:_paletteResults[(NSUInteger)_paletteTable.selectedRow]]) {
-        [self scrollPaletteRowToVisibleWithHeader:_paletteTable.selectedRow];
-        return;
-    }
-    [self selectFirstPaletteResult];
-}
-
-- (CGFloat)paletteHeightForRow:(NSInteger)row {
-    if (row < 0 || row >= (NSInteger)_paletteResults.count) return 42.0;
-    NSString* kind = _paletteResults[(NSUInteger)row][@"kind"];
-    if ([kind isEqualToString:@"header"]) return 32.0;
-    if ([kind isEqualToString:@"separator"]) return 0.0;
-    if ([kind isEqualToString:@"status"]) return 38.0;
-    return 42.0;
-}
-
-- (CGFloat)paletteRowsHeight {
-    CGFloat height = 0.0;
-    for (NSInteger i = 0; i < (NSInteger)_paletteResults.count; ++i) height += [self paletteHeightForRow:i];
-    return height;
-}
-
-- (void)updatePalettePanelFramePreservingTop:(BOOL)preserveTop {
-    if (!_palettePanel || !_window) return;
-    CGFloat contentWidth = 650.0;
-    CGFloat chromeHeight = 14.0 + 34.0 + 8.0 + 8.0;
-    CGFloat rowsHeight = [self paletteRowsHeight];
-    CGFloat tablePadding = 18.0;
-    CGFloat idealContentHeight = chromeHeight + rowsHeight + tablePadding;
-    CGFloat minContentHeight = chromeHeight + 42.0;
-    NSScreen* screen = _window.screen ?: NSScreen.mainScreen;
-    NSRect visibleFrame = screen.visibleFrame;
-    CGFloat maxFrameHeight = floor(NSHeight(visibleFrame) * 0.60);
-    NSRect maxContentRect = [_palettePanel contentRectForFrameRect:NSMakeRect(0, 0, contentWidth, maxFrameHeight)];
-    CGFloat maxContentHeight = NSHeight(maxContentRect);
-    CGFloat contentHeight = idealContentHeight;
-    contentHeight = ceil(spdf_clamp_cg(contentHeight, minContentHeight, MAX(minContentHeight, maxContentHeight)));
-    NSScrollView* scrollView = _paletteTable.enclosingScrollView;
-    if (scrollView) scrollView.hasVerticalScroller = idealContentHeight > maxContentHeight + 0.5;
-
-    NSRect frame = [_palettePanel frameRectForContentRect:NSMakeRect(0, 0, contentWidth, contentHeight)];
-    NSRect windowFrame = _window.frame;
-    CGFloat topY = preserveTop && _palettePanel.visible ? NSMaxY(_palettePanel.frame) : NSMaxY(windowFrame) - 88.0;
-    CGFloat minY = NSMinY(visibleFrame) + 24.0;
-    CGFloat maxY = NSMaxY(visibleFrame) - 24.0;
-    topY = MIN(topY, maxY);
-    if (topY - NSHeight(frame) < minY) topY = MIN(maxY, minY + NSHeight(frame));
-    if (topY - NSHeight(frame) < minY) frame.size.height = MAX(160.0, topY - minY);
-    frame.origin.x = floor(NSMidX(windowFrame) - NSWidth(frame) / 2.0);
-    frame.origin.x =
-        spdf_clamp_cg(frame.origin.x, NSMinX(visibleFrame) + 24.0, NSMaxX(visibleFrame) - NSWidth(frame) - 24.0);
-    frame.origin.y = floor(topY - NSHeight(frame));
-    [_palettePanel setFrame:frame display:_palettePanel.visible animate:NO];
 }
 
 - (void)collectPaletteMenuCommandsFromMenu:(NSMenu*)menu
@@ -13018,7 +12826,8 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     _tabStrip.hidden = presentation;
     _toolbar.hidden = presentation;
     _tabStripHeightConstraint.constant = presentation ? 0.0 : kTabStripHeight;
-    _toolbarHeightConstraint.constant = presentation ? 0.0 : 42.0;
+    _toolbarHeightConstraint.constant = presentation ? 0.0 : 44.0;
+    [self syncWorkspaceChrome];
     _pageView.presentationMode = presentation;
     if ([self isMarkdownActive]) [self.activeMarkdownSession setPresentationMode:presentation];
     if (presentation) {
@@ -15473,197 +15282,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return view;
     }
 
-    if (tableView == _paletteTable) {
-        NSDictionary* result = _paletteResults[(NSUInteger)row];
-        NSString* kind = result[@"kind"];
-        if ([kind isEqualToString:@"separator"]) {
-            return [[NSView alloc] initWithFrame:NSZeroRect];
-        }
-
-        if ([kind isEqualToString:@"header"]) {
-            NSView* view = [tableView makeViewWithIdentifier:@"PaletteHeader" owner:self];
-            NSView* capsule = nil;
-            NSTextField* label = nil;
-            if (!view) {
-                view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 620, 32)];
-                view.identifier = @"PaletteHeader";
-
-                capsule = [[NSView alloc] init];
-                capsule.translatesAutoresizingMaskIntoConstraints = NO;
-                capsule.identifier = @"capsule";
-                capsule.wantsLayer = YES;
-                capsule.layer.cornerRadius = 8.0;
-                capsule.layer.masksToBounds = YES;
-                [view addSubview:capsule];
-
-                label = [NSTextField labelWithString:@""];
-                label.translatesAutoresizingMaskIntoConstraints = NO;
-                label.identifier = @"title";
-                label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
-                [capsule addSubview:label];
-                [NSLayoutConstraint activateConstraints:@[
-                    [capsule.leadingAnchor constraintEqualToAnchor:view.leadingAnchor constant:40],
-                    [capsule.trailingAnchor constraintLessThanOrEqualToAnchor:view.trailingAnchor constant:-40],
-                    [capsule.topAnchor constraintEqualToAnchor:view.topAnchor constant:5],
-                    [capsule.bottomAnchor constraintEqualToAnchor:view.bottomAnchor constant:-3],
-                    [label.leadingAnchor constraintEqualToAnchor:capsule.leadingAnchor constant:12],
-                    [label.trailingAnchor constraintEqualToAnchor:capsule.trailingAnchor constant:-12],
-                    [label.centerYAnchor constraintEqualToAnchor:capsule.centerYAnchor]
-                ]];
-            }
-            for (NSView* subview in view.subviews) {
-                if ([subview.identifier isEqualToString:@"capsule"]) {
-                    capsule = subview;
-                    for (NSView* inner in capsule.subviews)
-                        if ([inner.identifier isEqualToString:@"title"]) label = (NSTextField*)inner;
-                }
-            }
-            NSColor* capsuleColor = [[NSColor.controlAccentColor colorWithAlphaComponent:0.16]
-                colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-            capsule.layer.backgroundColor = capsuleColor.CGColor;
-            label.textColor = NSColor.labelColor;
-            label.stringValue = result[@"title"] ?: @"";
-            return view;
-        }
-
-        if ([kind isEqualToString:@"favorite"]) {
-            NSTableCellView* cell = [tableView makeViewWithIdentifier:@"PaletteFavoriteCell" owner:self];
-            NSButton* deleteButton = nil;
-            NSTextField* subtitle = nil;
-            NSLayoutConstraint* deleteWidth = nil;
-            if (!cell) {
-                cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
-                cell.identifier = @"PaletteFavoriteCell";
-
-                deleteButton = [NSButton buttonWithTitle:@""
-                                                  target:self
-                                                  action:@selector(paletteFavoriteDeleteClicked:)];
-                deleteButton.translatesAutoresizingMaskIntoConstraints = NO;
-                deleteButton.identifier = @"favoriteDelete";
-                deleteButton.bezelStyle = NSBezelStyleRounded;
-                deleteButton.bordered = YES;
-                deleteButton.controlSize = NSControlSizeSmall;
-                deleteButton.focusRingType = NSFocusRingTypeNone;
-                deleteButton.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
-                deleteButton.toolTip = @"Delete favorite";
-                [cell addSubview:deleteButton];
-
-                NSTextField* title = [NSTextField labelWithString:@""];
-                title.translatesAutoresizingMaskIntoConstraints = NO;
-                title.lineBreakMode = NSLineBreakByTruncatingMiddle;
-                title.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-                cell.textField = title;
-                [cell addSubview:title];
-
-                subtitle = [NSTextField labelWithString:@""];
-                subtitle.translatesAutoresizingMaskIntoConstraints = NO;
-                subtitle.identifier = @"subtitle";
-                subtitle.lineBreakMode = NSLineBreakByTruncatingMiddle;
-                subtitle.font = [NSFont systemFontOfSize:11];
-                subtitle.textColor = NSColor.secondaryLabelColor;
-                [cell addSubview:subtitle];
-
-                deleteWidth = [deleteButton.widthAnchor constraintEqualToConstant:28];
-                deleteWidth.identifier = @"favoriteDeleteWidth";
-                [NSLayoutConstraint activateConstraints:@[
-                    [deleteButton.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:8],
-                    [deleteButton.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
-                    [deleteButton.heightAnchor constraintEqualToConstant:26], deleteWidth,
-                    [title.leadingAnchor constraintEqualToAnchor:deleteButton.trailingAnchor constant:8],
-                    [title.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-10],
-                    [title.topAnchor constraintEqualToAnchor:cell.topAnchor constant:6],
-                    [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-                    [subtitle.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
-                    [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2]
-                ]];
-            }
-
-            for (NSView* subview in cell.subviews) {
-                if ([subview.identifier isEqualToString:@"favoriteDelete"]) deleteButton = (NSButton*)subview;
-                if ([subview.identifier isEqualToString:@"subtitle"]) subtitle = (NSTextField*)subview;
-            }
-            for (NSLayoutConstraint* constraint in deleteButton.constraints) {
-                if ([constraint.identifier isEqualToString:@"favoriteDeleteWidth"]) deleteWidth = constraint;
-            }
-
-            BOOL armed = _paletteFavoritePendingDelete == result[@"favorite"];
-            deleteWidth.constant = armed ? 116.0 : 28.0;
-            NSString* deleteTitle = armed ? @"Confirm Delete" : @"\u00D7";
-            NSDictionary* attributes = @{
-                NSForegroundColorAttributeName : armed ? NSColor.systemRedColor : NSColor.secondaryLabelColor,
-                NSFontAttributeName : [NSFont systemFontOfSize:armed ? 11.0 : 17.0
-                                                        weight:armed ? NSFontWeightSemibold : NSFontWeightRegular]
-            };
-            deleteButton.attributedTitle = [[NSAttributedString alloc] initWithString:deleteTitle
-                                                                           attributes:attributes];
-            deleteButton.bordered = YES;
-            deleteButton.bezelStyle = NSBezelStyleRounded;
-            deleteButton.toolTip = armed ? @"Click again to delete this favorite" : @"Delete favorite";
-
-            cell.textField.stringValue = result[@"title"] ?: @"";
-            cell.textField.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-            cell.textField.textColor = NSColor.labelColor;
-            subtitle.stringValue = result[@"subtitle"] ?: @"";
-            subtitle.textColor = NSColor.secondaryLabelColor;
-            return cell;
-        }
-
-        NSTableCellView* cell = [tableView makeViewWithIdentifier:@"PaletteCell" owner:self];
-        NSTextField* subtitle = nil;
-        if (!cell) {
-            cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 620, 44)];
-            cell.identifier = @"PaletteCell";
-
-            NSTextField* title = [NSTextField labelWithString:@""];
-            title.translatesAutoresizingMaskIntoConstraints = NO;
-            title.lineBreakMode = NSLineBreakByTruncatingMiddle;
-            title.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-            cell.textField = title;
-            [cell addSubview:title];
-
-            subtitle = [NSTextField labelWithString:@""];
-            subtitle.translatesAutoresizingMaskIntoConstraints = NO;
-            subtitle.identifier = @"subtitle";
-            subtitle.lineBreakMode = NSLineBreakByTruncatingMiddle;
-            subtitle.font = [NSFont systemFontOfSize:11];
-            subtitle.textColor = NSColor.secondaryLabelColor;
-            [cell addSubview:subtitle];
-
-            [NSLayoutConstraint activateConstraints:@[
-                [title.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:12],
-                [title.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-10],
-                [title.topAnchor constraintEqualToAnchor:cell.topAnchor constant:6],
-                [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-                [subtitle.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
-                [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2]
-            ]];
-        }
-
-        BOOL find = [kind isEqualToString:@"find"];
-        BOOL status = [kind isEqualToString:@"status"];
-        if (find) {
-            cell.textField.attributedStringValue = [self paletteFindTitleAttributedStringForResult:result];
-        } else {
-            cell.textField.stringValue = result[@"title"] ?: @"";
-            cell.textField.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-            cell.textField.textColor = status ? NSColor.secondaryLabelColor : NSColor.labelColor;
-        }
-        for (NSView* subview in cell.subviews) {
-            if ([subview.identifier isEqualToString:@"subtitle"]) {
-                subtitle = (NSTextField*)subview;
-            }
-        }
-        NSString* subtitleText = result[@"subtitle"] ?: @"";
-        if (find)
-            subtitle.attributedStringValue = [self paletteContextAttributedString:subtitleText
-                                                                            query:result[@"query"] ?: @""];
-        else {
-            subtitle.stringValue = subtitleText;
-            subtitle.font = [NSFont systemFontOfSize:11.0];
-            subtitle.textColor = NSColor.secondaryLabelColor;
-        }
-        return cell;
-    }
+    if (tableView == _paletteTable) return [self workspacePaletteViewForRow:row];
 
     if (row < 0 || row >= (NSInteger)_sidebarItems.count) return nil;
 

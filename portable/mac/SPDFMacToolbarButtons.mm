@@ -33,11 +33,7 @@
     return YES;
 }
 
-- (NSSize)intrinsicContentSize {
-    NSDictionary* attrs = @{NSFontAttributeName : [NSFont systemFontOfSize:12.0 weight:NSFontWeightLight]};
-    CGFloat titleWidth = ceil([self.title sizeWithAttributes:attrs].width);
-    return NSMakeSize(titleWidth + 50.0, 28.0);
-}
+- (NSSize)intrinsicContentSize { return NSMakeSize(28,28); }
 
 - (void)setActive:(BOOL)active {
     if (_active == active) return;
@@ -59,58 +55,15 @@
 
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
-    NSRect bounds = NSInsetRect(self.bounds, 1.0, 2.0);
-    BOOL enabled = self.enabled;
-    BOOL pressed = self.highlighted;
-    CGFloat alpha = enabled ? 1.0 : 0.44;
-
-    if (pressed) {
-        NSColor* pressFill = [NSColor.labelColor colorWithAlphaComponent:0.08 * alpha];
-        [pressFill setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7.0 yRadius:7.0] fill];
+    if (self.highlighted) {
+        [[NSColor.labelColor colorWithAlphaComponent:.08] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,1,1) xRadius:6 yRadius:6] fill];
     }
-
-    NSFont* font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightLight];
-    NSMutableParagraphStyle* paragraph = [[NSMutableParagraphStyle alloc] init];
-    paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
-    paragraph.alignment = NSTextAlignmentLeft;
-    NSDictionary* attrs = @{
-        NSFontAttributeName : font,
-        NSForegroundColorAttributeName : [NSColor.labelColor colorWithAlphaComponent:alpha],
-        NSParagraphStyleAttributeName : paragraph
-    };
-
-    CGFloat switchWidth = 32.0;
-    CGFloat switchHeight = 18.0;
-    NSRect switchRect = NSMakeRect(floor(NSMaxX(bounds) - switchWidth - 5.0),
-                                   floor(NSMidY(bounds) - switchHeight / 2.0), switchWidth, switchHeight);
-    NSRect titleRect = NSMakeRect(NSMinX(bounds) + 5.0, floor(NSMidY(bounds) - 8.0),
-                                  MAX(1.0, NSMinX(switchRect) - NSMinX(bounds) - 10.0), 17.0);
-    [self.title drawWithRect:titleRect
-                     options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-                  attributes:attrs];
-
-    NSColor* trackFill = self.active ? [NSColor.whiteColor colorWithAlphaComponent:(enabled ? 0.94 : 0.38)]
-                                     : [NSColor.secondaryLabelColor colorWithAlphaComponent:(enabled ? 0.22 : 0.12)];
-    NSBezierPath* track = [NSBezierPath bezierPathWithRoundedRect:switchRect
-                                                          xRadius:switchHeight / 2.0
-                                                          yRadius:switchHeight / 2.0];
-    [trackFill setFill];
-    [track fill];
-    [[NSColor.separatorColor colorWithAlphaComponent:enabled ? 0.55 : 0.24] setStroke];
-    track.lineWidth = 1.0;
-    [track stroke];
-
-    CGFloat knobSize = 14.0;
-    CGFloat knobX = self.active ? NSMaxX(switchRect) - knobSize - 2.0 : NSMinX(switchRect) + 2.0;
-    NSRect knobRect = NSMakeRect(floor(knobX), floor(NSMidY(switchRect) - knobSize / 2.0), knobSize, knobSize);
-    NSColor* knobFill = self.active ? [NSColor colorWithCalibratedWhite:0.14 alpha:1.0]
-                                    : [NSColor.whiteColor colorWithAlphaComponent:0.96];
-    if (!enabled) knobFill = [knobFill colorWithAlphaComponent:0.72];
-    [knobFill setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:knobRect] fill];
-    [[NSColor.shadowColor colorWithAlphaComponent:enabled ? 0.18 : 0.08] setStroke];
-    [[NSBezierPath bezierPathWithOvalInRect:knobRect] stroke];
+    NSImage* image = [NSImage imageWithSystemSymbolName:[self.title isEqualToString:@"Map"] ? @"sidebar.right" : @"sidebar.left"
+                              accessibilityDescription:nil];
+    image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular]];
+    [image drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-16)/2),floor((NSHeight(self.bounds)-16)/2),16,16)
+            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : .4];
 }
 
 @end

@@ -528,6 +528,16 @@ All 25 native Markdown/UI suites and four sidebar suites pass, including full-da
 
 ### Whole-reader UX reset and sidebar availability correction
 
+1 October, native implementation of the approved workspace: replaced the sidebar's vertical list with separated Groups and document icon controls, kept full filenames below that header, moved Find/Regex/match navigation into Find, aligned the reading and real map headers, and reproduced compact tabs, Collection, and ⌘K. Group folding leaves the document unchanged; restored collapse and YAML state are covered. No PDF/Markdown margins or map rendering coordinates were changed.
+
+The team split ownership across tab behavior, Collection/palette, and independent verification. Actual offscreen native views caught narrow-window zoom clipping, first-use revision-pill attachment order, and orphaned Markdown size controls; all were corrected. The reviewer found no unresolved major/medium issue in the reviewed paths. Updater runtime and release pipeline checks passed; no updater identity/endpoint/install changes were made.
+
+See the [implementation record](../../proposals/mac-workspace-rethink/native-implementation.md), [native verification](../../proposals/mac-workspace-rethink/native-verification.md), and [Collection/⌘K record](../../proposals/mac-workspace-rethink/native-collection-palette.md).
+
+![Native reader, dark appearance](../../proposals/mac-workspace-rethink/evidence/native-reader-dark-1280.png)
+![Native Collection with a real PDF preview and highlighted search](../../proposals/mac-workspace-rethink/evidence/native-collection-dark.png)
+![Native command search](../../proposals/mac-workspace-rethink/evidence/native-command-dark.png)
+
 1 October, stable tab titles: removed hover-dependent padding that made titles jump and change truncation. Reduced title padding to 6px and overlaid the close button over a trailing fade, also available on keyboard focus. Browser inspection verified unchanged text, font, and geometry across the shared focus/hover style. Native app and dist unchanged.
 
 1 October, workspace/document separation: moved the Groups button into its own sidebar header section, with a vertical divider and additional spacing before the document-panel icons. Verified compact fit and Groups/Chapters switching. Prototype only.
