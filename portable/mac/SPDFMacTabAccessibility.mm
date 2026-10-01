@@ -121,7 +121,7 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
         element.tabIndex = index;
         element.accessibilitySelected = index == strip.selectedIndex;
         NSString* group = tab.group ? [NSString stringWithFormat:@" %@ group.", tab.group.displayName] : @"";
-        element.accessibilityHelp = [NSString stringWithFormat:@"%@%@ Press to open this tab. Cmd-Left and Cmd-Right move between tabs; Cmd-W closes; Cmd-Backspace returns to the previously active tab.%@",
+        element.accessibilityHelp = [NSString stringWithFormat:@"%@%@ Press to open this tab. Cmd-Left and Cmd-Right move between tabs; Cmd-W closes; Cmd-D returns to the previously active tab.%@",
             index == strip.selectedIndex ? @"Selected." : @"Not selected.", group,
             hiddenInOverflow ? @" This tab is in the overflow menu." : @""];
         __weak SPDFMacTabAccessibilityElement* weakElement = element;

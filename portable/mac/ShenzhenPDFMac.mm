@@ -61,6 +61,7 @@ static os_log_t SPDFReadOnlyLog(void) {
 #import "SPDFMacSelectionAdapter.h"
 #import "SPDFMacSidebarChapters.h"
 #import "SPDFMacSidebarPresentation.h"
+#import "SPDFMacReaderNavigationMenu.h"
 #import "SPDFMacSupport.h"
 #import "SPDFMacTabViewState.h"
 #import "SPDFMacWindowPlacement.h"
@@ -1983,9 +1984,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                    keyEquivalent:[NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)]];
     nextTabItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     for (NSMenuItem* item in @[ previousTabItem, nextTabItem ]) item.target = self;
-    NSMenuItem* lastActive = [goMenu addItemWithTitle:@"Previous Active Tab" action:@selector(returnToPreviousTab:)
-        keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSBackspaceCharacter]];
-    lastActive.keyEquivalentModifierMask = NSEventModifierFlagCommand; lastActive.target = self;
     goItem.submenu = goMenu;
 
     NSMenuItem* zoomItem = [[NSMenuItem alloc] initWithTitle:@"Zoom" action:nil keyEquivalent:@""];
@@ -2163,6 +2161,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     shortcuts.keyEquivalentModifierMask = 0;
     helpItem.submenu = helpMenu;
 
+    SPDFInstallReaderNavigationMenu(appMenu, goMenu, viewMenu, self);
     NSApp.mainMenu = mainMenu;
     // SF-symbol decoration creates ~70 system-symbol images (CoreUI asset
     // lookups). Menu-item icons are only visible once a submenu is opened,
@@ -12448,7 +12447,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 - (void)returnToPreviousTab:(id)sender {
-    (void)sender; if ([self firstResponderIsEditingText]) return;
+    (void)sender;
     [self rememberActiveTabState];
     SPDFMacPreviousTabActivation* target = [self takePreviousTabActivationFromCurrent:[self selectedTab] openTabs:_tabs];
     if (!target) return;
@@ -15307,7 +15306,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         action == @selector(moveWindowToTopHalf:) || action == @selector(moveWindowToBottomHalf:))
         return _window != nil && !_presentationMode && ![self firstResponderIsEditingText];
     if (action == @selector(returnToPreviousTab:))
-        return ![self firstResponderIsEditingText] && [self hasPreviousTabTargetFromCurrent:[self selectedTab]];
+        return [self hasPreviousTabTargetFromCurrent:[self selectedTab]];
     if (action == @selector(reopenLastClosedDocument:))
         return _closedDocumentPaths.count > 0 || [self firstRecentlyOpenedPathNotOpen].length > 0;
     if (action == @selector(toggleSidebar:)) {

@@ -10,6 +10,6 @@ $(BUILD)/workspace-probe/%.o: %.mm
 	@mkdir -p "$(@D)"
 	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Dmain=spdf_reader_entrypoint -Imac -Icore -I$(MUPDF_DIR)/include -MMD -MP -c "$<" -o "$@"
 $(MAC_WORKSPACE_PROBE): $(MAC_WORKSPACE_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) mupdf-libs | $(BUILD)
-	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(MAC_WORKSPACE_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -Wl,-x -o "$@"
+	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(MAC_WORKSPACE_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -Wl,-x -o "$@"
 mac-workspace-probe: $(MAC_WORKSPACE_PROBE)
 	"$(MAC_WORKSPACE_PROBE)" "$(WORKSPACE_EVIDENCE_DIR)"

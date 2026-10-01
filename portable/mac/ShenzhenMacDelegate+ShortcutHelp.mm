@@ -64,7 +64,7 @@
                 @{@"title" : @"Open path (file opens it; folder opens the browser there)",
                   @"keys" : @[ @"Cmd", @"Shift", @"O" ]},
                 @{@"title" : @"Reopen last closed document", @"keys" : @[ @"Cmd", @"Shift", @"T" ]},
-                @{@"title" : @"Return to previous active tab (press twice to toggle)", @"keys" : @[ @"Cmd", @"Backspace" ]},
+                @{@"title" : @"Previous document (press twice to return)", @"keys" : @[ @"Cmd", @"D" ]},
                 @{@"title" : @"Group tab, move to group, or open version history", @"keys" : @[ @"Tab context menu" ]},
                 @{@"title" : @"Document properties", @"keys" : @[ @"Opt", @"I" ]},
                 @{@"title" : @"Rotate page clockwise", @"keys" : @[ @"Cmd", @"R" ]},
@@ -76,6 +76,7 @@
         @{
             @"category" : @"Panels",
             @"items" : @[
+                @{@"title" : @"Version history", @"keys" : @[ @"Cmd", @"H" ]},
                 @{@"title" : @"Show or hide chapters and comments", @"subtitle" : @"View menu or Side Panel toggle"},
                 @{@"title" : @"Show or hide minimap", @"subtitle" : @"View menu or Map toggle"},
                 @{@"title" : @"Light or dark reading theme", @"keys" : @[ @"Cmd", @"Shift", @"I" ]}
