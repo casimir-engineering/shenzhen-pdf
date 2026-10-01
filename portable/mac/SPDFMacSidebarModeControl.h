@@ -13,6 +13,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
 };
 
 @interface SPDFSidebarNavigationControl : NSSegmentedControl
+@property(nonatomic, copy) NSString* documentTitle;
+- (void)setCollapseTarget:(id)target action:(SEL)action;
 @end
 
 void spdf_sidebar_mode_control_configure_navigation(NSSegmentedControl* control, BOOL supportsComments, BOOL hasHistory);

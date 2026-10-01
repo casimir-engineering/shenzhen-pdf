@@ -57,42 +57,40 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     Check(fabs(NSWidth(surface.bounds)-width)<.5,"layout preserves the requested sidebar width");
     fprintf(stdout,"Nav requested %.0f actual %.0f control %.0f\n",width,NSWidth(surface.bounds),NSWidth(navigation.bounds));
     Check(navigation.segmentCount == 5,"all PDF workspace modes present");
-    Check(navigation.accessibilityChildren.count == 5,"navigation is a vertical row per mode");
-    CGFloat bottom = 0;
+    Check(navigation.accessibilityChildren.count == 5,"navigation exposes each document mode");
     for (NSButton* row in navigation.accessibilityChildren) {
-        Check(NSHeight(row.frame) == 26 && NSMinY(row.frame) >= bottom,"rows have full click targets and never overlap");
-        Check(NSWidth(row.frame) == width-16,"navigation uses available panel width");
+        Check(NSHeight(row.frame) == 28 && NSMinY(row.frame) == 8,"icons share one aligned header row");
+        Check(NSWidth(row.frame) >= 22 && NSMaxX(row.frame) <= width-16,"icons fit the narrowest panel");
         Check(row.accessibilityLabel.length > 0,"all icons have accessible text names");
-        bottom = NSMaxY(row.frame);
+        for (NSButton* peer in navigation.accessibilityChildren)
+            if (row != peer) Check(!NSIntersectsRect(row.frame,peer.frame),"icon targets never overlap");
     }
+    Check(navigation.intrinsicContentSize.height == 72,"document header reserves filename below icons");
     Check(NSHeight(scroll.frame) > 100,"short sidebar retains a useful scrollable content viewport");
-    NSButton* groups = navigation.accessibilityChildren.lastObject; [groups performClick:nil];
+    NSButton* groups = navigation.accessibilityChildren.firstObject; [groups performClick:nil];
     Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups && fixture.changes == 1,"click selects Groups and dispatches action once");
     spdf_sidebar_mode_control_configure_history(navigation,NO,NO,NO);
     Check(navigation.segmentCount == 3 && navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups,
         "Markdown omits Comments, Search and Groups remain stable without document history");
-    navigation.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
+    navigation.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
     [navigation spdf_setEnabled:NO forSidebarMode:SPDFSidebarModeChapters];
-    NSEvent* down = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
-        windowNumber:window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:125];
-    [navigation keyDown:down];
-    Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups,"arrow navigation moves to next enabled mode");
-    navigation.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
-    NSEvent* up = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
-        windowNumber:window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:126];
-    [navigation keyDown:up];
-    Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeSearch,"keyboard skips disabled Chapters");
-    NSButton* searchRow = navigation.accessibilityChildren[1];
-    [window makeFirstResponder:searchRow]; [searchRow keyDown:down];
-    Check(window.firstResponder == navigation.accessibilityChildren.lastObject &&
-        navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups,"arrow follows focused row to new selected mode");
+    NSEvent* right = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
+        windowNumber:window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:124];
+    [navigation keyDown:right];
+    Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeSearch,"right arrow follows visual order and skips disabled Chapters");
+    NSButton* searchRow = navigation.accessibilityChildren.lastObject;
+    [window makeFirstResponder:searchRow];
+    NSEvent* left = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
+        windowNumber:window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:123];
+    [searchRow keyDown:left];
+    Check(window.firstResponder == navigation.accessibilityChildren.firstObject &&
+        navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups,"left arrow moves focus and selection to Groups");
     NSEvent* space = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
         windowNumber:window.windowNumber context:nil characters:@" " charactersIgnoringModifiers:@" " isARepeat:NO keyCode:49];
     NSUInteger changes = fixture.changes;
     [(NSView*)window.firstResponder keyDown:space];
-    Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups && fixture.changes == changes+1,
-        "Space after arrows activates the new selection instead of stale focused row");
-    Check([[(NSButton*)navigation.accessibilityChildren.lastObject accessibilityValue] boolValue],
+    Check(fixture.changes == changes+1,"Space activates the focused icon once");
+    Check([[(NSButton*)navigation.accessibilityChildren.firstObject accessibilityValue] boolValue],
         "accessibility announces selected radio state");
     spdf_sidebar_mode_control_configure_navigation(navigation,YES,YES);
     Check(window.firstResponder == navigation,"dynamic navigation rebuild preserves keyboard focus");
@@ -103,7 +101,7 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     if (focus == 1) {
         [window makeFirstResponder:navigation];
         Check(window.firstResponder == navigation,"navigation accepts keyboard focus");
-        NSButton* hover = navigation.accessibilityChildren.lastObject;
+        NSButton* hover = navigation.accessibilityChildren.firstObject;
         [hover mouseEntered:[NSEvent mouseEventWithType:NSEventTypeMouseMoved location:NSZeroPoint modifierFlags:0 timestamp:0
             windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:0 pressure:0]];
     }

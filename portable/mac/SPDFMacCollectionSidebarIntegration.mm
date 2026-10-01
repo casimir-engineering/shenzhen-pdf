@@ -68,6 +68,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey, history
                 [weakSelf collectionOpenPath:path archived:archived];
                 if ([[weakSelf selectedTab].path isEqual:path]) [weakSelf showCollectionHistory:nil];
             }];
+        controller.showsDocumentTitle = NO;
         controller.restoreLinkHandler = ^(NSString* previousPath, NSString* restoredPath) {
             ShenzhenMacDelegate* reader = weakSelf; if (!reader) return;
             SPDFDocumentTab* missing = SPDFCollectionMissingTab(reader->_tabs,identifier,previousPath);
