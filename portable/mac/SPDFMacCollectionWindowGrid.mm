@@ -6,6 +6,43 @@
 #import "SPDFMacPassword.h"
 #import "SPDFMacCollectionCompanion.h"
 
+// Fixed, left-aligned cells: flow layout otherwise distributes spare width
+// between columns, making horizontal gaps much larger than vertical gaps.
+static const CGFloat GridWidth = 152, GridHeight = 226, GridGap = 8, GridInset = 12;
+@interface SPDFCollectionCompactGridLayout : NSCollectionViewLayout
+@property CGFloat preparedWidth;
+@end
+@implementation SPDFCollectionCompactGridLayout
+- (CGFloat)viewportWidth { return MAX(GridWidth+2*GridInset,NSWidth(self.collectionView.enclosingScrollView.contentView.bounds)); }
+- (NSUInteger)columns { return MAX(1,(NSUInteger)floor(([self viewportWidth]-2*GridInset+GridGap)/(GridWidth+GridGap))); }
+- (void)prepareLayout { [super prepareLayout]; self.preparedWidth = [self viewportWidth]; }
+- (BOOL)shouldInvalidateLayoutForBoundsChange:(NSRect)bounds { return fabs(NSWidth(bounds)-self.preparedWidth)>.5; }
+- (NSSize)collectionViewContentSize {
+    NSUInteger count = [self.collectionView numberOfItemsInSection:0], columns = [self columns];
+    NSUInteger rows = (count+columns-1)/columns;
+    return NSMakeSize([self viewportWidth],2*GridInset+rows*(GridHeight+GridGap)-(rows ? GridGap : 0));
+}
+- (NSCollectionViewLayoutAttributes*)layoutAttributesForItemAtIndexPath:(NSIndexPath*)path {
+    if (path.section || path.item >= [self.collectionView numberOfItemsInSection:0]) return nil;
+    NSUInteger columns = [self columns];
+    NSCollectionViewLayoutAttributes* attributes = [NSCollectionViewLayoutAttributes layoutAttributesForItemWithIndexPath:path];
+    attributes.frame = NSMakeRect(GridInset+(path.item%columns)*(GridWidth+GridGap),
+        GridInset+(path.item/columns)*(GridHeight+GridGap),GridWidth,GridHeight);
+    return attributes;
+}
+- (NSArray<NSCollectionViewLayoutAttributes*>*)layoutAttributesForElementsInRect:(NSRect)rect {
+    NSMutableArray* items = [NSMutableArray array]; NSUInteger columns = [self columns];
+    NSUInteger count = [self.collectionView numberOfItemsInSection:0];
+    NSUInteger start = MAX(0,floor((NSMinY(rect)-GridInset)/(GridHeight+GridGap)))*columns;
+    NSUInteger end = MIN(count,MAX(0,ceil((NSMaxY(rect)-GridInset)/(GridHeight+GridGap)))*columns);
+    for (NSUInteger index=start;index<end;index++) {
+        NSCollectionViewLayoutAttributes* item = [self layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:index inSection:0]];
+        if (NSIntersectsRect(item.frame,rect)) [items addObject:item];
+    }
+    return items;
+}
+@end
+
 @interface SPDFCollectionThumbnailItem : NSCollectionViewItem
 @property(nonatomic) NSButton* historyButton;
 @end
@@ -58,30 +95,30 @@
 @end
 @implementation SPDFCollectionThumbnailItem
 - (void)loadView {
-    SPDFCollectionThumbnailView* root = [[SPDFCollectionThumbnailView alloc] initWithFrame:NSMakeRect(0,0,180,238)];
+    SPDFCollectionThumbnailView* root = [[SPDFCollectionThumbnailView alloc] initWithFrame:NSMakeRect(0,0,GridWidth,GridHeight)];
     root.item = self; self.view = root;
     self.view.wantsLayer = YES;
     self.view.layer.cornerRadius = 9;
-    NSImageView* imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(9,86,162,143)];
+    NSImageView* imageView = [[NSImageView alloc] initWithFrame:NSMakeRect(8,74,136,144)];
     [self.view addSubview:imageView]; self.imageView = imageView;
     self.imageView.imageScaling = NSImageScaleProportionallyUpOrDown;
     NSTextField* caption = [NSTextField wrappingLabelWithString:@""];
-    caption.frame = NSMakeRect(9,8,162,50);
+    caption.frame = NSMakeRect(8,8,136,36);
     caption.font = [NSFont systemFontOfSize:11];
     caption.textColor = NSColor.labelColor;
     caption.drawsBackground = NO;
-    caption.maximumNumberOfLines = 3;
+    caption.maximumNumberOfLines = 2;
     caption.lineBreakMode = NSLineBreakByTruncatingMiddle;
     caption.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:caption];
     self.historyButton = SPDFCollectionButton(@"History",nil,nil,@"normal");
-    self.historyButton.frame = NSMakeRect(108,58,64,24); [self.view addSubview:self.historyButton];
+    self.historyButton.frame = NSMakeRect(84,48,60,22); [self.view addSubview:self.historyButton];
     self.textField = caption; // NSCollectionViewItem outlets are weak; the view owns it first.
     [NSLayoutConstraint activateConstraints:@[
-        [caption.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:9],
-        [caption.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-9],
+        [caption.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
+        [caption.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
         [caption.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:8],
-        [caption.heightAnchor constraintEqualToConstant:50]]];
+        [caption.heightAnchor constraintEqualToConstant:36]]];
 }
 - (void)setSelected:(BOOL)selected {
     [super setSelected:selected];
@@ -105,9 +142,7 @@
     self.grid.dataSource = self; self.grid.delegate = self;
     self.grid.selectable = YES; self.grid.allowsMultipleSelection = YES;
     self.grid.backgroundColors = @[SPDFCollectionColor(@"window")];
-    NSCollectionViewFlowLayout* flow = [NSCollectionViewFlowLayout new];
-    flow.itemSize = NSMakeSize(180,238); flow.minimumInteritemSpacing = 10; flow.minimumLineSpacing = 12;
-    flow.sectionInset = NSEdgeInsetsMake(12,12,12,12); self.grid.collectionViewLayout = flow;
+    self.grid.collectionViewLayout = [SPDFCollectionCompactGridLayout new];
     [self.grid registerClass:SPDFCollectionThumbnailItem.class forItemWithIdentifier:@"thumbnail"];
     NSClickGestureRecognizer* doubleClick = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(preview:)];
     doubleClick.numberOfClicksRequired = 2; [self.grid addGestureRecognizer:doubleClick];

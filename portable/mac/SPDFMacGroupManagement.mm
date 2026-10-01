@@ -75,9 +75,9 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (void)loadView {
     self.view = [NSView new];
     _summary = Label(@"",11,YES);
-    _search = [SPDFGroupSearchField new]; _search.placeholderString = @"Search groups"; _search.toolTip = @"Search group names, not document titles.";
+    _search = [SPDFGroupSearchField new]; _search.placeholderString = @"Search groups and documents"; _search.toolTip = @"Search group names and document names.";
     _search.delegate = self; _search.sendsSearchStringImmediately = YES;
-    [_search setAccessibilityLabel:@"Search group names"];
+    [_search setAccessibilityLabel:@"Search group and document names"];
     _search.focusRingType = NSFocusRingTypeExterior;
     _table = [SPDFGroupManagementTable new]; _table.headerView = nil; _table.dataSource = self; _table.delegate = self;
     _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStylePlain; _table.intercellSpacing = NSMakeSize(0,2);
@@ -145,18 +145,32 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 }
 - (void)rebuildRows {
     NSMutableArray* rows = [NSMutableArray array]; NSUInteger hidden = 0, matched = 0;
+    NSString* query = [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     for (NSDictionary* group in _groups) {
         hidden += [group[@"hidden"] boolValue];
-        if (_search.stringValue.length && [group[@"name"] rangeOfString:_search.stringValue
-            options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location == NSNotFound) continue;
+        BOOL nameMatches = !query.length || [group[@"name"] rangeOfString:query
+            options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location != NSNotFound;
+        NSArray* documents = group[@"documents"] ?: @[];
+        if (query.length && !nameMatches) {
+            NSMutableArray* matches = [NSMutableArray array];
+            for (NSDictionary* document in documents) {
+                NSString* filename = [document[@"path"] lastPathComponent] ?: @"";
+                if ([(document[@"title"] ?: @"") rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location != NSNotFound ||
+                    [filename rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location != NSNotFound)
+                    [matches addObject:document];
+            }
+            documents = matches;
+        }
+        if (!nameMatches && !documents.count) continue;
         ++matched; [rows addObject:@{@"group":group}];
-        if ([_expanded containsObject:group[@"id"]])
-            for (NSDictionary* document in group[@"documents"]) [rows addObject:@{@"group":group,@"document":document}];
+        // Search reveals matching documents without changing saved expansion.
+        if (query.length || [_expanded containsObject:group[@"id"]])
+            for (NSDictionary* document in documents) [rows addObject:@{@"group":group,@"document":document}];
     }
     _rows = rows;
     _summary.stringValue = _search.stringValue.length ? [NSString stringWithFormat:@"%lu of %lu groups",matched,_groups.count] :
         [NSString stringWithFormat:@"%lu %@ · %lu hidden",_groups.count,_groups.count==1 ? @"group" : @"groups",hidden];
-    _empty.stringValue = _groups.count ? @"No matching groups.\nTry another group name." : @"Open a document to start organizing your groups.";
+    _empty.stringValue = _groups.count ? @"No matching groups or documents.\nTry another name." : @"Open a document to start organizing your groups.";
     _empty.hidden = rows.count > 0; [_table reloadData];
     NSInteger selected = -1;
     for (NSUInteger index=0;index<rows.count;index++) {
@@ -199,9 +213,12 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         if ([document[@"selected"] boolValue]) label.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
         contents = [NSStackView stackViewWithViews:@[icon,label]]; contents.spacing = 5;
     } else {
-        BOOL expanded = [_expanded containsObject:group[@"id"]];
+        BOOL searching = [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length > 0;
+        BOOL expanded = searching || [_expanded containsObject:group[@"id"]];
         SPDFGroupActionButton* disclosure = Icon(expanded ? @"chevron.down" : @"chevron.right",
             [NSString stringWithFormat:@"%@ %@ documents",expanded ? @"Collapse" : @"Expand",group[@"name"]],self,@selector(disclose:)); disclosure.groupID = group[@"id"];
+        disclosure.enabled = !searching;
+        if (searching) disclosure.toolTip = @"Matching documents are shown while searching";
         NSImageView* swatch = [NSImageView imageViewWithImage:spdf_tab_group_swatch_image(group[@"color"])];
         [swatch.widthAnchor constraintEqualToConstant:8].active = YES;
         NSTextField* name = Label(group[@"name"],12,NO);

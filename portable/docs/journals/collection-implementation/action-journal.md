@@ -595,3 +595,17 @@ The production-window probe now rasterizes actual controls in enabled and disabl
 ![Dark appearance with the same contrast hierarchy](../../proposals/mac-workspace-rethink/evidence/native-icons-dark.png)
 
 The corrected reader and Collection helper were rebuilt into `dist/ShenzhenPDF.app`; strict deep signature verification passed, and the executable is newer than all native sources. Updater regression tests also passed all32 cases. The app was not launched.
+
+
+## 1 October — compact Collection grid and group/document search
+
+The user accepted the remaining interface and requested two focused adjustments. Collection's flow layout distributed spare width between thumbnail columns, so horizontal spacing varied while vertical spacing remained fixed. A fixed, left-aligned layout now uses152×226-point cards,8-point gaps in both directions and12-point outer insets. Previews retain their height; captions remain readable with two lines and the existing History action. Layout queries calculate only visible rows, and thumbnail loading remains lazy.
+
+Group Management now searches group names and document names, including filename extensions, without regard to case or accents. A matching group reveals its documents; a document-only match reveals that document beneath its owning group. Search temporarily expands results without altering saved expansion preferences. Clearing it restores those preferences. Empty queries reuse the existing document arrays without scanning titles.
+
+The full Markdown/Collection UI suite and Group Management suite passed with exit0. Native layout checks cover four widths, equal horizontal/vertical gaps, viewport bounds, no overlaps, left alignment and access to the last row. Search regressions cover group matches, document matches, filename extensions and restoration of saved collapse state. File-size checks passed. The light/dark renders below are actual offscreen Collection views with synthetic missing-preview fixtures, used to inspect spacing rather than preview generation. No user window was opened or captured.
+
+![Compact Collection grid in light appearance](../../proposals/mac-workspace-rethink/evidence/native-collection-packed-light.png)
+![Compact Collection grid in dark appearance](../../proposals/mac-workspace-rethink/evidence/native-collection-packed-dark.png)
+
+The local `dist/ShenzhenPDF.app` build completed successfully. Strict deep signature verification passed and the executable is newer than the native sources. The app was not launched or published.
