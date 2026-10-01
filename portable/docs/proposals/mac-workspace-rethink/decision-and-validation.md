@@ -2,7 +2,21 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Latest revision: shared alignment grid
+## Latest revision: smaller tab surfaces and three alternatives
+
+1 October 2026. Applied the requested reduction to the tab surface, preserving 12px/16px title typography and the 4px inter-tab gap. Tabs are now 28px high rather than 32px; the tab surface has 10px clearance to the toolbar below, and the group label has 12px clearance to the first tab. File/favicons were removed from document titles. The corrected Brave baseline remains the default.
+
+Design intent: a person comparing technical documents must identify the active document quickly, while the reading surface remains dominant. Existing Mac typography and semantic group colors stay intact. The spacing change separates document selection from the toolbar and group control without introducing extra gaps between document tabs. Surface size changes; text and document layout do not.
+
+Used the [Interface Design skill found on skills.sh](https://www.skills.sh/dammyjay93/interface-design/interface-design), installed at `/Users/raph/.codex/skills/interface-design/SKILL.md`. A separate design agent applied the same skill and supplied three alternatives: **Index**, **Group tray**, and **Outline**. [Agent rationale and tradeoffs](tab-options-notes.md). The full-reader design controls now offer all four treatments. `tab-options.fragment.html` shows the three alternatives together, with the same type and geometry; `tab-options.css` records the agent's scoped variants.
+
+Browser measurements confirmed 28px tab surfaces, 12px text, zero title icons, 12px group-label clearance and unchanged 4px tab gaps. All three alternatives kept 12px text and had no horizontal overflow at the checked desktop and 352px browser widths. Selecting a different document in the comparison moved the selected styling correctly. No console errors were observed in the comparison. These are prototype-only changes; native UI, drag behavior and rendering are unchanged.
+
+![Corrected compact tabs](evidence/compact-tabs-corrected.png)
+
+![Three tab alternatives](evidence/tab-options-three.png)
+
+## Previous revision: shared alignment grid
 
 26 September 2026, after the alignment feedback. The window now uses one grid for navigation, the task pane, document controls, canvas and footer. The pane heading sits alongside the reading toolbar, instead of starting a row below it. Workspace heading, pane heading and reading toolbar have the same 44px height and top coordinate. Tabs begin at the navigation column's right edge. Group labels, document tabs, close buttons and title-bar search share the same vertical center. Navigation uses 36px rows, 16px icons and consistent 8px gaps. The footer spans the entire window.
 

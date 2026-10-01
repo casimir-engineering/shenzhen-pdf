@@ -130,6 +130,110 @@
 @container sz-reader (max-width:650px){#sz-workspace .sz-titlebar{grid-template-columns:64px minmax(0,1fr) 32px;padding:0 8px}#sz-workspace .sz-shell{--sz-rail-width:0px;--sz-pane-width:0px}#sz-workspace .sz-readingbar{grid-column:1/-1;height:auto;min-height:44px;flex-wrap:wrap;padding:6px 8px;gap:4px}#sz-workspace .sz-pane{position:absolute;grid-column:1/-1;grid-row:2/3;inset:0 auto 0 0;z-index:3;width:240px;max-width:calc(100% - 38px);box-shadow:8px 0 20px #00000020}#sz-workspace .sz-pane-head{height:44px;padding:0 12px 0 16px}#sz-workspace .sz-revision-controls{padding:0;width:100%;gap:4px}#sz-workspace .sz-readingbar .sz-version-state,#sz-workspace .sz-readingbar .sz-return-latest{font-size:10px;padding:6px;height:28px;min-height:28px}#sz-workspace .sz-readingbar .sz-panel-toggle{width:32px;padding:8px;flex-shrink:0}#sz-workspace .sz-mode-label{display:none}#sz-workspace .sz-readingbar .sz-tools-trigger{width:32px;padding:8px}#sz-workspace .sz-tools-trigger svg:last-child{display:none}#sz-workspace .sz-zoom{max-width:88px}#sz-workspace .sz-pane-subtitle{padding-top:12px}}
 @container sz-reader (max-width:420px){#sz-workspace .sz-titlebar{grid-template-columns:52px minmax(0,1fr) 28px;padding:0 6px}#sz-workspace .sz-lights{gap:5px;padding:0}#sz-workspace .sz-tabs{gap:4px}#sz-workspace .sz-group-label{max-width:52px;padding:4px;font-size:11px}#sz-workspace .sz-browser-tab .sz-tab svg{display:none}#sz-workspace .sz-command,#sz-workspace .sz-tab-more{width:28px;padding:6px}#sz-workspace .sz-tab-close{margin-right:0;width:20px;padding:3px}#sz-workspace .sz-zoom{max-width:82px}#sz-workspace .sz-readingbar{gap:2px;padding:6px}#sz-workspace .sz-status{padding:0 12px}}
 #sz-workspace .sz-readingbar:has(.sz-revision-controls:not([hidden])){height:auto;flex-wrap:wrap}
+/* Compact tab surfaces, unchanged type and inter-tab spacing. */
+#sz-workspace .sz-titlebar{padding-bottom:4px}
+#sz-workspace .sz-browser-group{height:40px;padding:6px 0;gap:4px}
+#sz-workspace .sz-browser-group.is-expanded::after{bottom:0}
+#sz-workspace .sz-browser-group.is-expanded .sz-group-label{margin-right:8px}
+#sz-workspace .sz-browser-tab{height:28px;border-radius:6px}
+#sz-workspace .sz-browser-tab .sz-tab{height:28px;min-height:28px;padding:6px 8px;font-size:12px;line-height:16px;gap:0}
+#sz-workspace .sz-browser-tab:not(.selected)::after{top:7px}
+/* Three tab-only alternatives. Append after the corrected Brave baseline.
+   All reuse the reader's palette and geometry; no changes below the title bar. */
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-group {
+  height:40px; padding:6px 0; gap:4px;
+}
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-group-label {
+  margin-right:8px; color:var(--sz-text);
+}
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab {
+  height:28px;
+}
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab .sz-tab {
+  height:28px; min-height:28px; padding:6px 8px;
+  font-size:12px; line-height:16px; color:var(--sz-text); background:transparent;
+}
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab .sz-tab svg {
+  display:none;
+}
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-browser-tab:not(.selected)::after {
+  content:none;
+}
+#sz-workspace:is([data-tab-design="index"],[data-tab-design="tray"],[data-tab-design="outline"]) .sz-tab-close {
+  width:24px; height:24px; min-height:24px; margin-right:4px;
+}
+
+/* 1. Index: a quiet continuous group rail, with the current document's
+   short underline sitting inside its own tab instead of a raised card. */
+#sz-workspace[data-tab-design="index"] .sz-browser-group.is-expanded::after {
+  bottom:0; height:1px; background:color-mix(in srgb,var(--group) 65%,transparent);
+}
+#sz-workspace[data-tab-design="index"] .sz-browser-tab {
+  border-radius:4px; background:color-mix(in srgb,var(--group) 5%,transparent);
+  box-shadow:none;
+}
+#sz-workspace[data-tab-design="index"] .sz-browser-tab:hover {
+  background:color-mix(in srgb,var(--group) 12%,transparent);
+}
+#sz-workspace[data-tab-design="index"] .sz-browser-tab.selected,
+#sz-workspace[data-tab-design="index"] .sz-browser-tab.selected:hover {
+  background:color-mix(in srgb,var(--group) 19%,var(--sz-surface));
+  box-shadow:inset 0 -2px 0 var(--group);
+}
+#sz-workspace[data-tab-design="index"] .sz-group-label {
+  border-radius:4px; background:color-mix(in srgb,var(--group) 15%,transparent);
+}
+
+/* 2. Tray: membership is one low-contrast rounded enclosure; selection is
+   a stronger same-hue surface. Inner 6px / outer 8px radii share 2px inset. */
+#sz-workspace[data-tab-design="tray"] .sz-browser-group.is-expanded::after {
+  content:none;
+}
+#sz-workspace[data-tab-design="tray"] .sz-browser-group.is-expanded::before {
+  content:""; position:absolute; inset:4px 0; border-radius:8px;
+  background:color-mix(in srgb,var(--group) 9%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--group) 27%,transparent);
+  pointer-events:none;
+}
+#sz-workspace[data-tab-design="tray"] .sz-browser-group > * { position:relative; }
+#sz-workspace[data-tab-design="tray"] .sz-browser-tab {
+  border-radius:6px; background:color-mix(in srgb,var(--group) 9%,transparent);
+  box-shadow:none;
+}
+#sz-workspace[data-tab-design="tray"] .sz-browser-tab:hover {
+  background:color-mix(in srgb,var(--group) 17%,transparent);
+}
+#sz-workspace[data-tab-design="tray"] .sz-browser-tab.selected,
+#sz-workspace[data-tab-design="tray"] .sz-browser-tab.selected:hover {
+  background:color-mix(in srgb,var(--group) 34%,var(--sz-surface));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--group) 70%,transparent);
+}
+#sz-workspace[data-tab-design="tray"] .sz-group-label {
+  border-radius:5px; background:var(--group-label);
+}
+
+/* 3. Outline: one crisp selected perimeter instead of a raised surface;
+   a left group spine and shared baseline retain the membership signal. */
+#sz-workspace[data-tab-design="outline"] .sz-browser-group.is-expanded::after {
+  bottom:0; height:2px; background:color-mix(in srgb,var(--group) 45%,transparent);
+}
+#sz-workspace[data-tab-design="outline"] .sz-group-label {
+  border-radius:4px; background:transparent;
+  box-shadow:inset 3px 0 0 var(--group);
+}
+#sz-workspace[data-tab-design="outline"] .sz-browser-tab {
+  border-radius:6px; background:color-mix(in srgb,var(--group) 7%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sz-line) 65%,transparent);
+}
+#sz-workspace[data-tab-design="outline"] .sz-browser-tab:hover {
+  background:color-mix(in srgb,var(--group) 14%,transparent);
+}
+#sz-workspace[data-tab-design="outline"] .sz-browser-tab.selected,
+#sz-workspace[data-tab-design="outline"] .sz-browser-tab.selected:hover {
+  background:color-mix(in srgb,var(--group) 21%,var(--sz-surface));
+  box-shadow:inset 0 0 0 2px var(--group);
+}
+
 </style>
 <script>
 (() => {
@@ -144,7 +248,7 @@
   state.closedTabs=state.closedTabs||[];state.tabExpanded=state.tabExpanded||[docs[state.doc]?.group||'Hardware'];
   const openDocs=()=>docs.map((d,i)=>({...d,i})).filter(d=>!state.closedTabs.includes(d.i));
   if(state.archiveOpened)docs.push({title:'Bench measurements.pdf',group:'General',format:'pdf'});
-  const design={layout:state.layout,condition:'Linked original',height:594}; let timer;
+  const design={tabDesign:state.tabDesign||'baseline',layout:state.layout,condition:'Linked original',height:594}; let timer;
   function remember(){state.memories[state.doc]={page:state.page,query:state.query,regex:state.regex||false,filter:state.filter,version:state.version,kept:[...state.kept],zoom:state.zoom,missing:state.missing,canvasScroll:q('.sz-canvas')?.scrollTop||0};}
   function persist(){remember();window.openai?.setWidgetState({modelContent:{layout:state.layout,mode:state.mode,doc:state.doc,page:state.page,version:state.version,pane:state.pane,missing:state.missing},privateContent:state}).catch(()=>{});}
   function symbols(){if(window.lucide)lucide.createIcons({attrs:{width:16,height:16}});}
@@ -158,6 +262,7 @@
     const paneOwner=state.mode==='groups'?'groups':state.mode+':'+state.doc;
     const focused=document.activeElement,focusAttr=focused?.getAttributeNames?.().find(a=>a.startsWith('data-'));
     const focusValue=focusAttr?focused.getAttribute(focusAttr):null;
+    root.dataset.tabDesign=design.tabDesign;state.tabDesign=design.tabDesign;
     q('.sz-shell').style.height=design.height+'px';
     root.classList.toggle('sz-compact',state.layout==='chooser'||design.height<370);
     groupData.forEach(g=>g[1]=openDocs().filter(d=>d.group===g[0]).length);
@@ -165,7 +270,7 @@
     const d=docs[state.doc];
     q('.sz-tabs').innerHTML=groupData.filter(g=>g[1]&&!state.hidden.includes(g[0])).map(([name,count])=>{
       const expanded=state.tabExpanded.includes(name),members=openDocs().filter(v=>v.group===name),selected=members.find(v=>v.i===state.doc),shown=selected?[selected,...members.filter(v=>v.i!==state.doc).slice(0,1)].sort((a,b)=>a.i-b.i):members.slice(0,2);
-      return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}">${icon(v.format==='pdf'?'file':'file-text')}<span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
+      return `<div class="sz-browser-group ${expanded?'is-expanded':'is-collapsed'} ${name===d.group?'is-current-group':''}" data-color="${name.toLowerCase()}"><button class="sz-group-label" data-tab-group="${name}" aria-label="${expanded?'Collapse':'Expand'} ${name} tabs" aria-expanded="${expanded}">${name}</button>${expanded?shown.map(v=>`<div class="sz-browser-tab ${v.i===state.doc?'selected':''}"><button class="sz-tab" data-doc="${v.i}" aria-current="${v.i===state.doc?'page':'false'}" aria-label="${esc(v.title)}"><span>${esc(v.title)}</span></button><button class="sz-tab-close" data-close-tab="${v.i}" aria-label="Close ${esc(v.title)}">${icon('x')}</button></div>`).join('')+(count>shown.length?`<button class="sz-group-overflow" data-group-open="${name}" aria-label="Show all ${count} ${name} documents">+${count-shown.length}</button>`:''):''}</div>`;
     }).join('')+`<button class="sz-new-tab" data-action="open-document" aria-label="Open document" data-tooltip="Open document">${icon('plus')}</button><span class="sz-tab-drag-space"></span><button class="sz-tab-more" data-mode="groups" aria-label="Show all ${openDocs().length} open documents" data-tooltip="All open documents">${icon('chevron-down')}</button>`;
     q('.sz-mode-label').textContent=state.mode==='groups'?'Groups':modes().find(x=>x[0]===state.mode)?.[2]||'Chapters';
     q('.sz-page-number').value=state.page;q('.sz-zoom').value=state.zoom;
@@ -268,6 +373,6 @@
   });
   window.addEventListener('openai:set_globals',e=>{const incoming=e.detail?.globals?.widgetState?.modelContent;if(incoming){Object.assign(state,e.detail.globals.widgetState.privateContent||{},incoming);render();}});
   render();
-  if(globalThis.Tweak){let appliedCondition=design.condition;const tweak=new Tweak({container:root,onChange:()=>{state.layout=design.layout;if(design.condition!==appliedCondition){state.missing=design.condition==='Original missing';state.version=design.condition==='Older version'?'2026.09.24':'latest';appliedCondition=design.condition;}render();persist();}});tweak.addSelect(design,'layout',{label:'Navigation alternative',options:[{label:'Vertical task rail',value:'rail'},{label:'Compact panel chooser',value:'chooser'}]});tweak.addSlider(design,'height',{label:'Reader content height',min:296,max:650,step:1,unit:'px'});tweak.addSelect(design,'condition',{label:'Document condition',options:['Linked original','Older version','Original missing']});}
+  if(globalThis.Tweak){let appliedCondition=design.condition;const tweak=new Tweak({container:root,onChange:()=>{state.layout=design.layout;if(design.condition!==appliedCondition){state.missing=design.condition==='Original missing';state.version=design.condition==='Older version'?'2026.09.24':'latest';appliedCondition=design.condition;}render();persist();}});tweak.addSelect(design,'tabDesign',{label:'Tab design',options:[{label:'Corrected Brave',value:'baseline'},{label:'1 · Index',value:'index'},{label:'2 · Group tray',value:'tray'},{label:'3 · Outline',value:'outline'}]});tweak.addSelect(design,'layout',{label:'Navigation alternative',options:[{label:'Vertical task rail',value:'rail'},{label:'Compact panel chooser',value:'chooser'}]});tweak.addSlider(design,'height',{label:'Reader content height',min:296,max:650,step:1,unit:'px'});tweak.addSelect(design,'condition',{label:'Document condition',options:['Linked original','Older version','Original missing']});}
 })();
 </script>
