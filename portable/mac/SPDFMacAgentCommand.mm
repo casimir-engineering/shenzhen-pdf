@@ -48,8 +48,8 @@ static NSArray* renderPages(SPDFMarkdownPaginationPlan* plan, SPDFMarkdownRender
 static NSDictionary* inspect(NSDictionary* command, NSError** error) {
     NSString* path = command[@"path"];
     if ([path.pathExtension.lowercaseString isEqual:@"pdf"]) return SPDFMacAgentInspectPDF(command, error);
-    if (!spdf_mac_path_is_markdown(path)) {
-        *error = agentError(@"Inspection supports PDF and Markdown documents."); return nil;
+    if (!SPDFIsRenderedTextDocumentPath(path)) {
+        *error = agentError(@"Inspection supports PDF, Markdown, text and supported source documents."); return nil;
     }
     SPDFMarkdownDocumentModel* model = [[SPDFMarkdownParser new] loadURL:[NSURL fileURLWithPath:path] error:error];
     if (!model) return nil;

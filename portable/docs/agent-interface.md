@@ -15,7 +15,7 @@ absolute. The process prints one JSON object and exits nonzero on failure.
   '{"action":"inspect","path":"/absolute/notes.md"}'
 ```
 
-Markdown inspection uses the same parser, rendering geometry, page decorations,
+Markdown and supported text/source inspection use the same parser, rendering geometry, page decorations,
 and pagination as the reader. Reports include canonical text, blocks, sections,
 tables, page fragments, split fractions, and overflow/scaling diagnostics.
 Canonical ranges count UTF-16 code units in `canonicalText`; they are **not**
@@ -27,7 +27,7 @@ PDF inspection returns page text with per-line UTF-16 ranges and rectangles
 in page coordinates, plus an `imageBacked` flag for scanned pages. It does not
 run OCR. With no `page`, it inspects up to 100 pages and reports `nextPage` when
 more remain. With `page`, it inspects that one page. PDF files are limited to
-256 MiB; paper overrides apply only to Markdown. The native reader's core draws
+256 MiB; paper overrides apply to Markdown and text/source documents. The native reader's core draws
 PDF previews at 72 dpi. PDF ranges refer to each page's `canonicalText`.
 
 Add `renderDirectory` to write page PNGs. The directory must be new, with an
@@ -45,6 +45,8 @@ this offline inspection; the report does not initiate network downloads.
   "page": 2
 }
 ```
+
+Source files use literal code blocks with the filename’s supported lexer; HTML stays source. The same inspect/open commands work for `.txt` and supported code extensions.
 
 Paper overrides apply to this inspection only. Persist layout choices directly
 in the Markdown document so the reader and future inspection agree:
@@ -88,7 +90,7 @@ and highlights it. `context` filters the surrounding search-result snippet;
 use a short nearby phrase, not an entire section. `occurrence` selects the
 one-based result **after** page/context filtering. With context and more than
 one eligible match, supply an occurrence or refine the page/context. A query
-without either filter chooses its first result. Both PDF and Markdown use
+without either filter chooses its first result. PDF, Markdown and text/source documents use
 their existing search and highlighting paths. Saved reading positions update.
 
 The live reader accepts commands only from its private `AgentRequests`

@@ -38,8 +38,8 @@
     if (!_active || !self.document) return;
     _pendingReanchorLocation = self.visibleAttributedLocation;
     [self rerenderDocumentWithStatus:orientation == SPDFMarkdownPageOrientationLandscape
-                                         ? @"Markdown pages are now landscape."
-                                         : @"Markdown pages are now portrait."];
+                                         ? @"Text pages are now landscape."
+                                         : @"Text pages are now portrait."];
 }
 
 @end

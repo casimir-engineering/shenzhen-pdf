@@ -26,7 +26,7 @@ void SPDFMacSetMarkdownEditorBundleIdentifier(NSString* bundleIdentifier) {
 }
 
 static NSURL* spdf_valid_markdown_source_url(NSString* path) {
-    if (!spdf_mac_path_is_markdown(path)) return nil;
+    if (!SPDFIsRenderedTextDocumentPath(path)) return nil;
     NSString* standardized = path.stringByStandardizingPath;
     BOOL isDirectory = NO;
     if (!standardized.length ||
@@ -86,9 +86,9 @@ static SPDFMacEditorApplicationLauncher spdf_workspace_editor_launcher(void) {
 static SPDFMacEditorApplicationPicker spdf_native_editor_picker(NSWindow* parentWindow) {
     return ^(SPDFMacEditorPickerCompletion completion) {
       NSOpenPanel* panel = [NSOpenPanel openPanel];
-      panel.title = @"Choose Markdown Editor";
+      panel.title = @"Choose Text Editor";
       panel.prompt = @"Choose Editor";
-      panel.message = @"Choose an application to open Markdown source files.";
+      panel.message = @"Choose an application to open Markdown, text and code files.";
       panel.canChooseFiles = YES;
       panel.canChooseDirectories = NO;
       panel.allowsMultipleSelection = NO;
@@ -139,7 +139,7 @@ BOOL SPDFMacOpenMarkdownSourceInEditor(NSString* path, NSWindow* parentWindow) {
 
 void SPDFMacInstallMarkdownEditorSettingsMenu(NSMenu* settingsMenu) {
     if (!settingsMenu) return;
-    NSMenuItem* item = [settingsMenu addItemWithTitle:@"Choose Markdown Editor..."
+    NSMenuItem* item = [settingsMenu addItemWithTitle:@"Choose Text Editor..."
                                                action:@selector(chooseMarkdownEditor:)
                                         keyEquivalent:@""];
     item.target = SPDFMacMarkdownEditorMenuTarget.sharedTarget;

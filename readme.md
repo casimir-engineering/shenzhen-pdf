@@ -52,10 +52,11 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Paper and editing** — choose A3, A4, A5, Letter, or Legal, margins, and explicit page breaks in Markdown front matter. Open the source in your remembered editor from its tab or page menu.
 - **Real sheets, same reader** — GitHub-flavored typography, paginated onto numbered A4 sheets ("Page 2 of 10" in every footer); same tabs, chapters, map, search, zoom and export as a PDF. Rotate turns the paper landscape, and each file reopens on the sheet you last read it on.
+- **Text and source files** — open plain text and the languages supported by the code highlighter, including HTML as source. A− / A+ beside zoom reflows text, with the same search, export and Collection history.
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
 - **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine, no JavaScript, no network.
 
-Agents can inspect PDF and Markdown through the optional [native CLI and MCP adapter](portable/docs/agent-interface.md), review page images and layout reports, and navigate to highlighted passages.
+Agents can inspect PDF, Markdown and text/source documents through the optional [native CLI and MCP adapter](portable/docs/agent-interface.md), review page images and layout reports, and navigate to highlighted passages.
 
 ## <a id="search"></a>Search-oriented architecture
 

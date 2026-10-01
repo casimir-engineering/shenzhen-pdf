@@ -37,11 +37,11 @@ yet; the build is a single self-installing executable, `dist\ShenzhenPDF-win-x64
 | XPS, OpenXPS | `.xps`, `.oxps`, rendered through MuPDF |
 | EPUB, MOBI, PalmDOC, FB2 | `.epub`, `.mobi`, `.prc`, `.pdb`, `.fb2`; reflowable e-books |
 | Comic archives | `.cbz`, `.cbt`, image-containing `.zip` and `.tar`; original image colors |
-| HTML and text | `.html`, `.htm`, `.xhtml`, `.txt`; paginated reading, not a browser engine |
+| Text and source code **mac** | `.txt`, logs and source files for every language in the code-block highlighter; HTML/XHTML opens as highlighted code |
 | Modern Office documents | `.docx`, `.xlsx`, `.pptx`, `.hwpx`; MuPDF's reflowed reading view, not Office editing or exact Office layout |
 | Images | PNG, JPEG/JFIF, BMP, GIF, TIFF, JPEG 2000, JBIG2, Netpbm/PFM and PSD; original colors in dark mode |
 | Vector images | `.svg`, `.svgz`; original colors in dark mode |
-| Markdown | `.md`, `.markdown` through the app's own paginated renderer **mac** |
+| Markdown | `.md`, `.markdown`, `.mdown` through the app's own paginated renderer **mac** |
 
 On macOS, the Open dialog, Finder **Open With**, and file drops onto the reader,
 empty workspace or tab bar use the same supported-format list. Multiple dropped
@@ -54,9 +54,19 @@ The bundled build does not include JPEG XR or RAR decoders, nor native HEIC/WebP
 legacy Office `.doc`/`.xls`/`.ppt`, or DRM removal. These are not advertised as
 openable. ZIP/TAR support means comic/image archives, not arbitrary archive browsing.
 Collection still stores the source bytes of additional formats; full-text indexing,
-comparison and previews for non-image formats outside PDF/Markdown remain limited.
-Local HTML/SVG resources are read from the original document's folder; Collection
-does not yet bundle those dependencies as it does for Markdown.
+comparison and previews outside PDF, Markdown, text/source and common images remain limited.
+Source files are literal: HTML tags, scripts, Markdown-looking syntax and resource
+references stay visible as code. Source viewing never loads their referenced assets.
+SVG resources are still read from the original document's folder; Collection does
+not yet bundle SVG dependencies as it does for Markdown.
+
+Text/source files share paginated search, copy, export, reading themes and Collection
+history with Markdown. **A− / A+**, immediately to the right of zoom, changes text
+size and reflows the pages; the existing text-size preference persists. Files use
+UTF-8 or BOM-marked UTF-16/UTF-32. Binary data is rejected. Syntax highlighting uses
+the same offline language catalog as fenced code blocks, including C/C++, Python,
+JavaScript/TypeScript, Swift, Java, Rust, Go, HTML/XML, JSON and YAML. SVG keeps its
+image viewer, and Markdown keeps its formatted document view.
 
 Password-protected PDFs prompt for the password, remember it for the session,
 and drop every stored credential at quit.

@@ -1,11 +1,14 @@
 #import "SPDFMacCollectionStorePrivate.h"
 #import "markdown/SPDFMarkdownDocument.h"
+#import "markdown/SPDFTextDocumentParser.h"
 
 NSArray* SPDFCollectionMarkdownTextPages(NSData* bytes, NSString* path, NSArray* assets, NSURL* root) {
     Class documentClass=NSClassFromString(@"SPDFMarkdownDocument");
     if (!documentClass) {
         // Foundation-only storage tools can still search text, but must not invent rendered page numbers.
-        NSString* text=[[NSString alloc] initWithData:bytes encoding:NSUTF8StringEncoding] ?: @"";
+        NSString* text=SPDFIsSourceDocumentPath(path) ? SPDFDecodeSourceDocument(bytes,nil) :
+            [[NSString alloc] initWithData:bytes encoding:NSUTF8StringEncoding];
+        text=text ?: @"";
         if (text.length>2*1024*1024) text=[text substringToIndex:2*1024*1024];
         return text.length ? @[@{@"page":@0,@"text":text}] : @[];
     }

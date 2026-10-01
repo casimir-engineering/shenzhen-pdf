@@ -1,3 +1,4 @@
+#import "markdown/SPDFTextDocumentFormats.h"
 #import "SPDFMacCollectionCompare.h"
 #import "markdown/SPDFMarkdownDocument.h"
 #import <CommonCrypto/CommonDigest.h>
@@ -21,8 +22,7 @@ static PDFDocument* LoadDocument(NSURL* URL, NSProgress* progress, BOOL comparis
              : @"Preview is limited to 512 MB. Use Save a Copy to open the document separately.",error);
         return nil;
     }
-    NSString* extension = URL.pathExtension.lowercaseString;
-    if (![@[@"md", @"markdown", @"mdown"] containsObject:extension]) {
+    if (!SPDFIsRenderedTextDocumentPath(URL.path)) {
         // Own the bytes: a live source can be replaced while this window is
         // open. A URL-backed PDFDocument could otherwise change beneath it.
         NSData* data = [NSData dataWithContentsOfURL:URL options:0 error:error];
@@ -49,7 +49,7 @@ static PDFDocument* LoadDocument(NSURL* URL, NSProgress* progress, BOOL comparis
     CGRect mediaBox = CGRectMake(0, 0, configuration.paperSize.width, configuration.paperSize.height);
     CGContextRef context = CGPDFContextCreate(consumer, &mediaBox, NULL);
     CGDataConsumerRelease(consumer);
-    if (!context) { fail(@"Could not prepare the Markdown preview pages.", error); return nil; }
+    if (!context) { fail(@"Could not prepare the text preview pages.", error); return nil; }
     for (NSUInteger index = 0; index < plan.pages.count && !progress.cancelled; index++) {
         CGPDFContextBeginPage(context, NULL);
         [plan drawPageAtIndex:index attributedString:markdown.renderedDocument.attributedString inContext:context];

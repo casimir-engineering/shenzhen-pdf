@@ -25,7 +25,8 @@ static SPDFMacMarkdownLinkResolution* SPDFMarkdownResolution(SPDFMacMarkdownLink
 
 BOOL spdf_mac_path_is_markdown(NSString* path) {
     return [path.pathExtension caseInsensitiveCompare:@"md"] == NSOrderedSame ||
-           [path.pathExtension caseInsensitiveCompare:@"markdown"] == NSOrderedSame;
+           [path.pathExtension caseInsensitiveCompare:@"markdown"] == NSOrderedSame ||
+           [path.pathExtension caseInsensitiveCompare:@"mdown"] == NSOrderedSame;
 }
 
 BOOL spdf_mac_type_is_markdown(UTType* type) {

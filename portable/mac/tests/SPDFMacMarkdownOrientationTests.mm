@@ -143,7 +143,7 @@ static void TestSessionContract(NSString* path, NSView* host, dispatch_queue_t q
 
     __block NSUInteger paperRenders = 0;
     session.statusHandler = ^(NSString* status) {
-      if ([status hasPrefix:@"Markdown pages are now "]) paperRenders++;
+      if ([status hasPrefix:@"Text pages are now "]) paperRenders++;
     };
     assert(session.pageOrientation == SPDFMarkdownPageOrientationPortrait);
     assert(session.paginationPlan.configuration.orientation == SPDFMarkdownPageOrientationPortrait);

@@ -47,7 +47,7 @@
     CGFloat clamped = SPDFMacMarkdownClampFontScale(scale);
     if (clamped == _fontScale) return;
     _fontScale = clamped;
-    if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown text size updated."];
+    if (_active && self.document) [self rerenderDocumentWithStatus:@"Text size updated."];
 }
 
 // The theme mirrors applyFontScale: exactly — an active session rerenders in
@@ -68,7 +68,7 @@
 - (void)applyThemeVariant:(SPDFMarkdownThemeVariant)themeVariant {
     if (themeVariant == _themeVariant) return;
     _themeVariant = themeVariant;
-    if (_active && self.document) [self rerenderDocumentWithStatus:@"Markdown reading theme updated."];
+    if (_active && self.document) [self rerenderDocumentWithStatus:@"Reading theme updated."];
 }
 
 - (BOOL)isNavigationReady {
@@ -85,7 +85,7 @@
     NSAssert(NSThread.isMainThread, @"Markdown AppKit views must be created on the main thread");
     _rootView = [[NSView alloc] init];
     _rootView.translatesAutoresizingMaskIntoConstraints = NO;
-    _placeholder = [NSTextField labelWithString:@"Loading Markdown..."];
+    _placeholder = [NSTextField labelWithString:@"Loading text..."];
     _placeholder.translatesAutoresizingMaskIntoConstraints = NO;
     _placeholder.alignment = NSTextAlignmentCenter;
     _placeholder.textColor = NSColor.secondaryLabelColor;
@@ -218,7 +218,7 @@
 // generation. Callers guarantee no initial load is already in flight.
 - (void)startInitialDocumentLoad {
     self.state = SPDFMacMarkdownSessionLoading;
-    _placeholder.stringValue = @"Loading Markdown...";
+    _placeholder.stringValue = @"Loading text...";
     _placeholder.hidden = NO;
     [_pagedView removeFromSuperview];
     _pagedView = nil;
@@ -247,7 +247,7 @@
         if (!self->_active) return;
         if (!document) {
             self.state = SPDFMacMarkdownSessionFailed;
-            self->_placeholder.stringValue = error.localizedDescription ?: @"Could not open Markdown document.";
+            self->_placeholder.stringValue = error.localizedDescription ?: @"Could not open text document.";
             [self finishActivationWithSuccess:NO error:error];
             return;
         }

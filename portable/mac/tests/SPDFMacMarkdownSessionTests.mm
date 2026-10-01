@@ -190,7 +190,7 @@ int main(void) {
         assert(session.fitMode == SPDFMacMarkdownPageFitCustom);
         __block NSUInteger fontScaleRenders = 0;
         session.statusHandler = ^(NSString* status) {
-          if ([status isEqualToString:@"Markdown text size updated."]) fontScaleRenders++;
+          if ([status isEqualToString:@"Text size updated."]) fontScaleRenders++;
         };
         [session applyFontScale:1.5];
         assert(session.fontScale == 1.5);
@@ -236,7 +236,7 @@ int main(void) {
 
         // Clamping, then equal-value applications must not rerender.
         session.statusHandler = ^(NSString* status) {
-          if ([status isEqualToString:@"Markdown text size updated."]) fontScaleRenders++;
+          if ([status isEqualToString:@"Text size updated."]) fontScaleRenders++;
         };
         [session applyFontScale:10.0];
         assert(session.fontScale == 3.0);
@@ -290,7 +290,7 @@ int main(void) {
                ColorMatchesHex(BodyColorOfSession(session, @"Alpha beta alpha"), 0x1F2328));
         __block NSUInteger themeRenders = 0;
         session.statusHandler = ^(NSString* status) {
-          if ([status isEqualToString:@"Markdown reading theme updated."]) themeRenders++;
+          if ([status isEqualToString:@"Reading theme updated."]) themeRenders++;
         };
         [session applyThemeVariant:SPDFMarkdownThemeVariantDark];
         assert(session.themeVariant == SPDFMarkdownThemeVariantDark);

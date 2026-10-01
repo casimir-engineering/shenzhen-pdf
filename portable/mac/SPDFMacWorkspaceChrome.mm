@@ -121,14 +121,22 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     for (NSLayoutConstraint* c in _pageField.constraints) if (c.firstAttribute == NSLayoutAttributeWidth) c.constant = 30;
     _fitModePopup.bordered = NO; _fitModePopup.font = [NSFont systemFontOfSize:12];
     StyleIcon(_ocrButton); StyleIcon(_translateButton);
+    for (NSSegmentedControl* control in @[_zoomSegments,_markdownFontSizeSegments]) {
+        control.segmentStyle = NSSegmentStyleSeparated;
+        [(NSCell*)control.cell setBordered:NO];
+        for (NSInteger segment=0; segment<control.segmentCount; segment++) [control setWidth:28 forSegment:segment];
+        [control.heightAnchor constraintEqualToConstant:28].active = YES;
+    }
+    _zoomSegments.accessibilityLabel = @"Document zoom";
+    _markdownFontSizeSegments.accessibilityLabel = @"Text size";
     _readingThemeButton.segmentStyle = NSSegmentStyleSeparated;
     [(NSCell*)_readingThemeButton.cell setBordered:NO];
     state.previous = Icon(@"chevron.left",@"Previous page",self,@selector(previousPage:));
     state.next = Icon(@"chevron.right",@"Next page",self,@selector(nextPage:));
     state.collection = Icon(@"books.vertical",@"Collection",self,@selector(showCollectionManager:));
     state.print = Icon(@"printer",@"Print document",self,@selector(printDocument:));
-    state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,_pageField,_pageCountLabel,state.next,_fitModePopup,_toolbarSpacer]];
-    state.tools = @[state.collection,_markdownFontSizeSegments,_readingThemeButton,_ocrButton,_translateButton,state.print,_minimapToggleButton];
+    state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,_pageField,_pageCountLabel,state.next,_fitModePopup,_zoomSegments,_markdownFontSizeSegments,_toolbarSpacer]];
+    state.tools = @[state.collection,_readingThemeButton,_ocrButton,_translateButton,state.print,_minimapToggleButton];
     state.toolsRow = [NSStackView stackViewWithViews:state.tools];
     for (NSStackView* row in @[state.primaryRow,state.toolsRow]) {
         row.orientation = NSUserInterfaceLayoutOrientationHorizontal; row.alignment = NSLayoutAttributeCenterY;
@@ -223,7 +231,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.mapHeader.hidden = !_minimapVisible || _presentationMode;
     state.command.hidden = _presentationMode;
     _markdownFontSizeSegments.hidden = ![self isMarkdownActive];
-    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds) < ([self isMarkdownActive] ? 528 : 460);
+    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds) < ([self isMarkdownActive] ? 600 : 532);
     if (state.wrapped != wrapped) {
         state.wrapped = wrapped;
         state.headerRow.orientation = wrapped ? NSUserInterfaceLayoutOrientationVertical : NSUserInterfaceLayoutOrientationHorizontal;

@@ -21,6 +21,23 @@ int main(void) {
         assert(spdf_mac_path_is_markdown(@"README.md"));
         assert(spdf_mac_path_is_markdown(@"NOTES.MARKDOWN"));
         assert(!spdf_mac_path_is_markdown(@"manual.pdf"));
+        for (NSString* ext in SPDFSourceDocumentExtensions()) {
+            NSString* path = [@"file." stringByAppendingString:ext];
+            assert(SPDFIsRenderedTextDocumentPath(path));
+            assert(!spdf_mac_path_is_markdown(path)); // Source code cannot use Markdown link/authoring semantics.
+        }
+        assert(!SPDFIsRenderedTextDocumentPath(@"picture.svg"));
+        assert(!SPDFIsRenderedTextDocumentPath(@"manual.pdf"));
+        // Source tabs must use text sessions and remain excluded from core prerender/preload.
+        NSString* mac = [@(__FILE__) stringByDeletingLastPathComponent].stringByDeletingLastPathComponent;
+        NSString* coordinator = [NSString stringWithContentsOfFile:[mac stringByAppendingPathComponent:@"ShenzhenPDFMac.mm"]
+            encoding:NSUTF8StringEncoding error:nil];
+        assert([coordinator containsString:@"if (SPDFIsRenderedTextDocumentPath(path)) continue;"]);
+        assert([coordinator containsString:@"if (SPDFIsRenderedTextDocumentPath(path)) {\n        [self loadSelectedMarkdownTab:tab];"]);
+        NSString* prerender = [NSString stringWithContentsOfFile:[mac stringByAppendingPathComponent:@"SPDFMacLaunchPrerender.mm"]
+            encoding:NSUTF8StringEncoding error:nil];
+        assert([prerender containsString:@"SPDFIsRenderedTextDocumentPath(path) || [self pathIsOnCloudStorage:path]"]);
+
         UTType* markdown = [UTType typeWithIdentifier:@"net.daringfireball.markdown"];
         assert(spdf_mac_type_is_markdown(markdown));
         assert([spdf_mac_markdown_heading_slug(@"Caf\u00e9 & Build Notes") isEqualToString:@"cafe-build-notes"]);

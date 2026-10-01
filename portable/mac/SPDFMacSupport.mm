@@ -329,7 +329,7 @@ NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger) {
 - (void)drawRect:(NSRect)dirty {
     (void)dirty; if (!self.segmentCount) return;
     NSRect bounds = NSInsetRect(self.bounds,1,2);
-    if (self.segmentCount > 1 || self.cell.highlighted) {
+    if ((self.segmentCount > 1 && self.segmentStyle != NSSegmentStyleSeparated) || self.cell.highlighted) {
         [[NSColor.labelColor colorWithAlphaComponent:.06] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5] fill];
     }
@@ -339,7 +339,11 @@ NSImage* spdf_markdown_font_size_toolbar_image(BOOL larger) {
         NSColor* color = SPDFChromeIconColor(self.enabled && [self isEnabledForSegment:segment]);
         NSImage* image = [self imageForSegment:segment];
         NSImage* tinted = [NSImage imageWithSize:NSMakeSize(16,16) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-            [image drawInRect:rect]; [color setFill]; NSRectFillUsingOperation(rect,NSCompositingOperationSourceIn); return YES;
+            CGFloat scale = MIN(NSWidth(rect)/MAX(1,image.size.width),NSHeight(rect)/MAX(1,image.size.height));
+            NSSize size = self.segmentStyle==NSSegmentStyleSeparated && self.segmentCount==2
+                ? NSMakeSize(image.size.width*scale,image.size.height*scale) : rect.size;
+            [image drawInRect:NSMakeRect(NSMidX(rect)-size.width/2,NSMidY(rect)-size.height/2,size.width,size.height)];
+            [color setFill]; NSRectFillUsingOperation(rect,NSCompositingOperationSourceIn); return YES;
         }];
         [tinted drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)
             fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:self.isFlipped hints:nil];

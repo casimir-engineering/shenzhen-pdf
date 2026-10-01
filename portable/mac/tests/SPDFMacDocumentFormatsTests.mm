@@ -1,3 +1,4 @@
+#define SPDF_TEXT_DOCUMENT_FORMAT_TESTING 1
 #import "SPDFMacSupport.h"
 #import "SPDFMacCollectionThumbnail.h"
 #include "shenzhen_pdf_core.h"
@@ -13,6 +14,10 @@ int main(int argc, const char* argv[]) {
         Check(argc==3,@"fixture and repository paths required");
         NSString* directory = @(argv[1]); NSString* repo = @(argv[2]);
         NSFileManager* fm = NSFileManager.defaultManager;
+        Check(SPDFReadableDocumentPath(@"document.pdf") && SPDFReadableDocumentPath(@"picture.png") &&
+            SPDFReadableDocumentPath(@"source.py") && SPDFReadableDocumentPath(@"notes.mdown") &&
+            !SPDFReadableDocumentPath(@"unknown.bin"), @"ordinary path classification works without materializing catalogs");
+        Check(SPDFSourceDocumentCatalogBuildCount == 0, @"PDF/image/source/title path checks do not initialize source catalog");
         // The picker, drop filter and Launch Services must advertise the same set.
         NSDictionary* plist = [NSDictionary dictionaryWithContentsOfFile:
             [repo stringByAppendingPathComponent:@"portable/mac/Info.plist"]];
@@ -20,6 +25,7 @@ int main(int argc, const char* argv[]) {
         for (NSDictionary* type in plist[@"CFBundleDocumentTypes"])
             [registered addObjectsFromArray:type[@"CFBundleTypeExtensions"] ?: @[]];
         Check([registered isEqualToSet:[NSSet setWithArray:SPDFReadableDocumentExtensions()]],@"Finder types match opening policy");
+        Check(SPDFSourceDocumentCatalogBuildCount == 1, @"complete Open extension list explicitly initializes source catalog");
         NSArray* types = spdf_document_content_types();
         for (NSString* ext in SPDFReadableDocumentExtensions()) {
             Check(SPDFReadableDocumentPath([@"test." stringByAppendingString:ext.uppercaseString]),ext);
@@ -82,13 +88,15 @@ int main(int argc, const char* argv[]) {
             printf("Rendered %s\n",filename.UTF8String);
         }
         NSString* imagePath=[directory stringByAppendingPathComponent:@"picture.png"];
+        NSString* sourcePath=[directory stringByAppendingPathComponent:@"example.py"];
+        [@"print('literal source')" writeToFile:sourcePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         NSString* folder=[directory stringByAppendingPathComponent:@"folder.pdf"];
         [fm createDirectoryAtPath:folder withIntermediateDirectories:NO attributes:nil error:nil];
         NSPasteboard* board=[NSPasteboard pasteboardWithUniqueName];
-        [board writeObjects:@[[NSURL fileURLWithPath:imagePath], [NSURL fileURLWithPath:folder],
+        [board writeObjects:@[[NSURL fileURLWithPath:imagePath], [NSURL fileURLWithPath:sourcePath], [NSURL fileURLWithPath:folder],
             [NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"absent.pdf"]],
             [NSURL URLWithString:@"https://example.com/image.png"]]];
-        Check([SPDFDocumentPathsFromPasteboard(board) isEqual:@[imagePath]],@"drop accepts local readable file and rejects folder/missing/remote URLs");
+        Check([SPDFDocumentPathsFromPasteboard(board) isEqual:@[imagePath,sourcePath]],@"drop accepts local readable file and rejects folder/missing/remote URLs");
         [board clearContents];
         NSString* invalid=[directory stringByAppendingPathComponent:@"invalid.png"];
         const unsigned char truncatedPNG[]={137,80,78,71,13,10,26,10,0,0,0,0};

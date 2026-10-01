@@ -645,3 +645,29 @@ The full Markdown/Collection UI suite and focused Collection, Find, group, tab, 
 ![Group header push-off at a section boundary](../../proposals/mac-workspace-rethink/evidence/native-groups-sticky-transition.png)
 
 Rebuilt `dist/ShenzhenPDF.app` with the final sources and verified its strict deep signature. This is a local development build, not a published release.
+
+
+## 2 October — text controls and syntax-highlighted source documents
+
+The user asked for A−/A+ beside zoom and source-language support using the existing code renderer. Split implementation between toolbar/layout, source parsing and Collection/search, with parent integration of file opening, persistence routes and documentation. The macOS design guidelines informed compact controls and accessible labels.
+
+The toolbar now places zoom −/+ after the fit/zoom selector and A−/A+ immediately to their right. Both use the surrounding flat28-point treatment; tooltips say Text Size and report the scale. Other tools wrap at narrow widths. An early offscreen check caught a stretched minus glyph; preserving its aspect ratio only for these two-segment controls fixed it without changing the existing theme icons. Actual Markdown and `.txt` sessions verify that A+ rerenders larger type and that A− restores it. The existing YAML text-scale setting and view-state paths are retained.
+
+A shared extension catalog admits files for every existing offline code lexer through Open, Finder Open With and drop. Text and code route through the existing text session, pagination, themes, search, selection, copy and export. HTML/XHTML is literal highlighted source; Markdown remains formatted and SVG remains an image. The parser constructs a code AST directly rather than wrapping source in fences: backticks, HTML tags, YAML-looking headers, CRLF and indentation survive without interpretation. UTF-8 and BOM-marked UTF-16/32 are accepted; binary data is rejected. Native document classification allocates no source catalog, verified with an initialization-count regression. No new launch indexing or source scan was added.
+
+Collection indexing, thumbnails, history previews and comparison share the source renderer; Cmd+K caches source pages through its existing lazy text path. Source examples never acquire Markdown image dependencies. Independent review found that older unchanged HTML captures would retain empty indexes. Reopening now upgrades the latest saved version’s index in place, with a raw/rendered profile so storage-only tools cannot prevent a later native page-aware upgrade. Tests assert stable version IDs/counts and no repeated index writes after migration.
+
+AI-facing change: the existing inspect/open CLI and MCP commands accept supported text/source documents. Inspection returns the same canonical UTF-16 text and page/block geometry as Markdown, with literal source content. No command shape, updater endpoint or release mechanism changes.
+
+![Compact text-size controls immediately after zoom, with a real text session](../../proposals/mac-workspace-rethink/evidence/native-source-toolbar.png)
+![Narrow layout keeps text controls adjacent and wraps other tools](../../proposals/mac-workspace-rethink/evidence/native-text-toolbar-compact.png)
+![HTML is highlighted literal source](../../proposals/mac-workspace-rethink/evidence/native-source-html.png)
+![Python uses the existing syntax highlighter](../../proposals/mac-workspace-rethink/evidence/native-source-python.png)
+
+Evidence comes from offscreen native AppKit views and deterministic page renders, not screenshots of the user’s running app. The workspace probe checks light/dark appearance,1280/880/560-point layouts, adjacency, non-overlap, real font-size reflow and updater menu routing. Source tests cover every lexer mapping, literal content, Unicode encodings, binary rejection, search, pagination and font scaling.
+
+Validation passed: the full Markdown engine suite, full Markdown/Collection UI integration suite (including source index upgrades), offscreen workspace probe, format/decode/drop tests, launch-work policy, Collection store/integrity/cleanup/search, native agent/MCP tests and all32 updater regressions. The file-size ratchet and whitespace checks pass. No app windows were launched, quit or captured.
+
+The final speed review extended the laziness check to the actual opening/title policy: native-path checks use the existing native extension list plus constant source pairs; only an explicit complete Open list builds the source catalog. The format regression verifies zero initialization for PDF, image, source and unknown paths before that request.
+
+Final packaging completed in `dist/ShenzhenPDF.app`, including the Collection helper. Strict deep signature verification passed; executable timestamps and bundled file associations match the final production sources. This is a local development build, not a published release. The running app was left untouched.

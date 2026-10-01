@@ -1,3 +1,4 @@
+#import "markdown/SPDFTextDocumentFormats.h"
 #import "SPDFMacCollectionWindowPrivate.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacMarkdownPrinting.h"
@@ -205,7 +206,7 @@ static const CGFloat GridWidth = 152, GridHeight = 226, GridGap = 8, GridInset =
             NSError* error = nil;
             NSURL* URL = [store materializeVersionID:version[@"id"] documentID:row[@"document"][@"id"] error:&error];
             NSImage* image = nil;
-            if (URL && [@[@"md",@"markdown",@"mdown"] containsObject:URL.pathExtension.lowercaseString]) {
+            if (URL && SPDFIsRenderedTextDocumentPath(URL.path)) {
                 SPDFMarkdownDocument* markdown = [SPDFMarkdownDocument documentWithURL:URL options:nil error:&error];
                 SPDFMarkdownPageConfiguration* config = markdown.authoredPageConfiguration ?: [SPDFMarkdownPageConfiguration A4PortraitConfiguration];
                 SPDFMarkdownPaginationPlan* plan = [markdown paginationPlanForConfiguration:config];

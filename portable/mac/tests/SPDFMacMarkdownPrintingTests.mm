@@ -324,7 +324,7 @@ int main(void) {
         // DARK: the screen goes dark, the export does not.
         __block NSUInteger themeRenders = 0;
         session.statusHandler = ^(NSString* status) {
-          if ([status isEqualToString:@"Markdown reading theme updated."]) themeRenders++;
+          if ([status isEqualToString:@"Reading theme updated."]) themeRenders++;
         };
         [session applyThemeVariant:SPDFMarkdownThemeVariantDark];
         assert(SpinUntil(
