@@ -2,7 +2,31 @@
 
 25 September 2026. **Interaction proposal, not a shipped interface redesign.** The separate Chapters/Comments enablement fix is built in `dist/ShenzhenPDF.app`; see [bug audit](bug-audit.md).
 
-## Latest revision: smaller tab surfaces and three alternatives
+## Latest revision: one reference-led compact tab system
+
+1 October 2026. The user rejected all three alternatives below. They are historical evidence, not recommended options. The live prototype now contains one tab treatment; the Index/Tray/Outline picker was removed.
+
+### References and design decision
+
+Read and applied two different skills: [macOS Design Guidelines](https://www.skills.sh/ehmo/platform-design-skills/macos-design-guidelines) and [Rams Design Review](https://www.skills.sh/arosenkranz/agent-config/rams). These are third-party guidance, not Apple certification or evidence of user approval. The applicable principles are compact desktop controls, system typography, visual hierarchy, coherent geometry, equal readable title contrast and keyboard focus. Touch-sized desktop controls were not adopted.
+
+The concrete visual reference is Brave's [compact horizontal tab design](https://github.com/brave/brave-browser/issues/40044), including the published before/after images. The [implementation](https://github.com/brave/brave-core/pull/24876/files) supplies verifiable dimensions: 28px compact tab height, 4px tab gaps, 8px radius and compact group-header insets. The reference image was inspected in the browser. This is a specific established design reference, not a claim to reproduce every current Brave build.
+
+The rejected variants gave group labels, inactive documents and the active document similar button-like prominence. The revision retains one compact group label and one thin continuous group rail. The selected document has a stronger group-colored surface; inactive documents retain only a faint tint. There is no extra group enclosure or selected perimeter. Adaptations for Shenzhen are centered titles, no favicons, the user's equal title colors, and a 44px unified Mac titlebar with 8px clearance above/below each 28px tab. Group labels are 20px tall with unchanged 12px text. The expanded label-to-tab gap is 12px; document-to-document spacing remains 4px. Close controls reserve equal space on both sides of the centered title and appear on selection, hover or keyboard focus.
+
+The active tab rules were consolidated, removing the superseded alternatives and successive geometry overrides. The prototype now estimates capacity from available strip width instead of always rendering exactly two members per group. Selection stays visible, document order stays stable, additional members have explicit overflow, and group expansion does not navigate. Window drag space and utility controls are reserved. This is a proposal-level allocator; native dragging and exact native title metrics remain implementation work.
+
+### Validation and independent review
+
+Browser checks at 1248px, 736px and 352px content widths found no tab-strip overflow. Measured desktop values: 28px tab height, 12px text, zero title icons, 4px inter-tab gap, 12px label clearance, 8px bottom clearance; all top-bar control centerlines were 23px from the fragment top. Title center error was less than 0.01 CSS px. The selected purple title contrast is 6.15:1 in dark appearance and 7.95:1 in light appearance (rounded from the concrete palette). Expanded General without navigation, selected a General document, returned to Hardware, switched PDF/Markdown, and reached the close control by keyboard; Comments remained absent for Markdown. No browser console errors were observed.
+
+An independent designer applied both skills and reviewed the complete light and dark reader captures. It found no serious tab-design issue, and flagged asymmetric title padding only at ≤420px. That padding was corrected to remain symmetric. This is a bounded design review, not a user-acceptance score or a native regression pass. Native app and dist are unchanged.
+
+![Compact reference-led tabs in dark appearance](evidence/reference-tabs-dark.png)
+
+![Compact reference-led tabs in light appearance](evidence/reference-tabs-light.png)
+
+## Rejected revision: smaller tab surfaces and three alternatives
 
 1 October 2026. Applied the requested reduction to the tab surface, preserving 12px/16px title typography and the 4px inter-tab gap. Tabs are now 28px high rather than 32px; the tab surface has 10px clearance to the toolbar below, and the group label has 12px clearance to the first tab. File/favicons were removed from document titles. The corrected Brave baseline remains the default.
 
