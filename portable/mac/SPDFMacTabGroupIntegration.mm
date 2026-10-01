@@ -163,7 +163,7 @@
     [self finishTabGroupChange];
 }
 - (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color {
-    if (group.general || ![spdf_tab_group_colors() containsObject:color]) return;
+    if (group.general || group.collectionBackups || ![spdf_tab_group_colors() containsObject:color]) return;
     group.colorName = color;
     [self finishTabGroupChange];
 }

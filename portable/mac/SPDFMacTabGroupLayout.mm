@@ -61,8 +61,8 @@
             NSInteger left = labs(a.integerValue-self.selectedIndex), right = labs(b.integerValue-self.selectedIndex);
             return left < right ? NSOrderedAscending : left > right ? NSOrderedDescending : [a compare:b];
         }];
-        CGFloat desired = 12;
-        for (NSNumber* index in candidates) desired += [self preferredWidthForTabAtIndex:index.integerValue] + kTabGap;
+        CGFloat desired = candidates.count ? 12 + (candidates.count-1)*kTabGap : 0;
+        for (NSNumber* index in candidates) desired += [self preferredWidthForTabAtIndex:index.integerValue];
         BOOL needsOverflow = candidates.count && desired > remaining;
         if (needsOverflow && remaining >= 28) { remaining -= 28; layout.overflowFrame = NSMakeRect(0,0,28,24); }
         CGFloat leadingGap = 12;
@@ -73,6 +73,25 @@
             remaining -= width + leadingGap;
             leadingGap = kTabGap;
             ++layout.capacity;
+        }
+    }
+    // Admission remains compact and prioritizes the active group's documents.
+    // Once no further document/label fits, use the residual width inside a
+    // dense group instead of stranding a large gap before the trailing controls.
+    SPDFTabGroupLayout* stretch = nil;
+    for (SPDFTabGroupLayout* layout in priority)
+        if (layout.capacity && layout.capacity < (NSInteger)layout.members.count) { stretch=layout; break; }
+    if (!stretch && remaining < kTabMinVisibleWidth+kTabGap)
+        for (SPDFTabGroupLayout* layout in priority)
+            if (layout.capacity >= 3) { stretch=layout; break; }
+    if (stretch && remaining > 0) {
+        NSArray<NSNumber*>* admitted = [stretch.tabRects.allKeys sortedArrayUsingSelector:@selector(compare:)];
+        CGFloat increment = floor(remaining/admitted.count);
+        for (NSUInteger i=0; i<admitted.count; ++i) {
+            NSRect rect = stretch.tabRects[admitted[i]].rectValue;
+            CGFloat extra = i+1 == admitted.count ? remaining : increment;
+            rect.size.width += extra; remaining -= extra;
+            stretch.tabRects[admitted[i]] = [NSValue valueWithRect:rect];
         }
     }
     CGFloat x = [self leftInset];

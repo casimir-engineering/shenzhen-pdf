@@ -9,3 +9,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 ## Next release
 
 - Sidebar icons, including History, use the full visible button area for native click tracking.
+- Crowded tab groups now use the available strip width, keeping Add Tab beside Group Management without widening sparse groups.
+- New groups have a simpler naming dialog: edit the selected default or press Enter to accept it.
+- Drag documents between groups in the Groups panel. All groups temporarily collapse during the drag, including while filtering, to expose destinations; cancelling restores the previous view.
+- Group headers in the Groups panel use the same pastel backgrounds as the tab bar.
+- Collection Backups always uses pastel Orange. Saved copies may move to other groups and retain a distinct pale-orange outline and their saved membership across relaunches.

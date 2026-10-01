@@ -217,6 +217,7 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     if (archived && [[self selectedTab].path isEqual:path]) {
         SPDFDocumentTab* tab = [self selectedTab]; tab.readOnly = YES;
         [self collectionGroupBackupTab:tab];
+        if (!tab.collectionVersionLabel.length) tab.collectionVersionLabel = @"Collection copy · Read-only";
         tab.title = [NSString stringWithFormat:@"%@ · Collection copy", path.lastPathComponent.stringByDeletingPathExtension];
         [self updateTabStrip]; [self savePersistentState];
         _statusLabel.stringValue = @"Read-only Collection copy · the original document is unchanged";

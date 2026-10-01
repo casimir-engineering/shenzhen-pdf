@@ -1,5 +1,6 @@
 #import "SPDFMacTabStripViewPrivate.h"
 #import "SPDFMacTabTitleDrawing.h"
+#import "SPDFMacCollectionTabIdentity.h"
 #include <math.h>
 
 @implementation SPDFTabStripView (Drawing)
@@ -22,6 +23,14 @@
         : [accent colorWithAlphaComponent:hovered ? 0.16 : 0.06];
     [fill setFill];
     [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:6 yRadius:6] fill];
+
+    if (SPDFTabIsCollectionCopy(tab)) {
+        // Pale provenance is independent of membership: an ordinary Orange
+        // group keeps its accent fill, while a moved saved copy keeps this rim.
+        [[NSColor colorWithSRGBRed:0.96 green:0.84 blue:0.71 alpha:1] setStroke];
+        NSBezierPath* rim = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(tabRect,.75,.75) xRadius:5.25 yRadius:5.25];
+        rim.lineWidth = 1.25; [rim stroke];
+    }
 
     NSString* title = [self titleForTabAtIndex:index];
     // Selection is carried by the fill, outline and font weight. Keeping one

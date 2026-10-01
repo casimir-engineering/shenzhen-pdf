@@ -24,6 +24,7 @@
 @interface SPDFGroupManagementRow : NSTableRowView
 @property(nonatomic, weak) NSTableView* ownerTable;
 @property(nonatomic) NSInteger nextSectionRow;
+@property(nonatomic, strong) NSColor* groupAccent;
 @end
 @implementation SPDFGroupManagementRow
 - (NSRect)sectionConstrainedFrame:(NSRect)frame {
@@ -45,7 +46,11 @@
 }
 - (void)drawBackgroundInRect:(NSRect)dirtyRect {
     // A floating section must cover documents scrolling beneath its controls.
-    if (self.groupRowStyle) { [NSColor.windowBackgroundColor setFill]; NSRectFill(dirtyRect); }
+    if (self.groupRowStyle) {
+        [NSColor.windowBackgroundColor setFill]; NSRectFill(dirtyRect);
+        [[self.groupAccent colorWithAlphaComponent:.16] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,3,1) xRadius:4 yRadius:4] fill];
+    }
     else [super drawBackgroundInRect:dirtyRect];
 }
 - (void)drawSelectionInRect:(NSRect)dirtyRect {
@@ -97,6 +102,12 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     BOOL _pendingScrollRestore;
     BOOL _hasSnapshot;
     BOOL _pendingSelectedReveal;
+    NSDictionary* _draggedDocument;
+    NSString* _dragToken;
+    NSString* _dropGroup;
+    BOOL _draggingDocuments;
+    CGFloat _dragScroll;
+
 }
 - (void)loadView {
     self.view = [NSView new];
@@ -109,6 +120,9 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStylePlain; _table.intercellSpacing = NSMakeSize(0,2);
     _table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
     _table.floatsGroupRows = YES;
+    [_table registerForDraggedTypes:@[@"com.shenzhenpdf.group-document"]];
+    [_table setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
+    [_table setDraggingSourceOperationMask:NSDragOperationNone forLocal:NO];
     _table.target = self; _table.action = @selector(activateRow:);
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"group"];
     [_table addTableColumn:column]; _table.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
@@ -155,7 +169,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     return @{@"groupQuery":_search.stringValue ?: @"",@"expandedGroups":[_expanded.allObjects sortedArrayUsingSelector:@selector(compare:)],
              @"groupScroll":@(MAX(0,_savedScroll))};
 }
-- (void)publishState { if (!_restoring && self.stateHandler) self.stateHandler(self.viewState); }
+- (void)publishState { if (!_restoring && !_draggingDocuments && self.stateHandler) self.stateHandler(self.viewState); }
 - (void)updateGroups:(NSArray<NSDictionary*>*)groups state:(NSDictionary*)state {
     (void)self.view;
     NSString* query = [state[@"groupQuery"] isKindOfClass:NSString.class] ? state[@"groupQuery"] : @"";
@@ -175,7 +189,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 }
 - (void)rebuildRows {
     NSMutableArray* rows = [NSMutableArray array]; NSUInteger hidden = 0, matched = 0;
-    NSString* query = [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString* query = _draggingDocuments ? @"" : [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     for (NSDictionary* group in _groups) {
         hidden += [group[@"hidden"] boolValue];
         BOOL nameMatches = !query.length || [group[@"name"] rangeOfString:query
@@ -194,7 +208,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         if (!nameMatches && !documents.count) continue;
         ++matched; [rows addObject:@{@"group":group}];
         // Search reveals matching documents without changing saved expansion.
-        if (query.length || [_expanded containsObject:group[@"id"]])
+        if (!_draggingDocuments && (query.length || [_expanded containsObject:group[@"id"]]))
             for (NSDictionary* document in documents) [rows addObject:@{@"group":group,@"document":document}];
     }
     _rows = rows;
@@ -258,10 +272,58 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (NSTableRowView*)tableView:(NSTableView*)table rowViewForRow:(NSInteger)row {
     SPDFGroupManagementRow* view = [SPDFGroupManagementRow new];
     view.ownerTable = table; view.nextSectionRow = -1;
+    view.groupAccent = spdf_tab_group_accent(_rows[row][@"group"][@"color"]);
     if (!_rows[row][@"document"]) for (NSUInteger index=row+1;index<_rows.count;index++) {
         if (!_rows[index][@"document"]) { view.nextSectionRow = index; break; }
     }
     return view;
+}
+// A private, per-drag token keeps this operation local to its source workspace.
+- (id<NSPasteboardWriting>)tableView:(NSTableView*)table pasteboardWriterForRow:(NSInteger)row {
+    (void)table;
+    if (row < 0 || row >= (NSInteger)_rows.count || !_rows[row][@"document"]) return nil;
+    _draggedDocument = _rows[row]; _dragToken = NSUUID.UUID.UUIDString;
+    NSPasteboardItem* item = [NSPasteboardItem new];
+    [item setString:_dragToken forType:@"com.shenzhenpdf.group-document"]; return item;
+}
+- (void)tableView:(NSTableView*)table draggingSession:(NSDraggingSession*)session
+    willBeginAtPoint:(NSPoint)point forRowIndexes:(NSIndexSet*)indexes {
+    (void)table; (void)session; (void)point; (void)indexes;
+    if (!_draggedDocument) return;
+    _dragScroll = _savedScroll; _draggingDocuments = YES; _dropGroup = nil;
+    [self rebuildRows]; [_scroll.contentView scrollToPoint:NSZeroPoint];
+}
+- (BOOL)acceptsGroupDrag:(id<NSDraggingInfo>)info row:(NSInteger)row {
+    return _draggingDocuments && info.draggingSource == _table && row >= 0 && row < (NSInteger)_rows.count &&
+        !_rows[row][@"document"] &&
+        ![_rows[row][@"group"][@"id"] isEqual:_draggedDocument[@"group"][@"id"]] &&
+        [[info.draggingPasteboard stringForType:@"com.shenzhenpdf.group-document"] isEqual:_dragToken];
+}
+- (NSDragOperation)tableView:(NSTableView*)table validateDrop:(id<NSDraggingInfo>)info
+    proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)operation {
+    (void)operation;
+    if (![self acceptsGroupDrag:info row:row]) return NSDragOperationNone;
+    [table setDropRow:row dropOperation:NSTableViewDropOn]; return NSDragOperationMove;
+}
+- (BOOL)tableView:(NSTableView*)table acceptDrop:(id<NSDraggingInfo>)info
+    row:(NSInteger)row dropOperation:(NSTableViewDropOperation)operation {
+    (void)table; (void)operation;
+    if (![self acceptsGroupDrag:info row:row] || !self.actionHandler) return NO;
+    _dropGroup = _rows[row][@"group"][@"id"];
+    // Include source identity so duplicate paths cannot move the wrong group's tab.
+    NSData* data = [NSJSONSerialization dataWithJSONObject:@{
+        @"source":_draggedDocument[@"group"][@"id"], @"path":_draggedDocument[@"document"][@"path"]}
+        options:0 error:nil];
+    self.actionHandler(@"move-document",_dropGroup,[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
+    return YES;
+}
+- (void)tableView:(NSTableView*)table draggingSession:(NSDraggingSession*)session
+    endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation {
+    (void)table; (void)session; (void)point;
+    _draggingDocuments = NO; _draggedDocument = nil; _dragToken = nil;
+    if (operation == NSDragOperationMove && _dropGroup) [_expanded addObject:_dropGroup];
+    _savedScroll = _dragScroll; _pendingScrollRestore = YES;
+    [self rebuildRows]; [self restoreScrollIfReady]; [self publishState]; _dropGroup = nil;
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _rows.count; }
 - (CGFloat)tableView:(NSTableView*)table heightOfRow:(NSInteger)row { (void)table; return _rows[row][@"document"] ? 26 : 36; }
@@ -277,7 +339,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         contents = [NSStackView stackViewWithViews:@[icon,label]]; contents.spacing = 5;
     } else {
         BOOL searching = [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length > 0;
-        BOOL expanded = searching || [_expanded containsObject:group[@"id"]];
+        BOOL expanded = !_draggingDocuments && (searching || [_expanded containsObject:group[@"id"]]);
         SPDFGroupActionButton* disclosure = Icon(expanded ? @"chevron.down" : @"chevron.right",
             [NSString stringWithFormat:@"%@ %@ documents",expanded ? @"Collapse" : @"Expand",group[@"name"]],self,@selector(disclose:)); disclosure.groupID = group[@"id"];
         disclosure.enabled = !searching;

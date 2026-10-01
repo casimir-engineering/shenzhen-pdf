@@ -97,7 +97,7 @@
         rename.target = self;
         rename.representedObject = group;
     }
-    if (!group.general) {
+    if (!group.general && !group.collectionBackups) {
         // Colors sit directly below Rename, as requested. Text and checkmarks
         // make the palette usable without relying on color discrimination.
         for (NSString* color in spdf_tab_group_colors()) {

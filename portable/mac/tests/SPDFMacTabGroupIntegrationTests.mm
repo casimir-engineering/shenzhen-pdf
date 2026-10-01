@@ -219,6 +219,8 @@ static void CheckOpeningOriginalFromBackups(void) {
     SPDFDocumentTab* backup = Tab(@"/collection/copy.pdf");
     backup.readOnly = YES; backup.group = SPDFTabGroup.collectionBackupsGroup;
     [reader seed:@[backup] selected:0];
+    [reader recolorTabGroup:backup.group color:@"Purple"];
+    Expect(@"recolor API cannot change reserved backup color",[backup.group.colorName isEqual:@"Orange"]);
     SPDFDocumentTab* original = Tab(@"/documents/original.pdf");
     NSInteger inserted = [reader appendNewTabToActiveGroup:original];
     Expect(@"opening an original from Backups creates General instead of mixing editable documents",
