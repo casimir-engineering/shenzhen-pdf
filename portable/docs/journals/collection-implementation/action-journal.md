@@ -768,4 +768,9 @@ Collection now distinguishes Open original from Open collection copy. A saved co
 
 OCR can now accept supported images and creates a separate PDF on a worker before entering the existing OCR workflow. Native text documents such as EPUB and Office files similarly get a PDF rendition before whole-document translation; Markdown/plain text/source files use the existing text-renderer export. Generated names avoid collisions and protected Collection sources request an external destination. Image and native-text conversion tests cover nine format fixtures and multipage TIFF, preserving source bytes and existing output. Existing OCR command, validation and translation-policy tests pass; no tool installation or external OCR/translation run was needed for these routing changes. The shared PDF writer was extracted without changing its Windows entry point.
 
-The combined local build and hidden workspace probe pass, along with focused keyboard, popover, group, sidebar, Collection, conversion and shortcut UI checks. Release candidate 26.10.2-2 will run the complete release sweep before final packaging.
+The combined local build and hidden workspace probe pass, along with focused keyboard, popover, group, sidebar, Collection, conversion and shortcut UI checks. Release candidate 26.10.2-2 passed the complete release sweep, including all 32 updater cases and 56 release-workflow checks. The normal publication/signature trust gates remain unchanged. Final versioned packaging follows.
+
+
+![Collection at its 680-point minimum width: distinct original, saved-copy and history actions](evidence/collection-original-and-copy.png)
+
+The Collection reviewer verified row geometry at minimum and wide widths, immutable-copy routing despite an available original, and 0400 file permissions before deferred metadata lookup. The displayed long filename is a generated test fixture.
