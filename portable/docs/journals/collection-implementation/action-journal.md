@@ -786,3 +786,7 @@ Focused tests use private pasteboards and generated images, leaving the user's c
 Rewrote the candidate notes around reader tasks: organize, keep history, open/paste/save, search, and fixes. Shortcuts have a small table. AI capabilities are separate; implementation details and validation evidence stay in this journal. No publication is implied by preparing this local candidate.
 
 Technical review caught and corrected three Save As integration gaps: archive destinations are refused, overwriting an existing file uses Collection's pre-save protection, and copies from read-only sources become writable private files. The destination identity is captured before protection and checked after conversion; a newly appeared destination is never overwritten. Saved-history notification runs before loading the new destination. Pasted saves retarget the originating tab and persist its reading state; if the user switched tabs meanwhile, the saved tab updates without stealing focus, and a closed tab stays closed. A focused category test covers these transitions and restored marker state. Unsaved status is also exposed to accessibility.
+
+![Hidden tab-renderer fixture: unsaved capture with a red dot, saved image without one](evidence/2026-10-02-pasted-image-unsaved.png)
+
+This isolated drawing fixture exercises the production tab renderer; it is not a screenshot of the user's app. The completion-state tests separately verify that Save As removes the marker in the same originating tab.
