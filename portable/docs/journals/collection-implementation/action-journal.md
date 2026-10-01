@@ -747,3 +747,5 @@ Focused group, hover, workspace, retention, cache, preview-delivery, palette, co
 ![Release candidate workspace with the persistent map toggle at the upper-right](evidence/release-26-10-2-map.png)
 
 This image is a hidden native AppKit render, not a capture of the user's reader. The same probe checks repeated input at a fixed coordinate in light/dark appearance and wide/compact layouts. Live validation used the separate temporary reader described above; after testing, only its verified PID was stopped.
+
+Final packaging: `dist/ShenzhenPDF.app` rebuilt successfully as 26.10.2-1. Strict deep code-signature verification passed; the production bundle identifier is unchanged, and the executable is newer than every native frontend source. This is the local development candidate, not a notarized published release. No tag, push, upload or publication was performed.
