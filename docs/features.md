@@ -34,13 +34,29 @@ yet; the build is a single self-installing executable, `dist\ShenzhenPDF-win-x64
 | Format | Notes |
 | --- | --- |
 | PDF | The primary, most-polished path: text, links, outline, annotations, rotation, save, export |
-| XPS | Rendered through MuPDF |
-| EPUB, MOBI | Reflowable e-books |
-| CBZ | Comic archives; never recolored by the dark theme |
-| FB2 | E-book format |
-| HTML | Rendered by MuPDF, not a browser engine |
-| Images | PNG, JPEG and the rest of MuPDF's image set; never recolored |
-| Markdown | `.md` through the app's own paginated renderer **mac** |
+| XPS, OpenXPS | `.xps`, `.oxps`, rendered through MuPDF |
+| EPUB, MOBI, PalmDOC, FB2 | `.epub`, `.mobi`, `.prc`, `.pdb`, `.fb2`; reflowable e-books |
+| Comic archives | `.cbz`, `.cbt`, image-containing `.zip` and `.tar`; original image colors |
+| HTML and text | `.html`, `.htm`, `.xhtml`, `.txt`; paginated reading, not a browser engine |
+| Modern Office documents | `.docx`, `.xlsx`, `.pptx`, `.hwpx`; MuPDF's reflowed reading view, not Office editing or exact Office layout |
+| Images | PNG, JPEG/JFIF, BMP, GIF, TIFF, JPEG 2000, JBIG2, Netpbm/PFM and PSD; original colors in dark mode |
+| Vector images | `.svg`, `.svgz`; original colors in dark mode |
+| Markdown | `.md`, `.markdown` through the app's own paginated renderer **mac** |
+
+On macOS, the Open dialog, Finder **Open With**, and file drops onto the reader,
+empty workspace or tab bar use the same supported-format list. Multiple dropped
+files open as tabs. Filenames remain complete in the sidebar; tab titles omit the
+extension. Direct image files also receive bounded Collection thumbnails through
+macOS ImageIO where that decoder is available. GIFs use MuPDF's static reading
+representation rather than animated playback.
+
+The bundled build does not include JPEG XR or RAR decoders, nor native HEIC/WebP,
+legacy Office `.doc`/`.xls`/`.ppt`, or DRM removal. These are not advertised as
+openable. ZIP/TAR support means comic/image archives, not arbitrary archive browsing.
+Collection still stores the source bytes of additional formats; full-text indexing,
+comparison and previews for non-image formats outside PDF/Markdown remain limited.
+Local HTML/SVG resources are read from the original document's folder; Collection
+does not yet bundle those dependencies as it does for Markdown.
 
 Password-protected PDFs prompt for the password, remember it for the session,
 and drop every stored credential at quit.

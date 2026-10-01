@@ -8950,22 +8950,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (fallback.length) [self openPath:fallback];
 }
 
-- (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
-    NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[ [NSURL class] ]
-                                                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
-    NSMutableArray<NSString*>* paths = [NSMutableArray array];
-    for (NSURL* url in urls) {
-        NSString* ext = url.pathExtension.lowercaseString;
-        if ([ext isEqualToString:@"pdf"] || [ext isEqualToString:@"xps"] || [ext isEqualToString:@"cbz"] ||
-            [ext isEqualToString:@"epub"] || [ext isEqualToString:@"md"] || [ext isEqualToString:@"markdown"]) {
-            [paths addObject:url.path];
-        }
-    }
-    if (paths.count == 0) return NO;
-    [self openPaths:paths];
-    return YES;
-}
-
 - (CGFloat)minimumSidebarWidthForCurrentContent {
     return [self hasSearchSidebar] ? kSearchSidebarMinWidth : kMinSidebarWidth;
 }

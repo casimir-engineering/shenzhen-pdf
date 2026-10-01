@@ -609,3 +609,19 @@ The full Markdown/Collection UI suite and Group Management suite passed with exi
 ![Compact Collection grid in dark appearance](../../proposals/mac-workspace-rethink/evidence/native-collection-packed-dark.png)
 
 The local `dist/ShenzhenPDF.app` build completed successfully. Strict deep signature verification passed and the executable is newer than the native sources. The app was not launched or published.
+
+
+## 1 October — make the bundled document formats openable
+
+The format descriptions were ahead of the native entry points: MuPDF already decoded many images and documents, while Open and file drops admitted only PDF/XPS/CBZ/EPUB/Markdown. The native app now shares one lazy extension policy across the picker, pasteboard filtering and tab labels, with a regression asserting that Finder's Viewer registrations match it. File drops work on the reader, empty workspace and tab strip; existing internal tab/group drags retain their own path. Multiple dropped documents become tabs. Directory and remote URL drops are rejected. PDF-only save/edit operations retain their existing capability gates.
+
+Supported families are PDF and Markdown; XPS/OpenXPS; EPUB, MOBI/PalmDOC and FB2; HTML/XHTML and text; modern Office DOCX/XLSX/PPTX/HWPX; image-containing ZIP/TAR/CBZ/CBT; SVG/SVGZ; and the linked bitmap families including PNG/JPEG, BMP/GIF/TIFF, JPEG2000, JBIG2, Netpbm/PFM and PSD. The catalog deliberately excludes unlinked JPEG XR/RAR and unsupported HEIC/WebP/legacy Office. Office files are reflowed reading views, not a promise of Office layout fidelity. The full support and Collection limitations are documented in [Features](../../../../docs/features.md#formats).
+
+A focused headless suite creates31 actual fixtures using system encoders and small self-contained document packages. Each opens through the production C core and renders nonwhite content; picture formats also render byte-identically in light/dark mode. The suite checks picker and Finder registration parity, extension-free tab labels, regular-file drop filtering, and bounded Collection previews for common images. A deliberately invalid image remains cheap to filter and returns an ordinary decoding error when its page is requested. No decoder, Collection capture or indexer is started while filtering a drag. Collection previews use ImageIO downsampling on the existing background queue with a300-pixel bound, preserving the helper's independence from MuPDF.
+
+The full Markdown/Collection UI suite, tab-strip interactions, tab-group interactions, core reading-theme tests, launch-work policy, file-explorer preference and all32 updater tests passed. No user app window was launched, quit or captured. These are direct production-core page renders from the fixture suite:
+
+![DOCX content rendered by the reader core](../../proposals/mac-workspace-rethink/evidence/formats/word.docx.png)
+![EPUB content rendered by the reader core](../../proposals/mac-workspace-rethink/evidence/formats/book.epub.png)
+
+Packaging completed in `dist/ShenzhenPDF.app`. Strict deep signature validation passed; the built file associations match the source plist and the executable is newer than the production native sources. File-size checks passed after extracting drop routing from the coordinator. This is a local build, not a published release; the running app was left untouched.

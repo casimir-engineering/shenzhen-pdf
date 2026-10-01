@@ -90,4 +90,11 @@
     [self openPath:path];
 }
 
+- (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {
+    NSArray<NSString*>* paths = SPDFDocumentPathsFromPasteboard(pasteboard);
+    if (!paths.count) return NO;
+    [self openPaths:paths];
+    return YES;
+}
+
 @end

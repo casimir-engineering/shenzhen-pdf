@@ -481,7 +481,7 @@ $(MAC_BIN): $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C
 		echo "warning: actool not found; using .icns app icon fallback"; \
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -framework ImageIO -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
@@ -699,3 +699,10 @@ mac-workspace-panel-tests: | $(BUILD)
 mac-sidebar-presentation-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarPresentationTests.mm mac/SPDFMacSidebarPresentation.mm mac/SPDFMacCollectionStyle.mm -framework Cocoa -o "$(BUILD)/SPDFMacSidebarPresentationTests"
 	"$(BUILD)/SPDFMacSidebarPresentationTests"
+
+.PHONY: mac-document-format-tests
+mac-document-format-tests: mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ)
+	@mkdir -p "$(BUILD)"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacDocumentFormatsTests.mm mac/SPDFMacSupport.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework UniformTypeIdentifiers -framework PDFKit -framework ImageIO -lm -o "$(BUILD)/SPDFMacDocumentFormatsTests"
+	@fixture_dir=$$(mktemp -d); trap 'rm -rf "$$fixture_dir"' EXIT; \
+	python3 mac/tests/make-format-fixtures.py "$$fixture_dir" && "$(BUILD)/SPDFMacDocumentFormatsTests" "$$fixture_dir" "$(abspath ..)"

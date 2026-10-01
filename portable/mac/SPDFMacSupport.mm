@@ -9,7 +9,7 @@ NSArray<UTType*>* spdf_document_content_types(void) {
     NSMutableArray<UTType*>* types = [NSMutableArray arrayWithObject:UTTypePDF];
     UTType* markdown = [UTType typeWithIdentifier:@"net.daringfireball.markdown"];
     if (markdown) [types addObject:markdown];
-    for (NSString* extension in @[ @"xps", @"cbz", @"epub", @"md", @"markdown" ]) {
+    for (NSString* extension in SPDFReadableDocumentExtensions()) {
         UTType* type = [UTType typeWithFilenameExtension:extension];
         if (type && ![types containsObject:type]) [types addObject:type];
     }
@@ -18,8 +18,10 @@ NSArray<UTType*>* spdf_document_content_types(void) {
 
 NSString* spdf_display_label_without_extension(NSString* label) {
     if (!label.length) return @"";
-    NSArray<NSString*>* extensions = @[ @".pdf", @".xps", @".cbz", @".epub", @".markdown", @".md" ];
-    for (NSString* ext in extensions) {
+    if (SPDFReadableDocumentPath(label)) return label.stringByDeletingPathExtension;
+    if ([label rangeOfString:@"."].location == NSNotFound) return label;
+    for (NSString* extension in SPDFReadableDocumentExtensions()) {
+        NSString* ext = [@"." stringByAppendingString:extension];
         NSRange range = [label rangeOfString:ext options:NSCaseInsensitiveSearch | NSBackwardsSearch];
         if (range.location == NSNotFound) continue;
         NSUInteger end = range.location + range.length;

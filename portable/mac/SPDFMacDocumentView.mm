@@ -936,8 +936,8 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    (void)sender;
-    return NSDragOperationCopy;
+    return SPDFDocumentPathsFromPasteboard(sender.draggingPasteboard).count
+        ? NSDragOperationCopy : NSDragOperationNone;
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {

@@ -46,8 +46,48 @@
 			<key>CFBundleTypeExtensions</key>
 			<array>
 				<string>xps</string>
-				<string>cbz</string>
+				<string>oxps</string>
 				<string>epub</string>
+				<string>mobi</string>
+				<string>prc</string>
+				<string>pdb</string>
+				<string>fb2</string>
+				<string>html</string>
+				<string>htm</string>
+				<string>xhtml</string>
+				<string>txt</string>
+				<string>docx</string>
+				<string>xlsx</string>
+				<string>pptx</string>
+				<string>hwpx</string>
+				<string>cbz</string>
+				<string>cbt</string>
+				<string>zip</string>
+				<string>tar</string>
+				<string>svg</string>
+				<string>svgz</string>
+				<string>png</string>
+				<string>jpg</string>
+				<string>jpeg</string>
+				<string>jpe</string>
+				<string>jfif</string>
+				<string>jfif-tbnl</string>
+				<string>bmp</string>
+				<string>gif</string>
+				<string>tif</string>
+				<string>tiff</string>
+				<string>jp2</string>
+				<string>jpx</string>
+				<string>j2k</string>
+				<string>jb2</string>
+				<string>jbig2</string>
+				<string>pnm</string>
+				<string>pam</string>
+				<string>pbm</string>
+				<string>pgm</string>
+				<string>ppm</string>
+				<string>pfm</string>
+				<string>psd</string>
 			</array>
 			<key>CFBundleTypeName</key>
 			<string>Document</string>

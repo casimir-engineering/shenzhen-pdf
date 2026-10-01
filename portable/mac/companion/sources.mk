@@ -13,4 +13,4 @@ MAC_COLLECTION_SRCS := $(MAC_MARKDOWN_SRCS) \
     mac/SPDFMacPasswordCredentials.mm mac/SPDFMacMarkdownPrinting.mm \
     mac/SPDFMacFileExplorerPreference.mm
 MAC_COLLECTION_FRAMEWORKS := -framework Cocoa -framework QuartzCore -framework PDFKit \
-    -framework UniformTypeIdentifiers -framework CoreServices
+    -framework UniformTypeIdentifiers -framework CoreServices -framework ImageIO
