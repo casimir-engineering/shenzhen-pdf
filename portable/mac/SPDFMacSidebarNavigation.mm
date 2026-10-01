@@ -12,6 +12,18 @@ static NSString* Symbol(NSInteger mode) {
         default: return @"list.bullet.indent";
     }
 }
+// Rows paint a full 28-point target, not an AppKit bezel. Native button cells
+// otherwise hit-test an inset bezel/title rectangle, leaving painted edges out.
+@interface SPDFSidebarNavigationCell : NSButtonCell
+@end
+@implementation SPDFSidebarNavigationCell
+- (NSCellHitResult)hitTestForEvent:(NSEvent*)event inRect:(NSRect)frame ofView:(NSView*)view {
+    (void)frame;
+    NSPoint point = [view convertPoint:event.locationInWindow fromView:nil];
+    return self.enabled && NSPointInRect(point,view.bounds)
+        ? NSCellHitContentArea | NSCellHitTrackableArea : NSCellHitNone;
+}
+@end
 @interface SPDFSidebarNavigationRow : NSButton
 @property NSInteger mode;
 @end
@@ -19,6 +31,7 @@ static NSString* Symbol(NSInteger mode) {
     NSTrackingArea* _hoverArea;
     BOOL _hovered;
 }
++ (Class)cellClass { return SPDFSidebarNavigationCell.class; }
 - (void)mouseDown:(NSEvent*)event {
     if (self.mode >= 0) { [super mouseDown:event]; return; }
     [self highlight:NO]; self.state=NSControlStateValueOff;
@@ -101,6 +114,7 @@ static NSString* Symbol(NSInteger mode) {
     for (NSView* row in _rows) [row removeFromSuperview]; [_rows removeAllObjects];
     for (NSInteger i=0;i<self.segmentCount;i++) {
         SPDFSidebarNavigationRow* row = [SPDFSidebarNavigationRow new]; row.bordered = NO;
+        row.ignoresMultiClick = NO;
         row.tag = i; row.target = self; row.action = @selector(chooseRow:);
         [self addSubview:row]; [_rows addObject:row];
     }

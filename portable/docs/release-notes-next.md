@@ -8,4 +8,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Sidebar icons, including History, use the full visible button area for native click tracking.
