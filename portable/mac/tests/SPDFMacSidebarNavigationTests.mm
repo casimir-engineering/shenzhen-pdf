@@ -65,6 +65,45 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
         for (NSButton* peer in navigation.accessibilityChildren)
             if (row != peer) Check(!NSIntersectsRect(row.frame,peer.frame),"icon targets never overlap");
     }
+    for (NSButton* row in navigation.accessibilityChildren) {
+        NSUInteger click = 0;
+        for (NSNumber* y in @[@1,@7,@14,@21,@27]) {
+            ++click;
+            NSPoint point = [row convertPoint:NSMakePoint(NSMidX(row.bounds),y.doubleValue) toView:nil];
+            NSView* hit = [surface hitTest:[surface.superview convertPoint:point fromView:nil]];
+            Check(hit == row,"whole sidebar icon height belongs to the button");
+            NSEvent* down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:1
+                windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:click pressure:1];
+            Check(([row.cell hitTestForEvent:down inRect:row.bounds ofView:row] & NSCellHitTrackableArea) != 0,
+                "native button hit area includes the entire painted icon target");
+            NSEvent* up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:point modifierFlags:0 timestamp:1.01
+                windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:click pressure:0];
+            NSUInteger before = fixture.changes;
+            [NSApp postEvent:up atStart:YES];
+            [row mouseDown:down];
+            if (fixture.changes != before + 1) fprintf(stderr,"CLICK %s y=%.0f\n",row.accessibilityLabel.UTF8String,y.doubleValue);
+            Check(fixture.changes == before + 1,"whole sidebar icon height activates exactly once");
+        }
+    }
+    NSButton* history = navigation.accessibilityChildren.lastObject;
+    NSPoint center = [history convertPoint:NSMakePoint(NSMidX(history.bounds),NSMidY(history.bounds)) toView:nil];
+    NSPoint outside = [history convertPoint:NSMakePoint(-10,-10) toView:nil];
+    NSEvent* pressed = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:center modifierFlags:0 timestamp:2
+        windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];
+    NSEvent* released = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:outside modifierFlags:0 timestamp:2.01
+        windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];
+    NSUInteger beforeCancel = fixture.changes;
+    NSEvent* dragged = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:outside modifierFlags:0 timestamp:2.005
+        windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:1];
+    [NSApp postEvent:released atStart:YES]; [NSApp postEvent:dragged atStart:YES]; [history mouseDown:pressed];
+    Check(fixture.changes == beforeCancel,"releasing outside the icon still cancels native button tracking");
+    Check([history.cell hitTestForEvent:released inRect:history.bounds ofView:history] == NSCellHitNone,
+        "outside points cannot activate adjacent controls");
+    history.enabled = NO;
+    Check([history.cell hitTestForEvent:pressed inRect:history.bounds ofView:history] == NSCellHitNone,
+        "disabled icons remain noninteractive");
+    history.enabled = YES;
+    fixture.changes = 0; navigation.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
     Check(navigation.intrinsicContentSize.height == 72,"document header reserves filename below icons");
     Check(NSHeight(scroll.frame) > 100,"short sidebar retains a useful scrollable content viewport");
     NSButton* groups = navigation.accessibilityChildren.firstObject; [groups performClick:nil];

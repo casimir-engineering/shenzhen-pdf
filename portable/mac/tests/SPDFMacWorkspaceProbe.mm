@@ -1,3 +1,4 @@
+#import "SPDFMacSidebarHitProbe.h"
 // Offscreen integration fixture: actual reader window, controls, constraints,
 // PDF canvas and minimap. This does not call the application's entry point or
 // launch delegate. It never reads the user's configuration or opens a window.
@@ -272,6 +273,15 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
     _pageView.needsDisplay=YES;
     [_window.contentView layoutSubtreeIfNeeded];
     Check(!_window.visible,@"reader window stays offscreen");
+    if (_sidebarVisible && !_presentationMode) {
+        for (NSButton* row in _sidebarModeControl.accessibilityChildren) {
+            for (NSNumber* y in @[@1,@7,@14,@21,@27]) {
+                NSPoint point = [row convertPoint:NSMakePoint(NSMidX(row.bounds),y.doubleValue) toView:_window.contentView.superview];
+                NSView* hit = [_window.contentView hitTest:point];
+                Check(hit == row,[NSString stringWithFormat:@"%@ button receives entire height at y=%@ (hit %@)", row.accessibilityLabel,y,NSStringFromClass(hit.class)]);
+            }
+        }
+    }
     Check(NSWidth(_pageScrollView.frame)>100 && NSHeight(_pageScrollView.frame)>100,@"document retains a usable viewport");
     if (![self isMarkdownActive])
         Check(_pageView.pages.count==3 && _minimapView.pages.count==3,@"real PDF canvas and map retain every fixture page");
@@ -445,7 +455,7 @@ int main(int argc,const char* argv[]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil width:width.doubleValue sidebar:YES map:YES];
             }
-            [reader setProbeHistory:YES];
+            [reader setProbeHistory:YES]; Check([reader probeHistoryMouseClicks]==0,@"actual History responds across its full button height");
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-history.png" : @"reader-light-history.png"] : nil
                 width:1280 sidebar:YES map:YES];
             [reader setProbeHistory:NO];
