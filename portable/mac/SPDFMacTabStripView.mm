@@ -336,7 +336,7 @@
     [self dismissHoverPanel];
 
     BOOL outsideTabStrip = point.y < -24.0 || point.y > NSHeight(self.bounds) + 24.0 ||
-                           point.x < [self leftInset] - 18.0 || point.x > NSMaxX([self plusRect]) + 18.0;
+                           point.x < [self leftInset] - 18.0 || point.x > NSWidth(self.bounds) + 18.0;
     if (!_detachedTabDrag && (outsideTabStrip || fabs(dy) > 48.0)) {
         [self startTabDragSessionWithEvent:event];
         return;

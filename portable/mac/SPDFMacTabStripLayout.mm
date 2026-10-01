@@ -14,7 +14,15 @@
 }
 
 - (NSRect)plusRect {
-    return NSMakeRect(MAX([self leftInset], NSWidth(self.bounds)-76), floor((NSHeight(self.bounds)-28)/2), 28,28);
+    CGFloat end=[self leftInset];
+    if ([self hasTabGroups]) {
+        for (id layout in [self groupLayouts]) {
+            NSRect frame=[[layout valueForKey:@"frame"] rectValue];
+            if (!NSIsEmptyRect(frame)) end=MAX(end,NSMaxX(frame));
+        }
+    } else for (NSNumber* index in [self visibleTabIndexes]) end=MAX(end,NSMaxX([self rectForTabAtIndex:index.integerValue]));
+    CGFloat x=MIN(end+8,MAX([self leftInset],NSWidth(self.bounds)-76));
+    return NSMakeRect(x,floor((NSHeight(self.bounds)-28)/2),28,28);
 }
 - (NSRect)overflowRectAssumingVisible {
     return NSMakeRect(MAX([self leftInset]+32,NSWidth(self.bounds)-36), floor((NSHeight(self.bounds)-28)/2),28,28);
@@ -22,7 +30,7 @@
 
 - (CGFloat)tabAreaRightWithOverflow:(BOOL)overflow {
     (void)overflow;
-    return NSMinX([self plusRect]) - 12.0;
+    return MAX([self leftInset], NSWidth(self.bounds)-88);
 }
 
 - (CGFloat)tabAreaWidthWithOverflow:(BOOL)overflow {
