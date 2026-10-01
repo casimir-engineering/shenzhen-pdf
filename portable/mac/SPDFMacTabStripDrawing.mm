@@ -12,34 +12,15 @@
     BOOL selected = index == self.selectedIndex;
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
     BOOL missing = tab.missingFile;
-    // Fill, then outline every tab — see SPDFMacTabStripStyle.h for why an
-    // unselected tab was previously edgeless. The outline path is inset by half
-    // its width so its centreline lands on a device-pixel boundary.
-    SPDFTabStyle style = spdf_tab_style_for_state(selected, missing);
+    BOOL hovered = _hoverTabIndex == index;
     BOOL dark = [[self.effectiveAppearance bestMatchFromAppearancesWithNames:
         @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] isEqualToString:NSAppearanceNameDarkAqua];
-    NSColor* accent = tab.group ? spdf_tab_group_accent(tab.group.colorName) : nil;
-    NSColor* fill = spdf_tab_style_color(style.fillRole, style.fillAlpha);
-    NSColor* stroke = spdf_tab_style_color(style.strokeRole, style.strokeAlpha);
-    if (tab.group && !missing) {
-        fill = selected ? spdf_tab_group_selected_fill(tab.group.colorName, dark)
-                        : [accent blendedColorWithFraction:dark ? 0.65 : 0.62 ofColor:NSColor.controlBackgroundColor];
-        stroke = selected ? [accent blendedColorWithFraction:0.3 ofColor:NSColor.whiteColor]
-                          : [accent colorWithAlphaComponent:0.65];
-    } else if (selected && !missing) {
-        fill = spdf_tab_group_selected_fill(nil, dark);
-        stroke = NSColor.secondaryLabelColor;
-    }
+    NSColor* accent = spdf_tab_group_accent(tab.group.colorName);
+    NSColor* fill = missing ? [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.36 : 0.22]
+        : selected ? spdf_tab_group_selected_fill(tab.group.colorName, dark)
+        : [accent colorWithAlphaComponent:hovered ? 0.16 : 0.06];
     [fill setFill];
-    CGFloat radius = kSPDFTabCornerRadius;
-    [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:radius yRadius:radius] fill];
-    CGFloat inset = spdf_tab_stroke_inset(style.strokeWidth);
-    NSBezierPath* outline = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(tabRect, inset, inset)
-                                                           xRadius:radius - inset
-                                                           yRadius:radius - inset];
-    [stroke setStroke];
-    outline.lineWidth = style.strokeWidth;
-    [outline stroke];
+    [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:6 yRadius:6] fill];
 
     NSString* title = [self titleForTabAtIndex:index];
     // Selection is carried by the fill, outline and font weight. Keeping one
@@ -48,8 +29,8 @@
     NSMutableDictionary* titleAttrs = [attrs mutableCopy];
     if (selected) titleAttrs[NSFontAttributeName] = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
     CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
-    CGFloat leftInset = 12.0;
-    CGFloat rightInset = 34.0;
+    CGFloat leftInset = 6.0;
+    CGFloat rightInset = 6.0;
 
     // Read-only indicator: a small orange dot immediately left of the title for
     // any tab whose SOURCE is read-only (the app renders a copy without
@@ -68,19 +49,38 @@
         leftInset = kReadOnlyDotLeftInset + kReadOnlyDotDiameter + kReadOnlyDotTitleGap;
     }
 
-    CGFloat titleInset = MAX(leftInset, rightInset);
-    NSRect titleRect = NSMakeRect(NSMinX(tabRect) + titleInset, floor(NSMidY(tabRect) - titleHeight / 2.0),
-                                  MAX(1.0, NSWidth(tabRect) - 2 * titleInset), titleHeight + 2);
-    [title drawWithRect:titleRect
-                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-             attributes:titleAttrs];
+    NSRect titleRect = NSMakeRect(NSMinX(tabRect)+leftInset, floor(NSMidY(tabRect)-titleHeight/2),
+                                  MAX(1,NSWidth(tabRect)-leftInset-rightInset), titleHeight+2);
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(titleRect);
+    CGContextRef graphics = NSGraphicsContext.currentContext.CGContext;
+    if (hovered) CGContextBeginTransparencyLayer(graphics, NULL);
+    [title drawWithRect:titleRect options:NSStringDrawingUsesLineFragmentOrigin attributes:titleAttrs];
+    // The glyph geometry never changes on hover. Fade only the trailing region
+    // into this tab's actual fill, then overlay the close control.
+    if (hovered) {
+        CGContextSetBlendMode(graphics, kCGBlendModeDestinationOut);
+        NSRect fade = NSMakeRect(NSMaxX(titleRect)-34,NSMinY(titleRect),16,NSHeight(titleRect));
+        CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+        CGFloat components[]={0,0,0,0, 0,0,0,1};
+        CGFloat locations[]={0,1};
+        CGGradientRef gradient=CGGradientCreateWithColorComponents(space,components,locations,2);
+        CGContextDrawLinearGradient(graphics,gradient,CGPointMake(NSMinX(fade),NSMidY(fade)),
+            CGPointMake(NSMaxX(fade),NSMidY(fade)),0);
+        CGContextSetRGBFillColor(graphics,0,0,0,1);
+        CGContextFillRect(graphics,CGRectMake(NSMaxX(titleRect)-18,NSMinY(titleRect),18,NSHeight(titleRect)));
+        CGGradientRelease(gradient); CGColorSpaceRelease(space);
+        CGContextEndTransparencyLayer(graphics);
+    }
+    [NSGraphicsContext restoreGraphicsState];
+    if (!hovered) return;
 
     NSRect closeRect = [self closeCircleRectForTabRect:tabRect];
-    NSBezierPath* closeCircle = [NSBezierPath bezierPathWithOvalInRect:closeRect];
+    NSBezierPath* closeCircle = [NSBezierPath bezierPathWithRoundedRect:closeRect xRadius:4 yRadius:4];
     NSColor* closeFill = selected ? [NSColor.labelColor colorWithAlphaComponent:0.13]
                                   : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.13];
     [closeFill setFill];
-    [closeCircle fill];
+    if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,closeRect)) [closeCircle fill];
 
     NSColor* closeStroke = selected ? [NSColor.labelColor colorWithAlphaComponent:0.90]
                                     : [NSColor.secondaryLabelColor colorWithAlphaComponent:0.82];
@@ -101,7 +101,7 @@
 
     NSMutableParagraphStyle* tabTitleStyle = [[NSMutableParagraphStyle alloc] init];
     tabTitleStyle.alignment = NSTextAlignmentCenter;
-    tabTitleStyle.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    tabTitleStyle.lineBreakMode = NSLineBreakByClipping;
     NSDictionary* attrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:12 weight:NSFontWeightRegular],
         NSForegroundColorAttributeName : NSColor.labelColor,
@@ -130,27 +130,13 @@
 
     NSRect overflowRect = [self overflowRect];
     if (!NSIsEmptyRect(overflowRect)) {
-        [NSColor.controlBackgroundColor setFill];
-        NSBezierPath* overflowPath = [NSBezierPath bezierPathWithRoundedRect:overflowRect xRadius:9 yRadius:9];
-        [overflowPath fill];
-        [[NSColor.separatorColor colorWithAlphaComponent:0.45] setStroke];
-        overflowPath.lineWidth = 1.0;
-        [overflowPath stroke];
-
-        [[NSColor.labelColor colorWithAlphaComponent:0.78] setFill];
-        CGFloat dotDiameter = 3.0;
-        CGFloat dotGap = 3.0;
-        CGFloat x = floor(NSMidX(overflowRect) - dotDiameter / 2.0);
-        CGFloat startY = floor(NSMidY(overflowRect) - dotDiameter * 1.5 - dotGap);
-        for (NSInteger i = 0; i < 3; ++i) {
-            NSRect dot = NSMakeRect(x, startY + (dotDiameter + dotGap) * i, dotDiameter, dotDiameter);
-            [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
-        }
+        NSImage* icon = [NSImage imageWithSystemSymbolName:@"square.3.layers.3d" accessibilityDescription:@"All Groups"];
+        icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
+        [icon drawInRect:NSInsetRect(overflowRect,6,6)];
     }
 
     NSRect plusRect = [self plusRect];
-    [NSColor.controlBackgroundColor setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:plusRect xRadius:9 yRadius:9] fill];
+
     NSDictionary* plusAttrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:16 weight:NSFontWeightRegular],
         NSForegroundColorAttributeName : NSColor.labelColor

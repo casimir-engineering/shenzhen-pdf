@@ -3,9 +3,9 @@
 #import "SPDFMacTabStripGeometry.h"
 #import "SPDFMacTabStripStyle.h"
 
-static const CGFloat kTabGap = 6.0;
-static const CGFloat kTabMinVisibleWidth = 112.0;
-static const CGFloat kTabMaxWidth = 320.0;
+static const CGFloat kTabGap = 4.0;
+static const CGFloat kTabMinVisibleWidth = 96.0;
+static const CGFloat kTabMaxWidth = 200.0;
 static const CGFloat kTabControlWidth = 32.0;
 // Read-only indicator dot. Shared by the draw and tooltip-rect sites so the
 // hover hit-area stays aligned with the drawn dot if either is tweaked.
@@ -22,6 +22,7 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 @interface SPDFTabStripView () {
     NSTrackingArea* _trackingArea;
     NSPanel* _hoverPanel;
+    NSPopover* _groupPicker;
     NSTextField* _hoverLabel;
     NSInteger _hoverTabIndex;
     NSInteger _draggedTabIndex;
@@ -56,7 +57,9 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
     NSString* _groupPreviewColor;
     NSTimeInterval _groupHoverBegan;
     NSInteger _groupHoverIndex;
-    NSArray<NSString*>* _displayTitles;
+    NSMutableDictionary<NSNumber*,NSNumber*>* _preferredTabWidths;
+    NSArray<NSNumber*>* _ungroupedVisibleIndexes;
+    CGFloat _ungroupedLayoutWidth;
     id _groupLayout;
     NSRect _groupLayoutBounds;
     CGFloat _groupLayoutInset;
@@ -74,6 +77,8 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (void)restoreWindowMovementForTabGesture;
 - (void)setHidden:(BOOL)hidden;
 - (CGFloat)tabWidth;
+- (CGFloat)preferredWidthForTabAtIndex:(NSInteger)index;
+- (NSString*)fullTitleForTabAtIndex:(NSInteger)index;
 - (CGFloat)leftInset;
 - (NSRect)plusRect;
 - (NSRect)overflowRectAssumingVisible;
@@ -118,6 +123,9 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
             attributes:(NSDictionary*)attrs
          dimAttributes:(NSDictionary*)dimAttrs;
 - (void)drawRect:(NSRect)dirtyRect;
+- (NSView*)groupPickerContentView;
+- (void)showGroupPicker;
+- (void)showGroupDocuments:(SPDFTabGroup*)group event:(NSEvent*)event;
 - (void)showOverflowMenuWithEvent:(NSEvent*)event;
 - (void)showOverflowMenuForAccessibility;
 - (void)showContextMenuForTabAtIndex:(NSInteger)index;

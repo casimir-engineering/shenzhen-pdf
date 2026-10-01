@@ -114,7 +114,7 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
         NSRect frame = [strip rectForTabAtIndex:index];
         BOOL hiddenInOverflow = NSIsEmptyRect(frame) || [hidden containsObject:@(index)];
         if (hiddenInOverflow) frame = overflowFrame;
-        NSString* title = [strip titleForTabAtIndex:index];
+        NSString* title = [strip fullTitleForTabAtIndex:index];
         SPDFMacTabAccessibilityElement* element =
             Element(strip, SPDFTabAccessibilityKindTab, NSAccessibilityRadioButtonRole,
                     title.length ? title : @"Untitled", frame);
@@ -139,8 +139,8 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
     if (!NSIsEmptyRect(overflowFrame)) {
         SPDFMacTabAccessibilityElement* overflow =
             Element(strip, SPDFTabAccessibilityKindOverflow, NSAccessibilityPopUpButtonRole,
-                    @"Show Hidden Tabs", overflowFrame);
-        overflow.accessibilityHelp = @"Opens hidden tabs, organized under their group names and colors.";
+                    @"All Groups", overflowFrame);
+        overflow.accessibilityHelp = @"Lists all groups, including hidden groups, and their documents.";
         [children addObject:overflow];
     }
     SPDFMacTabAccessibilityElement* add =

@@ -125,6 +125,9 @@
 - (void)toggleTabGroup:(SPDFTabGroup*)group {
     if (!group) return;
     group.collapsed = !group.collapsed;
+    // Browsing another group only changes the strip, never the reading position.
+    if (!group.collapsed)
+        for (SPDFDocumentTab* tab in _tabs) if (tab.group != group) tab.group.collapsed = YES;
     [self finishTabGroupChange];
 }
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name {

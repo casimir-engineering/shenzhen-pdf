@@ -45,6 +45,7 @@
 
 - (void)dismissHoverPanel {
     _hoverTabIndex = -1;
+    [self setNeedsDisplay:YES];
     _hasLastHoverPoint = NO;
     if (_hoverPanel.parentWindow) [_hoverPanel.parentWindow removeChildWindow:_hoverPanel];
     [_hoverPanel orderOut:nil];
@@ -63,12 +64,13 @@
         }
     }
     if (hovered == _hoverTabIndex) return;
+    [self setNeedsDisplay:YES];
     if (hovered >= 0) [self showHoverPanelForTabAtIndex:hovered];
     else [self dismissHoverPanel];
 }
 
 - (void)showHoverPanelForTabAtIndex:(NSInteger)index {
-    NSString* title = [self titleForTabAtIndex:index];
+    NSString* title = [self fullTitleForTabAtIndex:index];
     if (!title.length || !self.window) {
         [self dismissHoverPanel];
         return;
