@@ -26,7 +26,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 <p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side: a Markdown document with a gantt chart and nested chapters on the left, a PDF with a results table, a scatter plot and the document map on the right" width="880"></p>
 
 - **Tabs and windows** — compact outlined tabs, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
-- **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Membership, order, colors, names, and collapse state survive relaunch.
+- **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. New groups immediately ask for a name, with the color name selected for quick replacement or Enter to keep it. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Membership, order, colors, names, and collapse state survive relaunch.
 - **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
 - **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
 - **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).

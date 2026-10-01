@@ -184,6 +184,8 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (void)updateGroupDropForPoint:(NSPoint)point sourceIndex:(NSInteger)source;
 - (BOOL)performGroupDropWithTab:(SPDFDocumentTab*)tab sourceIndex:(NSInteger)source atPoint:(NSPoint)point;
 - (void)tabContextNewGroup:(NSMenuItem*)sender;
+- (void)createNamedGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color beforeTargetGroup:(BOOL)before;
+- (void)promptForGroup:(SPDFTabGroup*)group creating:(BOOL)creating;
 - (NSMenu*)moveToGroupMenuForTabAtIndex:(NSInteger)index;
 - (void)tabContextMoveToGroup:(NSMenuItem*)sender;
 - (void)startGroupDragSessionWithEvent:(NSEvent*)event;

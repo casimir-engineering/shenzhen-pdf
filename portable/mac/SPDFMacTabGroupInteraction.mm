@@ -1,10 +1,11 @@
 #import "SPDFMacTabStripViewPrivate.h"
+#import "SPDFMacTabGroupNamePrompt.h"
 
 @implementation SPDFTabStripView (GroupInteraction)
 - (id<SPDFTabGroupReader>)groupReader { return (id<SPDFTabGroupReader>)self.reader; }
 - (void)tabContextNewGroup:(NSMenuItem*)sender {
     NSInteger index = [sender.representedObject integerValue];
-    [self.groupReader createGroupForTabAtIndex:index withTabAtIndex:-1 color:nil
+    [self createNamedGroupForTabAtIndex:index withTabAtIndex:-1 color:nil
         beforeTargetGroup:[self newGroupGoesBeforeTargetAtIndex:index]];
 }
 - (BOOL)newGroupGoesBeforeTargetAtIndex:(NSInteger)index {
@@ -58,22 +59,27 @@
     NSInteger destination = last == NSNotFound ? (NSInteger)self.tabs.count : (NSInteger)last + 1;
     [self.groupReader moveTabAtIndex:index toGroup:group atIndex:destination];
 }
-- (void)renameGroup:(SPDFTabGroup*)group {
+- (void)createNamedGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color beforeTargetGroup:(BOOL)before {
+    if (index < 0 || index >= (NSInteger)self.tabs.count) return;
+    SPDFDocumentTab* tab = self.tabs[(NSUInteger)index]; SPDFTabGroup* previous = tab.group;
+    [self.groupReader createGroupForTabAtIndex:index withTabAtIndex:other color:color beforeTargetGroup:before];
+    SPDFTabGroup* created = tab.group;
+    if (!created || created == previous) return;
+    // Allow the drag/menu tracking session to finish before presenting the sheet.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (spdf_tab_group_members(self.tabs,created).count) [self promptForGroup:created creating:YES];
+    });
+}
+- (void)promptForGroup:(SPDFTabGroup*)group creating:(BOOL)creating {
     if (!group || !self.window) return;
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"Rename Group";
-    alert.informativeText = @"Leave the name empty to use the color name.";
-    [alert addButtonWithTitle:@"Rename"];
-    [alert addButtonWithTitle:@"Cancel"];
-    NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
-    field.stringValue = group.name ?: @"";
-    field.placeholderString = group.general ? @"General" : group.colorName;
-    alert.accessoryView = field;
+    NSAlert* alert = SPDFTabGroupNamePrompt(group.displayName,creating);
+    NSTextField* field = (NSTextField*)alert.accessoryView;
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         if (response == NSAlertFirstButtonReturn) [self.groupReader renameTabGroup:group name:field.stringValue];
     }];
-    [alert.window makeFirstResponder:field];
+    SPDFSelectGroupPromptName(alert);
 }
+- (void)renameGroup:(SPDFTabGroup*)group { [self promptForGroup:group creating:NO]; }
 - (void)groupRenameMenu:(NSMenuItem*)sender { [self renameGroup:sender.representedObject]; }
 - (void)groupColorMenu:(NSMenuItem*)sender {
     [self.groupReader recolorTabGroup:sender.representedObject color:sender.title];
@@ -228,7 +234,7 @@
     } else {
         NSUInteger other = [self.tabs indexOfObjectIdenticalTo:target];
         if (other != NSNotFound)
-            [self.groupReader createGroupForTabAtIndex:source withTabAtIndex:other color:color beforeTargetGroup:before];
+            [self createNamedGroupForTabAtIndex:source withTabAtIndex:other color:color beforeTargetGroup:before];
     }
     return YES;
 }

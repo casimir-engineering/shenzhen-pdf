@@ -167,6 +167,24 @@ static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger oth
         Check(session.renderedDocument!=rendered && session.pageCount>0,@"text size action repaginates the current document");
     }
 }
+- (void)checkRepeatedMapClicks {
+    [_window setContentSize:NSMakeSize(1280,780)];
+    [self setMinimapActuallyVisible:YES]; [_window.contentView layoutSubtreeIfNeeded];
+    NSPoint point=NSMakePoint(NSWidth(_window.contentView.bounds)-22,NSHeight(_window.contentView.bounds)-66);
+    for (NSInteger count=1;count<=4;count++) {
+        NSView* hit=[_window.contentView hitTest:point];
+        Check([hit isKindOfClass:NSButton.class],@"stationary map click still hits a button after toggling");
+        if (![hit isKindOfClass:NSButton.class]) break;
+        NSButton* button=(id)hit; BOOL before=_minimapVisible;
+        Check(button.action==@selector(toggleMinimap:),@"stationary pointer targets the map toggle");
+        NSEvent* down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:count*.1
+            windowNumber:_window.windowNumber context:nil eventNumber:count*2-1 clickCount:count pressure:1];
+        [button mouseDown:down];
+        [_window.contentView layoutSubtreeIfNeeded];
+        Check(_minimapVisible!=before,@"every stationary click toggles the map, including the second click");
+    }
+    [self prioritizeWorkspaceSidebar];
+}
 - (void)checkResponsivePanels {
     _sidebarPreferredVisible=YES; _minimapPreferredVisible=YES; _sidebarWidth=240;
     [self prioritizeWorkspaceSidebar];
@@ -416,7 +434,7 @@ int main(int argc,const char* argv[]) {
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader);
-            [reader checkResponsivePanels];
+            [reader checkResponsivePanels]; [reader checkRepeatedMapClicks];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil width:width.doubleValue sidebar:YES map:YES];

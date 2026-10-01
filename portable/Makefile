@@ -273,8 +273,8 @@ $(MAC_TAB_STRIP_GEOMETRY_TEST): mac/tests/SPDFMacTabStripGeometryTests.mm mac/SP
 mac-tab-strip-geometry-tests: $(MAC_TAB_STRIP_GEOMETRY_TEST)
 	"$(MAC_TAB_STRIP_GEOMETRY_TEST)"
 
-$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacTabStripStyle.mm mac/SPDFMacTabStripStyle.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
+$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacTabStripStyle.mm mac/SPDFMacTabStripStyle.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
 	"$(MAC_TAB_STRIP_INTERACTION_TEST)"
@@ -290,7 +290,7 @@ mac-tab-group-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 mac-tab-group-integration-tests: mac-tab-group-tests
 
 mac-tab-group-interaction-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(BUILD)/SPDFMacTabGroupInteractionTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(BUILD)/SPDFMacTabGroupInteractionTests"
 	"$(BUILD)/SPDFMacTabGroupInteractionTests"
 
 .PHONY: mac-agent-pdf-inspection-tests
@@ -732,3 +732,8 @@ $(BUILD)/SPDFMacImagePropertiesTests: mac/tests/SPDFMacImagePropertiesTests.mm m
 mac-properties-model-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERTIES_OBJ) mupdf-libs | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPropertiesModelTests.mm mac/SPDFMacPropertiesModel.mm mac/SPDFMacPropertiesPanel.mm mac/SPDFMacPropertiesFormat.mm mac/SPDFMacImageProperties.mm mac/SPDFMacPassword.mm mac/SPDFMacPasswordCredentials.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERTIES_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework ImageIO -lm -o "$(BUILD)/SPDFMacPropertiesModelTests"
 	"$(BUILD)/SPDFMacPropertiesModelTests" "$(abspath ..)"
+
+.PHONY: mac-group-name-prompt-tests
+mac-group-name-prompt-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacGroupNamePromptTests.mm mac/SPDFMacTabGroupNamePrompt.mm -framework Cocoa -o "$(BUILD)/SPDFMacGroupNamePromptTests"
+	"$(BUILD)/SPDFMacGroupNamePromptTests"
