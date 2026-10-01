@@ -45,6 +45,17 @@
 - (void)normalizeTabGroups {
     SPDFDocumentTab* selected = _selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count
         ? _tabs[(NSUInteger)_selectedTabIndex] : nil;
+    // General is a real workspace group from the first document. Materialize
+    // legacy nil membership in memory only: this refresh must never recursively
+    // save state, rebuild the strip, or activate a different document.
+    SPDFTabGroup* general=nil;
+    for (SPDFDocumentTab* tab in _tabs) if (tab.group.general) {
+        general=tab.group; general.explicitGeneral=YES; break;
+    }
+    for (SPDFDocumentTab* tab in _tabs) if (!tab.group) {
+        if (!general) { general=SPDFTabGroup.generalGroup; general.explicitGeneral=YES; }
+        tab.group=general;
+    }
     spdf_tab_groups_normalize(_tabs);
     if (selected) _selectedTabIndex = [_tabs indexOfObjectIdenticalTo:selected];
 }

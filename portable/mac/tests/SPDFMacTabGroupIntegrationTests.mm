@@ -14,6 +14,7 @@
 @property(nonatomic) NSMutableDictionary* workspace;
 @property(nonatomic, strong) NSArray* savedTabs;
 @property(nonatomic) NSInteger saveCount;
+@property(nonatomic) NSInteger stripRefreshCount;
 @property(nonatomic) NSInteger handoffWriteCount;
 @property(nonatomic) NSInteger errorCount;
 - (void)seed:(NSArray*)tabs selected:(NSInteger)index;
@@ -35,7 +36,7 @@
 }
 - (id)stateObjectFromFile:(NSString*)name { (void)name; return nil; }
 - (void)showError:(NSString*)message detail:(NSString*)detail { (void)message; (void)detail; self.errorCount++; }
-- (void)updateTabStrip {}
+- (void)updateTabStrip { self.stripRefreshCount++; }
 - (void)refreshSidebarWorkspacePanel {}
 - (void)savePersistentState {
     self.saveCount++;
@@ -98,6 +99,29 @@ static void CheckCreationPlacement(BOOL before, BOOL explicitPlacement) {
         [[restored valueForKey:@"path"] isEqual:[reader.tabs valueForKey:@"path"]] &&
         ((SPDFDocumentTab*)(before ? restored.lastObject : restored.firstObject)).group.general);
 }
+static void CheckFreshGeneral(void) {
+    GroupReaderProbe* reader=[GroupReaderProbe new];
+    SPDFDocumentTab* a=Tab(@"/fresh-first.pdf"), *b=Tab(@"/fresh-second.md");
+    a.pageIndex=7; b.pageIndex=11;
+    [reader seed:@[a,b] selected:1];
+    [reader normalizeTabGroups];
+    SPDFTabGroup* general=a.group;
+    Expect(@"fresh nil-group documents appear as General in the picker model",
+        general.general && [general.displayName isEqual:@"General"] && b.group==general &&
+        spdf_tab_group_members(reader.tabs,general).count==2);
+    Expect(@"initial General normalization preserves selection, order, and reading positions",
+        reader.selectedIndex==1 && [reader.activePath isEqual:b.path] && reader.tabs[0]==a &&
+        reader.tabs[1]==b && a.pageIndex==7 && b.pageIndex==11);
+    [reader normalizeTabGroups];
+    Expect(@"General normalization is idempotent without save or layout recursion",
+        a.group==general && b.group==general && reader.saveCount==0 && reader.stripRefreshCount==0);
+    [reader savePersistentState];
+    NSMutableArray* restored=[NSMutableArray array];
+    for (NSDictionary* encoded in reader.savedTabs) [restored addObject:spdf_tab_from_dictionary(encoded)];
+    spdf_tab_groups_normalize(restored);
+    Expect(@"initial General survives the regular persistence path",
+        ((SPDFDocumentTab*)restored[0]).group.general && ((SPDFDocumentTab*)restored[1]).group.general);
+}
 static void CheckGroupManagement(void) {
     GroupReaderProbe* reader=[GroupReaderProbe new];
     SPDFDocumentTab* a=Tab(@"/managed-a.pdf"), *b=Tab(@"/managed-b.md");
@@ -153,6 +177,7 @@ static void CheckGroupManagement(void) {
 }
 int main(void) {
     @autoreleasepool {
+        CheckFreshGeneral();
         CheckGroupManagement();
         CheckCreationPlacement(YES,NO); CheckCreationPlacement(NO,NO);
         CheckCreationPlacement(YES,YES); CheckCreationPlacement(NO,YES);
@@ -184,8 +209,8 @@ int main(void) {
         Expect(@"dropping a tab into General moves membership and order", c.group.general && reader.tabs.lastObject == c);
         [reader ungroupTabs:purple];
         BOOL ordinary = YES;
-        for (SPDFDocumentTab* tab in reader.tabs) ordinary &= tab.group == nil;
-        Expect(@"ungrouping last custom group removes the group chrome", ordinary);
+        for (SPDFDocumentTab* tab in reader.tabs) ordinary &= tab.group.general;
+        Expect(@"ungrouping last custom group returns all tabs to General", ordinary);
 
         GroupReaderProbe* source = [[GroupReaderProbe alloc] init];
         SPDFDocumentTab* one = Tab(@"/one.md");
@@ -223,7 +248,7 @@ int main(void) {
         Expect(@"incoming reading positions survive", ((SPDFDocumentTab*)destination.tabs[0]).pageIndex == 7
             && ((SPDFDocumentTab*)destination.tabs[1]).pageIndex == 11);
         [destination closeTabGroup:((SPDFDocumentTab*)destination.tabs[0]).group];
-        Expect(@"closing a group only closes its members", [destination.tabs isEqual:@[existing]] && !existing.group);
+        Expect(@"closing a group only closes its members", [destination.tabs isEqual:@[existing]] && existing.group.general);
         // Duplicate paths keep the destination's live document but join the
         // moved group; the source may close safely after this successful drop.
         [destination seed:@[one, existing] selected:0];
