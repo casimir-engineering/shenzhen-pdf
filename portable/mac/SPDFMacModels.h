@@ -98,6 +98,8 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
 // source stat the copy reflects, so an unchanged source reopens the copy with
 // no content read on relaunch.
 @property(nonatomic) BOOL readOnly;
+// Derived from the durable clipboard source path; restored with the existing YAML path.
+@property(nonatomic, readonly) BOOL unsavedPastedImage;
 @property(nonatomic, copy) NSString* workingPath;
 @property(nonatomic) unsigned long long copiedSourceFileSize;
 @property(nonatomic, strong) NSDate* copiedSourceModificationDate;

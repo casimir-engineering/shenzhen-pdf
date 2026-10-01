@@ -1,7 +1,9 @@
 #import "SPDFMacMenuText.h"
+#import "SPDFMacClipboardIntegration.h"
 #import "SPDFMacShortcutHelpStyle.h"
 #import "SPDFMacFindContext.h"
 #import "SPDFMacDocumentToolInputIntegration.h"
+#import "SPDFMacImageSaveIntegration.h"
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacWorkspaceChrome.h"
 #import "SPDFMacFindInteraction.h"
@@ -8004,16 +8006,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return [self saveActiveDocumentToPath:panel.URL.path statusMessage:statusMessage ?: @"Document saved."];
 }
 
-- (void)saveDocumentAs:(id)sender {
-    (void)sender;
-    if (SPDFMacPathIsCollectionArchive(_path)) { [self collectionSaveArchiveCopy:sender]; return; }
-    if ([self isMarkdownActive]) {
-        [self saveActiveMarkdownAsPDF];
-        return;
-    }
-    [self saveActiveDocumentAsWithPanelTitle:@"Save PDF As" statusMessage:@"Document saved."];
-}
-
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName {
     if (SPDFMacPathIsCollectionArchive(_path)) return [self collectionProtectPath:_path operation:operationName];
     if (spdf_is_password_protected(_doc)) {
@@ -11838,12 +11830,14 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 // Cmd+V (or Edit > Paste) with no editable field focused searches for the
-// clipboard text. When a text field is focused its field editor sits earlier
+// clipboard text, or opens pasted files/images. A focused field editor sits earlier
 // in the responder chain and handles paste: itself, so this only runs for the
 // document viewer.
 - (void)paste:(id)sender {
     (void)sender;
-    if (![self hasActiveDocument] || _presentationMode || !_searchField) return;
+    if (_presentationMode) return;
+    if ([self pasteClipboardDocument:NSPasteboard.generalPasteboard]) return;
+    if (![self hasActiveDocument] || !_searchField) return;
     NSString* clip = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
     NSString* query = SPDFTextByCollapsingWhitespace(
         [clip stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]);
@@ -15212,8 +15206,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(closeDocument:))
         return spdf_mac_tab_close_action_enabled((NSInteger)_tabs.count, _selectedTabIndex, hasDoc);
     if (action == @selector(paste:))
-        return hasDoc && !_presentationMode &&
-               [NSPasteboard.generalPasteboard canReadObjectForClasses:@[ NSString.class ] options:@{}];
+        return !_presentationMode && (SPDFClipboardHasDocument(NSPasteboard.generalPasteboard) ||
+               (hasDoc && [NSPasteboard.generalPasteboard canReadObjectForClasses:@[ NSString.class ] options:@{}]));
     if (action == @selector(openDocument:) || action == @selector(openPathPrompt:) ||
         action == @selector(toggleFullScreen:) || action == @selector(showFavoritesPalette:) ||
         action == @selector(showFindPalette:) || action == @selector(focusFind:) ||
@@ -15317,7 +15311,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return spdf_translation_command_enabled(context);
     }
     if (action == @selector(saveDocumentAs:))
-        return markdown || (hasDoc && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]);
+        return markdown || (hasDoc && SPDFOCRPathSupported(_path));
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentPath:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;

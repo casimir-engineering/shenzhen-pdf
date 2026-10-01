@@ -124,6 +124,8 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
         element.accessibilityHelp = [NSString stringWithFormat:@"%@%@ Press to open this tab. Cmd-Left and Cmd-Right move between tabs; Cmd-W closes; Cmd-D returns to the previously active tab.%@",
             index == strip.selectedIndex ? @"Selected." : @"Not selected.", group,
             hiddenInOverflow ? @" This tab is in the overflow menu." : @""];
+        if (tab.unsavedPastedImage) element.accessibilityHelp =
+            [@"Unsaved pasted image. Use Save As to save an image or PDF. " stringByAppendingString:element.accessibilityHelp];
         __weak SPDFMacTabAccessibilityElement* weakElement = element;
         element.accessibilityCustomActions = @[
             [[NSAccessibilityCustomAction alloc] initWithName:@"Close Tab" handler:^BOOL {

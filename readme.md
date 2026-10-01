@@ -27,6 +27,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 
 - **Tabs and windows** — compact outlined tabs, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
 - **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. New groups immediately ask for a name, with the color name selected for quick replacement or Enter to keep it. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Membership, order, colors, names, and collapse state survive relaunch.
+- **Paste pictures** <sub>macOS</sub> — paste an image or copied image file into the reader. A red dot marks an unsaved clipboard picture; Save As offers image or PDF and opens the saved file.
 - **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
 - **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
 - **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).

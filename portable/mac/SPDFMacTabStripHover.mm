@@ -20,7 +20,7 @@
     [self removeAllToolTips];
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         SPDFDocumentTab* tab = self.tabs[(NSUInteger)i];
-        if (!tab.readOnly || tab.missingFile) continue;
+        if ((!tab.readOnly && !tab.unsavedPastedImage) || tab.missingFile) continue;
         NSRect tabRect = [self rectForTabAtIndex:i];
         if (NSWidth(tabRect) < 40.0) continue;
         NSRect dotRect = [self readOnlyDotRectForTabRect:tabRect
@@ -36,6 +36,8 @@
     (void)tag;
     (void)userData;
     NSInteger index = [self tabIndexAtPoint:point];
+    if (index >= 0 && index < (NSInteger)self.tabs.count && self.tabs[(NSUInteger)index].unsavedPastedImage)
+        return @"Unsaved pasted image. Use Save As to choose an image or PDF file. This tab is kept between launches.";
     if (index >= 0 && index < (NSInteger)self.tabs.count && self.tabs[(NSUInteger)index].collectionVersionLabel.length)
         return [self.tabs[(NSUInteger)index].collectionVersionLabel stringByAppendingString:@". This protected snapshot never changes. Use Save a Copy to create an editable document."];
     return @"Read-only file. You're viewing a local copy, so opening it doesn't "
