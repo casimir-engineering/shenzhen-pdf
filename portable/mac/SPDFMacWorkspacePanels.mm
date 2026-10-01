@@ -8,6 +8,9 @@ static char panelPolicyKey;
 @property BOOL sidebarRequested;
 @property BOOL mapRequested;
 @property BOOL applying;
+@property BOOL sidebarConfigured;
+@property BOOL mapConfigured;
+@property NSUInteger applicationCount;
 @end
 @implementation SPDFWorkspacePanelPolicy
 @end
@@ -38,13 +41,17 @@ static char panelPolicyKey;
     SPDFWorkspacePanelPolicy* state = [self workspacePanelPolicy];
     if (state.applying) return;
     state.sidebarRequested = visible;
+    NSUInteger before = state.applicationCount;
     [self applyWorkspacePanelPolicy];
+    if (before == state.applicationCount) { [self syncToolbarState]; [self updateControls]; }
 }
 - (void)setMinimapActuallyVisible:(BOOL)visible {
     SPDFWorkspacePanelPolicy* state = [self workspacePanelPolicy];
     if (state.applying) return;
     state.mapRequested = visible;
+    NSUInteger before = state.applicationCount;
     [self applyWorkspacePanelPolicy];
+    if (before == state.applicationCount) [self syncToolbarState];
 }
 - (void)applyWorkspacePanelPolicy {
     SPDFWorkspacePanelPolicy* state = objc_getAssociatedObject(self,&panelPolicyKey);
@@ -57,14 +64,25 @@ static char panelPolicyKey;
     if (sidebar && map && width > 0 && width-sidebarWidth-_minimapWidth-8 < 320) {
         if ([[self sidebarWorkspaceState][@"compactPanel"] isEqual:@"map"]) sidebar = NO; else map = NO;
     }
+    BOOL sidebarReady = _sidebarContainer && _documentContainer;
+    BOOL mapReady = _minimapView && _minimapWidthConstraint && _minimapDividerView &&
+        _pageScrollFullWidthConstraint && _pageScrollToMinimapConstraint;
+    BOOL updateSidebar = sidebarReady && (!state.sidebarConfigured || sidebar != _sidebarVisible);
+    BOOL mapConstraintsMatch = map ? (!_pageScrollFullWidthConstraint.active && _pageScrollToMinimapConstraint.active)
+                                  : (_pageScrollFullWidthConstraint.active && !_pageScrollToMinimapConstraint.active);
+    BOOL updateMap = mapReady && (!state.mapConfigured || map != _minimapVisible || !mapConstraintsMatch ||
+        _minimapWidthConstraint.constant != (map ? _minimapWidth : 0));
+    if (!updateSidebar && !updateMap) return;
     state.applying = YES;
     BOOL persistWidth = _allowSidebarWidthPersistence;
     _allowSidebarWidthPersistence = NO;
     // Remove the losing panel first; avoid an intermediate squeezed viewport.
-    if (!sidebar) [self setWorkspaceSidebarVisibleWithoutPolicy:NO];
-    if (!map) [self setWorkspaceMapVisibleWithoutPolicy:NO];
-    if (sidebar) [self setWorkspaceSidebarVisibleWithoutPolicy:YES];
-    if (map) [self setWorkspaceMapVisibleWithoutPolicy:YES];
+    if (updateSidebar && !sidebar) [self setWorkspaceSidebarVisibleWithoutPolicy:NO];
+    if (updateMap && !map) [self setWorkspaceMapVisibleWithoutPolicy:NO];
+    if (updateSidebar && sidebar) [self setWorkspaceSidebarVisibleWithoutPolicy:YES];
+    if (updateMap && map) [self setWorkspaceMapVisibleWithoutPolicy:YES];
+    state.sidebarConfigured |= updateSidebar; state.mapConfigured |= updateMap;
+    state.applicationCount++;
     _allowSidebarWidthPersistence = persistWidth;
     state.applying = NO;
 }
