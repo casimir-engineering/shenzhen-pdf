@@ -4,6 +4,8 @@
 
 ## Latest revision: lean document tabs and direct sidebar icons
 
+Follow-up: Groups now occupies its own workspace section, separated from the document-panel icons by a 1px divider and 17px between button surfaces. Both sections retain direct activation and hover labels. Browser checks confirmed Groups/Chapters switching and no header overflow in the compact sidebar.
+
 1 October 2026. Removed the sidebar dropdown, replacing it with directly accessible Groups, Chapters, Find, Comments and History icons in the existing header. Each has an accessible name, hover helper text and selected state. Comments remains absent for Markdown. No extra navigation column or menu is introduced.
 
 Document tabs now have 24px surfaces, versus 20px group labels, with unchanged 12px/16px title typography and 4px inter-tab gaps. Vertical title padding is reduced to 4px; selected/close-visible horizontal padding is 22px. Close surfaces are 20px. Tabs use measured title widths with compact padding and a 200px cap instead of stretching every title to 220px. The checked short Power review tab is 116px wide; the long selected Interface specification tab is 200px. Capacity accounts for these individual widths, preserving the selected document and allocating remaining space to group labels.
