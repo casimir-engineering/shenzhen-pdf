@@ -21,3 +21,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Collection reuses the verified working copy after a protected document is successfully read, avoiding a second permission-dependent read of the original. Successfully loaded background tabs are captured too.
 - Initial Collection import waits for file-access decisions and removes unavailable entries that have no saved history.
 - Collection updates live after a document is captured, so “Open collection copy” becomes available without reopening the manager.
+- Fixed a blank Collection list after cleanup or filtering reduced its size: saved scrolling now stays within the remaining rows.

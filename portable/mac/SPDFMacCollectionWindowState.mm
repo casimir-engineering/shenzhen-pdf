@@ -50,11 +50,20 @@ static NSString* RowIdentity(NSDictionary* row) {
             [selected addIndex:i];
     [self.table selectRowIndexes:selected byExtendingSelection:NO];
     [self.window.contentView layoutSubtreeIfNeeded];
-    // Restore after row heights and list layout settle; reloading a table can otherwise
-    // reset the clip origin even though History never changed the user's result list.
-    if ([state[@"query"] isEqual:self.search.stringValue]) {
-        [self.listScroll.contentView scrollToPoint:NSMakePoint([state[@"listX"] doubleValue],[state[@"listY"] doubleValue])];
-        [self.listScroll reflectScrolledClipView:self.listScroll.contentView];
-    }
+    // scrollToPoint does not constrain its input. A saved position may now be
+    // beyond the final row after cleanup, filtering, or a smaller result set.
+    // Use row geometry rather than a temporarily oversized NSTableView frame.
+    NSClipView* clip = self.listScroll.contentView;
+    NSPoint requested = NSZeroPoint;
+    if ([state[@"query"] isEqual:self.search.stringValue])
+        requested = NSMakePoint([state[@"listX"] doubleValue],[state[@"listY"] doubleValue]);
+    CGFloat bottom = self.rows.count ? NSMaxY([self.table rectOfRow:(NSInteger)self.rows.count-1]) : 0;
+    CGFloat maxY = MAX(0,bottom-NSHeight(clip.bounds));
+    CGFloat maxX = MAX(0,NSWidth(self.table.bounds)-NSWidth(clip.bounds));
+    requested.x = isfinite(requested.x) ? MAX(0,MIN(requested.x,maxX)) : 0;
+    requested.y = isfinite(requested.y) ? MAX(0,MIN(requested.y,maxY)) : 0;
+    NSRect bounds = clip.bounds; bounds.origin = requested;
+    [clip scrollToPoint:[clip constrainBoundsRect:bounds].origin];
+    [self.listScroll reflectScrolledClipView:clip];
 }
 @end
