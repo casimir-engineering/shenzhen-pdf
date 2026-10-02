@@ -1,5 +1,5 @@
 #import <AppKit/AppKit.h>
-
+#import "SPDFMacCursorOverlayChecks.h"
 #import "../SPDFMacMarkdownPageCanvas.h"
 #import "../SPDFMacMarkdownPanController.h"
 #import "../SPDFMacMarkdownPagedView.h"
@@ -492,7 +492,7 @@ int main(void) {
         cursorCanvas.presentationMode = NO;
         assert([cursorCanvas cursorRegionAtPoint:hoverPoint] == SPDFCursorRegionText);
         // No window: the refresh entry point must be a safe no-op.
-        [cursorCanvas refreshCursorForMouseLocation];
+        [cursorCanvas refreshCursorForMouseLocation]; SPDFCheckCanvasOverlayCursor(cursorCanvas);
         spdf_assert_markdown_exact_fit_and_vertical_centering(view);
         puts("SPDFMacMarkdownPagedViewTests passed");
     }

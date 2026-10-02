@@ -105,7 +105,7 @@ static const CGFloat kSearchSidebarMinWidth = 216.0;
 static const CGFloat kMaxSidebarWidth = 320.0;
 static const CGFloat kSidebarMaxWidthFraction = 0.34;
 static const CGFloat kMinimapDividerWidth = 5.0;
-static const CGFloat kSidebarDividerWidth = kMinimapDividerWidth;
+static const CGFloat kSidebarDividerWidth = SPDFPaneDividerHitWidth;
 static const CGFloat kTopChromeResizeCornerSize = 16.0;
 // Comment rows carry the full annotation text, so they wrap to a few lines.
 // Size the row to the wrapped text plus a little vertical breathing room above
@@ -2955,9 +2955,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _minimapView.wantsLayer = YES;
     [_documentContainer addSubview:_minimapView];
     _minimapWidthConstraint = [_minimapView.widthAnchor constraintEqualToConstant:_minimapWidth];
-    _minimapDividerWidthConstraint = [_minimapDividerView.widthAnchor constraintEqualToConstant:kMinimapDividerWidth];
+    _minimapDividerWidthConstraint = [_minimapDividerView.widthAnchor constraintEqualToConstant:SPDFPaneDividerHitWidth];
     _pageScrollToMinimapConstraint =
-        [_pageScrollView.trailingAnchor constraintEqualToAnchor:_minimapDividerView.leadingAnchor];
+        [_pageScrollView.trailingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor constant:-kMinimapDividerWidth];
     _pageScrollFullWidthConstraint =
         [_pageScrollView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor];
     _pageScrollFullWidthConstraint.active = NO;
@@ -2969,7 +2969,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         _pageScrollToMinimapConstraint,
         [_minimapDividerView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
         [_minimapDividerView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
-        [_minimapDividerView.trailingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor],
+        [_minimapDividerView.centerXAnchor constraintEqualToAnchor:_minimapView.leadingAnchor constant:-kMinimapDividerWidth/2],
         _minimapDividerWidthConstraint, [_minimapView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
         [_minimapView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor],
         [_minimapView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor], _minimapWidthConstraint
@@ -7045,73 +7045,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [(SPDFWindow*)_window handleChromeMouseDown:event];
 }
 
-- (BOOL)handleTabStripMouseEvent:(NSEvent*)event {
-    if (!_tabStrip || !_window || _presentationMode) return NO;
-
-    NSEventType type = event.type;
-    if (type == NSEventTypeRightMouseDown) {
-        if (_tabStripHeightConstraint.constant <= 0.0) return NO;
-        NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
-        if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
-        [_tabStrip rightMouseDown:event];
-        return YES;
-    }
-
-    // Middle-click (button 2) on a tab closes it. The strip sits under the
-    // transparent title bar, so it never receives these events through normal
-    // hit-testing — forward them like the left/right-click paths above/below.
-    if (type == NSEventTypeOtherMouseDown || type == NSEventTypeOtherMouseUp) {
-        if (event.buttonNumber != 2) return NO;
-        if (type == NSEventTypeOtherMouseDown) {
-            _tabStripCapturingMiddleMouse = NO;
-            if (_tabStripHeightConstraint.constant <= 0.0) return NO;
-            NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
-            if (!NSPointInRect(point, _tabStrip.bounds)) return NO;
-            _tabStripCapturingMiddleMouse = YES;
-            [_tabStrip otherMouseDown:event];
-            return YES;
-        }
-        if (!_tabStripCapturingMiddleMouse) return NO;
-        _tabStripCapturingMiddleMouse = NO;
-        [_tabStrip otherMouseUp:event];
-        return YES;
-    }
-
-    if (type == NSEventTypeLeftMouseDown) {
-        if ([self eventHitsTopChromeResizeCorner:event]) return NO;
-        if ([self eventHitsStandardWindowButton:event]) {
-            [self dismissTabHoverPanel];
-            return NO;
-        }
-        if (_tabStripHeightConstraint.constant > 0.0) {
-            NSPoint point = [_tabStrip convertPoint:event.locationInWindow fromView:nil];
-            if (NSPointInRect(point, _tabStrip.bounds)) {
-                if ([_tabStrip containsTabOrControlAtPoint:point]) {
-                    _tabStripCapturingMouse = YES;
-                    [_tabStrip mouseDown:event];
-                } else {
-                    _tabStripCapturingMouse = NO;
-                    [self dismissTabHoverPanel];
-                    [self performTopChromeWindowDragWithEvent:event];
-                }
-                return YES;
-            }
-        }
-        return NO;
-    }
-
-    if (!_tabStripCapturingMouse) return NO;
-    if (type == NSEventTypeLeftMouseDragged) {
-        [_tabStrip mouseDragged:event];
-        return YES;
-    }
-    if (type == NSEventTypeLeftMouseUp) {
-        _tabStripCapturingMouse = NO;
-        [_tabStrip mouseUp:event];
-        return YES;
-    }
-    return NO;
-}
 - (void)preloadInactiveTabsWithCompletion:(dispatch_block_t)completion {
     NSArray<NSNumber*>* order = [_launchWorkCoordinator orderedInactiveIndexesForIdentifiers:_tabs
                                                                                selectedIndex:_selectedTabIndex];
@@ -9021,7 +8954,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _minimapView.hidden = !actualVisible;
     _minimapDividerView.hidden = !actualVisible;
     _minimapWidthConstraint.constant = actualVisible ? _minimapWidth : 0.0;
-    _minimapDividerWidthConstraint.constant = actualVisible ? kMinimapDividerWidth : 0.0;
+    _minimapDividerWidthConstraint.constant = actualVisible ? SPDFPaneDividerHitWidth : 0.0;
     if (actualVisible) {
         _pageScrollFullWidthConstraint.active = NO;
         _pageScrollToMinimapConstraint.active = YES;

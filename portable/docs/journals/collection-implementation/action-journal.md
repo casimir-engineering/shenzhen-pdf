@@ -870,3 +870,27 @@ Tests exercise a real Collection row and background rendering: no-version metada
 The full Markdown/Collection native integration suite passed, including PDF and Markdown thumbnail paths. Thumbnail delivery tests verify only visible rows are touched (8 of 10,000 in the fixture). Updater (32 cases), launch-work policy, whitespace and file-size checks passed. Review also confirmed that old-generation worker results cannot update refreshed cells.
 
 Final `dist/ShenzhenPDF.app` rebuild, strict deep signing and source freshness checks passed. Local version metadata remains 26.10.2-4. The user app was not launched or restarted, and no release was published.
+
+## 2 October — Stable pane resize targets
+
+The user clarified two separate symptoms: a split/twitchy hover region and resize drags that sometimes fail to register. Investigation found independent ownership problems. Document-canvas tracking callbacks can overwrite a resize cursor beneath an overlay; separately, tab-strip capture can survive a popup-consumed mouse-up and steal drag events from the next control. A fresh mouse-down now resets tab capture before dispatch, covering resize handles and other controls throughout the window. The routing method moved into `SPDFMacTabEventRouting.mm`, reducing the legacy coordinator cap.
+
+The five-point painted gutter is retained, with symmetric transparent hit extensions. The map divider is placed above neighboring views so hover and click ownership agree. Common divider behavior moved into `SPDFMacPaneDividers.mm`, reducing the legacy UIHelpers size cap rather than increasing it.
+
+| Geometry | Previous | Updated |
+|---|---:|---:|
+| Painted gutter / document spacing | 5 pt | 5 pt |
+| Hover and drag target | 5 pt | 13 pt |
+| Transparent extension on each side | 0 pt | 4 pt |
+
+The map target is centered on the existing gutter and raised above the map header, map and reader content. Page and toolbar edges remain anchored to the original five-point gap. The left-panel divider uses the same symmetric target and cursor registration. Both explicitly accept the first click and reject window-background dragging; during an active drag the resize cursor remains set. Drag deltas still use window coordinates and widths continue through existing persistence handlers.
+
+Actual-reader probes pass theme-frame hit testing at five horizontal points across each target and at header, body and bottom positions, including responsive widths and PDF/Markdown/text layouts. They also verify exact full-bounds cursor registration, first-click acceptance and window-drag refusal. The reading-theme chrome suite passes after the focused source extraction.
+
+Hover and drag regressions were validated independently. The PDF and Markdown canvases now respect the topmost cursor overlay during movement, exit and asynchronous cursor refresh, while active selection/panning retains precedence. This uses existing event callbacks and adds no launch work or event monitor. Tests sample both transparent margins and the central gutter and reject hidden or covered overlays. The PDF test fails against the previous canvas implementation and passes with the fix.
+
+Native window dispatch passes 120 divider gestures across both handles, both appearances, five horizontal positions and three heights; half begin with stale tab capture. A temporary build removing only the fresh-press reset fails those stale-capture cases, including the original target center: mouse-down arrives but drag/release callbacks never do. The fixed build also passes 60 sidebar navigation clicks seeded with stale capture. This separates event routing from hover geometry rather than attributing both symptoms to target size.
+
+The full Markdown integration suite and PDF selection/cursor suite pass, including active gesture precedence. Reading-theme chrome, tab-strip interaction, updater (32 cases), launch-work policy and file-size checks also pass.
+
+Final application build succeeded. `dist/ShenzhenPDF.app` passes strict deep signature verification and is newer than all nine changed production source/header files. Version remains 26.10.2-4. No user app was launched or restarted and nothing was published.

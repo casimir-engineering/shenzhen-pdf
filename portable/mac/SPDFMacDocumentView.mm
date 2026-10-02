@@ -1,4 +1,5 @@
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacCursorOverlay.h"
 #import "SPDFMacDelayedLinkActivation.h"
 #import "SPDFMacFitGeometry.h"
 #import "SPDFMacPageRendering.h"
@@ -659,12 +660,11 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
         [NSCursor.IBeamCursor set];
         return;
     }
-    // The ActiveAlways tracking area fires even when another window covers this
-    // one (that is how the hover-raise bug happened), so an unfocused window
-    // only touches the cursor when it is actually the top window at the point.
+    // ActiveAlways fires beneath other windows; only the top window may set its cursor.
     // Key windows skip the window-server hit test (IPC) - the responder chain
     // routing is authoritative there.
     if (!self.window.isKeyWindow && ![self windowIsFrontmostAtWindowPoint:windowPoint]) return;
+    if (SPDFApplyCursorOverlay(self,windowPoint)) return;
     NSPoint point = [self convertPoint:windowPoint fromView:nil];
     NSPoint pagePoint = NSZeroPoint;
     NSInteger pageIndex = -1;
@@ -701,10 +701,9 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
 - (void)mouseExited:(NSEvent*)event {
     _hoveredComment = nil;
     [self.reader documentViewEndHoverComment];
-    // Leaving the view resets the cursor, but an occluded unfocused window must
-    // not fight the cursor of whatever window is actually under the pointer.
-    if (self.window.isKeyWindow || [self windowIsFrontmostAtWindowPoint:event.locationInWindow])
-        [NSCursor.arrowCursor set];
+    if (_isPanning || (_isSelecting && (_linkGesture.draggedBeyondThreshold || _linkGesture.selectionCreated))) return;
+    if ((self.window.isKeyWindow || [self windowIsFrontmostAtWindowPoint:event.locationInWindow]) &&
+        !SPDFApplyCursorOverlay(self,event.locationInWindow)) [NSCursor.arrowCursor set];
 }
 
 - (void)keyDown:(NSEvent*)event {
