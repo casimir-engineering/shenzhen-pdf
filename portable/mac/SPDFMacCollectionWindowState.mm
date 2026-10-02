@@ -45,9 +45,19 @@ static NSString* RowIdentity(NSDictionary* row) {
     NSArray* selection = [state[@"selection"] isKindOfClass:NSArray.class] ? state[@"selection"] : @[];
     NSMutableIndexSet* selected = [NSMutableIndexSet indexSet];
     NSArray* documents = [state[@"selectedDocuments"] isKindOfClass:NSArray.class] ? state[@"selectedDocuments"] : @[];
-    for (NSUInteger i=0;i<self.rows.count;i++)
-        if ([selection containsObject:RowIdentity(self.rows[i])] || [documents containsObject:self.rows[i][@"document"][@"id"]])
-            [selected addIndex:i];
+    NSMutableSet* matchedDocuments = [NSMutableSet set];
+    for (NSUInteger i=0;i<self.rows.count;i++) if ([selection containsObject:RowIdentity(self.rows[i])]) {
+        [selected addIndex:i];
+        NSString* identifier = self.rows[i][@"document"][@"id"];
+        if (identifier) [matchedDocuments addObject:identifier];
+    }
+    // Fall back to the document only when its exact saved version disappeared.
+    for (NSUInteger i=0;i<self.rows.count;i++) {
+        NSString* identifier = self.rows[i][@"document"][@"id"];
+        if ([documents containsObject:identifier] && ![matchedDocuments containsObject:identifier]) {
+            [selected addIndex:i]; [matchedDocuments addObject:identifier];
+        }
+    }
     [self.table selectRowIndexes:selected byExtendingSelection:NO];
     [self.window.contentView layoutSubtreeIfNeeded];
     // scrollToPoint does not constrain its input. A saved position may now be
