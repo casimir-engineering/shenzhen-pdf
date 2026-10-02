@@ -60,11 +60,6 @@ static void CheckIconReadability(NSControl* control) {
     }
     control.enabled=enabled;
 }
-static void ForbiddenOrder(id object, SEL action, NSInteger place, NSInteger other) {
-    (void)object; (void)action; (void)place; (void)other;
-    fprintf(stderr,"FAIL: headless reader attempted to order a window\n");
-    exit(1);
-}
 @interface ShenzhenMacDelegate (WorkspaceProbeAccess)
 - (void)buildWindow;
 - (void)buildMenu;
@@ -440,7 +435,7 @@ int main(int argc,const char* argv[]) {
         [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
         setenv("SPDF_STATE_DIR",root.UTF8String,1); setenv("SPDF_NO_WINDOW_FIRST","1",1);
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
-        method_setImplementation(class_getInstanceMethod(NSWindow.class,@selector(orderWindow:relativeTo:)),(IMP)ForbiddenOrder);
+        spdf_sidebar_probe_install_order_guard();
         NSString* output=argc>1 ? [NSString stringWithUTF8String:argv[1]] : @"";
         if (output.length) [NSFileManager.defaultManager createDirectoryAtPath:output withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL* URL=Fixture(root);

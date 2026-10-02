@@ -1,6 +1,7 @@
 # Run from portable with: make -f Makefile -f mac/tests/workspace-probe.mk mac-workspace-probe
 # Compiles the actual reader, replacing only its entry point. No app bundle is
-# started, no updater runs, and every window remains unordered.
+# started and no updater runs. Click-routing checks briefly realize a fully
+# transparent offscreen fixture; all other window presentation is forbidden.
 MAC_WORKSPACE_PROBE := $(BUILD)/SPDFMacWorkspaceProbe
 MAC_WORKSPACE_PROBE_SRCS := mac/tests/SPDFMacWorkspaceProbe.mm mac/tests/SPDFMacSidebarHitProbe.mm $(MAC_SRCS)
 MAC_WORKSPACE_PROBE_OBJS := $(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_WORKSPACE_PROBE_SRCS))

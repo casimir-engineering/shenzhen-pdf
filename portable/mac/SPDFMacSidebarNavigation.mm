@@ -78,10 +78,18 @@ static NSString* Symbol(NSInteger mode) {
 @implementation SPDFSidebarNavigationControl {
     NSMutableArray<SPDFSidebarNavigationRow*>* _rows;
     NSButton* _collapse;
+    NSMutableArray<NSString*>* _labels;
+    NSMutableArray<NSNumber*>* _tags;
+    NSMutableArray<NSNumber*>* _enabled;
+    NSInteger _selectedSegment;
 }
 - (BOOL)isFlipped { return YES; }
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) { _rows = [NSMutableArray array]; self.focusRingType = NSFocusRingTypeNone; [self rebuildRows]; }
+    if ((self = [super initWithFrame:frame])) {
+        _rows = [NSMutableArray array]; _labels = [NSMutableArray array];
+        _tags = [NSMutableArray array]; _enabled = [NSMutableArray array]; _selectedSegment = -1;
+        self.focusRingType = NSFocusRingTypeNone; [self rebuildRows];
+    }
     return self;
 }
 - (NSSize)intrinsicContentSize {
@@ -131,11 +139,27 @@ static NSString* Symbol(NSInteger mode) {
         row.needsDisplay = YES;
     }
 }
-- (void)setSegmentCount:(NSInteger)count { [super setSegmentCount:count]; [self rebuildRows]; }
-- (void)setSelectedSegment:(NSInteger)index { [super setSelectedSegment:index]; [self syncRows]; [self invalidateIntrinsicContentSize]; self.needsDisplay = YES; }
-- (void)setTag:(NSInteger)tag forSegment:(NSInteger)segment { [super setTag:tag forSegment:segment]; [self syncRows]; }
-- (void)setLabel:(NSString*)label forSegment:(NSInteger)segment { [super setLabel:label forSegment:segment]; [self syncRows]; }
-- (void)setEnabled:(BOOL)enabled forSegment:(NSInteger)segment { [super setEnabled:enabled forSegment:segment]; [self syncRows]; }
+// The container deliberately has no NSSegmentedCell: AppKit's segmented hit
+// routing can consume child-button clicks below its own invisible native bezel.
+- (NSInteger)segmentCount { return _labels.count; }
+- (void)setSegmentCount:(NSInteger)count {
+    count = MAX(0,count);
+    while (_labels.count < (NSUInteger)count) { [_labels addObject:@""]; [_tags addObject:@0]; [_enabled addObject:@YES]; }
+    while (_labels.count > (NSUInteger)count) { [_labels removeLastObject]; [_tags removeLastObject]; [_enabled removeLastObject]; }
+    if (_selectedSegment >= count) _selectedSegment = -1;
+    [self rebuildRows];
+}
+- (NSInteger)selectedSegment { return _selectedSegment; }
+- (void)setSelectedSegment:(NSInteger)index {
+    _selectedSegment = index >= 0 && index < self.segmentCount ? index : -1;
+    [self syncRows]; [self invalidateIntrinsicContentSize]; self.needsDisplay = YES;
+}
+- (NSString*)labelForSegment:(NSInteger)segment { return _labels[(NSUInteger)segment]; }
+- (NSInteger)tagForSegment:(NSInteger)segment { return _tags[(NSUInteger)segment].integerValue; }
+- (BOOL)isEnabledForSegment:(NSInteger)segment { return _enabled[(NSUInteger)segment].boolValue; }
+- (void)setTag:(NSInteger)tag forSegment:(NSInteger)segment { _tags[(NSUInteger)segment] = @(tag); [self syncRows]; }
+- (void)setLabel:(NSString*)label forSegment:(NSInteger)segment { _labels[(NSUInteger)segment] = label ?: @""; [self syncRows]; }
+- (void)setEnabled:(BOOL)enabled forSegment:(NSInteger)segment { _enabled[(NSUInteger)segment] = @(enabled); [self syncRows]; }
 - (void)setWidth:(CGFloat)width forSegment:(NSInteger)segment { (void)width; (void)segment; }
 - (void)layout {
     [super layout];

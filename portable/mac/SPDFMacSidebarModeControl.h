@@ -12,26 +12,40 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeGroups = 4
 };
 
-@interface SPDFSidebarNavigationControl : NSSegmentedControl
+@interface SPDFSidebarNavigationControl : NSControl
 @property(nonatomic, copy) NSString* documentTitle;
 - (void)setCollapseTarget:(id)target action:(SEL)action;
 @end
 
-void spdf_sidebar_mode_control_configure_navigation(NSSegmentedControl* control, BOOL supportsComments, BOOL hasHistory);
+void spdf_sidebar_mode_control_configure_navigation(NSControl* control, BOOL supportsComments, BOOL hasHistory);
 
 // Mode tags stay stable when Markdown omits the Comments segment.
-@interface NSSegmentedControl (SPDFSidebarModes)
+// Shared selectors: native segmented controls implement these in AppKit;
+// sidebar navigation owns explicit metadata without a hidden segmented cell.
+@interface NSControl (SPDFSidebarSegmentAccess)
+@property(nonatomic) NSInteger segmentCount;
+@property(nonatomic) NSInteger selectedSegment;
+- (NSString*)labelForSegment:(NSInteger)segment;
+- (NSInteger)tagForSegment:(NSInteger)segment;
+- (BOOL)isEnabledForSegment:(NSInteger)segment;
+- (void)setLabel:(NSString*)label forSegment:(NSInteger)segment;
+- (void)setTag:(NSInteger)tag forSegment:(NSInteger)segment;
+- (void)setEnabled:(BOOL)enabled forSegment:(NSInteger)segment;
+- (void)setWidth:(CGFloat)width forSegment:(NSInteger)segment;
+@end
+
+@interface NSControl (SPDFSidebarModes)
 @property(nonatomic) NSInteger spdf_selectedSidebarMode;
 - (void)spdf_setEnabled:(BOOL)enabled forSidebarMode:(NSInteger)mode;
 @end
 
-void spdf_sidebar_mode_control_configure(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch);
+void spdf_sidebar_mode_control_configure(NSControl* control, BOOL supportsComments, BOOL hasSearch);
 
-void spdf_sidebar_mode_control_configure_history(NSSegmentedControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory);
+void spdf_sidebar_mode_control_configure_history(NSControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory);
 
 // Keep document-dependent modes in sync even while a workspace panel bypasses
 // the normal Chapters / Comments / Search list builder.
-void spdf_sidebar_mode_control_set_document_availability(NSSegmentedControl* control, BOOL hasChapters,
+void spdf_sidebar_mode_control_set_document_availability(NSControl* control, BOOL hasChapters,
                                                          BOOL hasComments);
 
 // The sidebar's Chapters / Comments / Search control, which grows a Search
@@ -47,7 +61,7 @@ void spdf_sidebar_mode_control_set_document_availability(NSSegmentedControl* con
 //
 // Resize through this rather than setting -segmentCount: the selection survives
 // when its segment does, and falls back to `fallbackSegment` when it does not.
-void spdf_sidebar_mode_control_set_segment_count(NSSegmentedControl* control, NSInteger segmentCount,
+void spdf_sidebar_mode_control_set_segment_count(NSControl* control, NSInteger segmentCount,
                                                  NSInteger fallbackSegment);
 
 NS_ASSUME_NONNULL_END

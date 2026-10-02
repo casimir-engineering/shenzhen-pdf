@@ -14,3 +14,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Drag documents between groups in the Groups panel. All groups temporarily collapse during the drag, including while filtering, to expose destinations; cancelling restores the previous view.
 - Group headers in the Groups panel use the same pastel backgrounds as the tab bar.
 - Collection Backups always uses pastel Orange. Saved copies may move to other groups and retain a distinct pale-orange outline and their saved membership across relaunches.
+- Fixed unreliable sidebar navigation clicks across Groups, Chapters, Search, Comments and History by removing the legacy segmented-control parent behind the custom icon buttons.
