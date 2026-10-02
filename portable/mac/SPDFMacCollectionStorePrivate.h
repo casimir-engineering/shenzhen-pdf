@@ -8,6 +8,9 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSDictionary* SPDFCollectionFingerprint(NSString* path);
 FOUNDATION_EXPORT NSDictionary* SPDFCollectionFingerprintFromStat(const struct stat* value);
 FOUNDATION_EXPORT NSError* SPDFCollectionError(NSInteger code, NSString* message);
+static inline NSError* SPDFCollectionSourceUnavailable(NSString* message) {
+    return [NSError errorWithDomain:@"SPDFCollection" code:5 userInfo:@{NSLocalizedDescriptionKey:message,@"sourceUnavailable":@YES}];
+}
 FOUNDATION_EXPORT NSString* SPDFCollectionPath(NSString* path);
 FOUNDATION_EXPORT NSString* _Nullable SPDFCollectionHashURL(NSURL* URL, NSError** error);
 FOUNDATION_EXPORT BOOL SPDFCollectionAtomicData(NSData* data, NSURL* URL, mode_t mode, NSError** error);

@@ -921,3 +921,23 @@ Collection store/integrity/cleanup, tab-group persistence, preload/launch-work p
 A differential build reverting only Collection's byte read to the former direct-original path fails the new authorized-copy regression (exit 1); the same suite with the fix passes (exit 0).
 
 Final `dist/ShenzhenPDF.app` build succeeds, passes strict deep signature verification and is newer than all 13 changed production source/header files. Local version remains 26.10.2-4. The user's running app and Collection data were not modified by the validation; no release was published.
+
+## 2 October — Initial import permissions and live Collection refresh
+
+Two separate cases were confirmed from metadata only: the reported Safari import has no saved versions and a permission-denied error; the Mail document already has a protected saved version despite the disabled Collection-copy button. The first needs a completed permission-aware import lifecycle; the second needs the visible manager to learn about captures committed after its rows were loaded.
+
+Implementation scope: await explicit access decisions for initial import, omit still-unavailable uncaptured records after those decisions, preserve every existing saved history, and refresh visible Collection rows after committed changes without polling or launching the companion.
+
+Initial import uses an asynchronous sequence: try capture, pause on access failure for a native file picker, then retry with a verified authorized copy. The picker validates the requested original and offers skipping remaining unavailable documents. Cleanup rechecks under the manifest lock and only removes failed rows with zero saved versions, preserving histories captured by another window while a decision was pending. A durable completion marker prevents repeating a finished initial import.
+
+The manager refresh fix uses a document-commit notification after storage locks are released. The reader forwards it over the existing companion pipe without starting or activating the companion. Preference writes and non-mutating materialization do not emit the signal. The manager coalesces commit bursts, retains one trailing refresh while a reload is active, and preserves document selection across newly saved versions.
+
+A durable import lease identifies the owning process and its start time, preventing duplicate permission flows across reader-window processes without holding a file lock while waiting. Failed release of a known own lease can be retried in the same process. Storage failures pause and retain metadata; source-permission and missing-file failures remain distinct. Initial-import error clears the session gate so a later real open can retry. Temporary permission-recovery folders are private and cleaned after completion.
+
+Live-refresh tests pass through both the production host observer/pipe and companion/window graph: committing the first saved version enables its button, keeps selection and focus, and sends no activation or launch request. A burst of 100 updates during a blocked store read starts no competing reload and schedules exactly one trailing refresh. Preference writes do not create refresh loops.
+
+The import/store/integrity/cleanup suite passes: permission callbacks hold completion and subsequent work pending; grants capture the verified raw copy; skip-remaining also handles stat-level access denial; missing uncaptured rows are removed; concurrent saved histories survive cleanup; destination EIO does not prune or mark completion; disabling while pending remains incomplete; failed lease release can recover in the same process. Completed imports do not repeat. Updater and launch-work suites pass.
+
+The final import regression also covers a replaced original at the same path: an older saved history does not suppress permission recovery for the current empty failed entry, and skipping the current entry preserves the older version. Final store/import/integrity/cleanup rerun passed with exit 0. File-size and whitespace checks pass without raising caps.
+
+Final application build passed, followed by strict deep signature verification and freshness checks across all 18 changed production files. The local bundle remains 26.10.2-4. No running user app was restarted, no user Collection records were changed during validation, and no release was published.

@@ -18,16 +18,24 @@ NSDictionary* SPDFCollectionFingerprintFromStat(const struct stat* value) {
     if (!copy) return [NSData dataWithContentsOfFile:path options:0 error:error];
     NSString* readPath = copy[@"path"];
     NSDictionary* sourceStat = copy[@"source"], *copyStat = copy[@"copy"];
-    if (![readPath isKindOfClass:NSString.class] || ![sourceStat isKindOfClass:NSDictionary.class] ||
-        ![copyStat isKindOfClass:NSDictionary.class] || !sourceStat.count || !copyStat.count || ![sourceStat isEqual:SPDFCollectionFingerprint(path)] ||
-        ![copyStat isEqual:SPDFCollectionFingerprint(readPath)]) {
-        if (error) *error=SPDFCollectionError(5,@"The authorized reading copy no longer matches its original. Reopen the document to refresh it.");
+    if (![sourceStat isKindOfClass:NSDictionary.class] || !sourceStat.count ||
+        ![sourceStat isEqual:SPDFCollectionFingerprint(path)]) {
+        if (error) *error=SPDFCollectionSourceUnavailable(@"The original changed before capture. Reopen the document to refresh it.");
         return nil;
     }
-    NSData* bytes = [NSData dataWithContentsOfFile:readPath options:0 error:error];
-    if (bytes && (![sourceStat isEqual:SPDFCollectionFingerprint(path)] ||
-        ![copyStat isEqual:SPDFCollectionFingerprint(readPath)] || bytes.length != [sourceStat[@"size"] unsignedLongLongValue])) {
-        if (error) *error=SPDFCollectionError(5,@"The original or reading copy changed during capture. Reopen the document to refresh it.");
+    if (![readPath isKindOfClass:NSString.class] || ![copyStat isKindOfClass:NSDictionary.class] ||
+        !copyStat.count || ![copyStat isEqual:SPDFCollectionFingerprint(readPath)]) {
+        if (error) *error=SPDFCollectionError(5,@"The authorized reading copy is unavailable or changed. Reopen the document to refresh it.");
+        return nil;
+    }
+    NSError* copyError=nil;
+    NSData* bytes = [NSData dataWithContentsOfFile:readPath options:0 error:&copyError];
+    if (!bytes || ![copyStat isEqual:SPDFCollectionFingerprint(readPath)] || bytes.length != [sourceStat[@"size"] unsignedLongLongValue]) {
+        if (error) *error=SPDFCollectionError(5,copyError.localizedDescription ?: @"The private reading copy changed during capture. Retry after reopening.");
+        return nil;
+    }
+    if (![sourceStat isEqual:SPDFCollectionFingerprint(path)]) {
+        if (error) *error=SPDFCollectionSourceUnavailable(@"The original changed during capture. Reopen the document to refresh it.");
         return nil;
     }
     return bytes;

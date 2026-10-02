@@ -124,24 +124,4 @@
     operation.queuePriority=[reason isEqual:@"Imported recent document"] ? NSOperationQueuePriorityVeryLow : NSOperationQueuePriorityNormal;
     [self.captureQueue addOperation:operation];
 }
-- (void)importRecentPaths:(NSArray<NSString*>*)paths {
-    if (![self isEnabled]) return;
-    @synchronized (self) {
-        if (!self.captureQueue) { self.captureQueue=[NSOperationQueue new]; self.captureQueue.maxConcurrentOperationCount=1;
-            self.captureQueue.qualityOfService=NSQualityOfServiceUtility; }
-    }
-    NSArray* snapshot=[paths copy];
-    NSBlockOperation* scan=[NSBlockOperation blockOperationWithBlock:^{
-        if (!self.isEnabled) return;
-        NSMutableSet* known=[NSMutableSet set];
-        for (NSDictionary* doc in self.documents) if ([doc[@"versions"] count]) [known addObject:doc[@"path"]];
-        NSUInteger count=0;
-        for (NSString* path in [NSOrderedSet orderedSetWithArray:snapshot]) {
-            if (++count>1000) break;
-            if ([known containsObject:SPDFCollectionPath(path)] || ![NSFileManager.defaultManager fileExistsAtPath:path]) continue;
-            [self enqueueCapturePath:path reason:@"Imported recent document" continuingDocumentID:nil attempt:0 generation:[self advanceCaptureGenerationForPath:path] epoch:[self documentForPath:path][@"protectionEpoch"] ?: @"" userOpenState:[NSMutableDictionary dictionary] completion:nil];
-        }
-    }];
-    scan.queuePriority=NSOperationQueuePriorityVeryLow; [self.captureQueue addOperation:scan];
-}
 @end

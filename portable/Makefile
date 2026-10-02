@@ -788,3 +788,8 @@ mac-unsaved-image-close-tests: mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ) | $(BU
 mac-page-pdf-copy-tests: core/spdf_document_export.h mupdf-libs $(CORE_OBJ) $(CORE_RECOLOR_OBJ) | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPagePDFCopyTests.mm mac/SPDFMacPagePDFCopy.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework ImageIO -framework PDFKit -lm -o "$(BUILD)/SPDFMacPagePDFCopyTests"
 	"$(BUILD)/SPDFMacPagePDFCopyTests" "$(abspath ..)"
+
+.PHONY: mac-collection-refresh-host-tests
+mac-collection-refresh-host-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionRefreshHostTests.mm mac/SPDFMacCollectionCompanionHost.mm mac/SPDFMacCollectionPipe.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionRefreshHostTests"
+	"$(BUILD)/SPDFMacCollectionRefreshHostTests"

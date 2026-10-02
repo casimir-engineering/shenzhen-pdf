@@ -6,8 +6,13 @@ static NSString* RowIdentity(NSDictionary* row) {
 - (NSDictionary*)captureBrowseState {
     if (!self.hasLoadedResults) return self.initialBrowseState ?: @{};
     NSMutableArray* selection = [NSMutableArray array];
+    NSMutableArray* documents = [NSMutableArray array];
     [self.table.selectedRowIndexes enumerateIndexesUsingBlock:^(NSUInteger index,BOOL* stop) {
-        (void)stop; if (index < self.rows.count) [selection addObject:RowIdentity(self.rows[index])];
+        (void)stop; if (index < self.rows.count) {
+            [selection addObject:RowIdentity(self.rows[index])];
+            NSString* identifier = self.rows[index][@"document"][@"id"];
+            if (identifier) [documents addObject:identifier];
+        }
     }];
     NSMutableDictionary* matches = [NSMutableDictionary dictionary];
     for (NSDictionary* row in self.rows) if (row[@"selectedPage"]) {
@@ -17,7 +22,7 @@ static NSString* RowIdentity(NSDictionary* row) {
         matches[RowIdentity(row)] = @{@"page":row[@"selectedPage"],@"index":@(matchIndex)};
     }
     NSPoint list = self.listScroll.contentView.bounds.origin;
-    return @{@"query":self.resultQuery ?: self.search.stringValue,@"selection":selection,@"matches":matches,
+    return @{@"query":self.resultQuery ?: self.search.stringValue,@"selection":selection,@"selectedDocuments":documents,@"matches":matches,
         @"expanded":self.expandedResults.allObjects,@"listX":@(list.x),@"listY":@(list.y)};
 }
 - (void)restoreBrowseState:(NSDictionary*)state toRows:(NSMutableArray*)rows query:(NSString*)query {
@@ -39,7 +44,10 @@ static NSString* RowIdentity(NSDictionary* row) {
 - (void)restoreBrowseSelectionAndScroll:(NSDictionary*)state {
     NSArray* selection = [state[@"selection"] isKindOfClass:NSArray.class] ? state[@"selection"] : @[];
     NSMutableIndexSet* selected = [NSMutableIndexSet indexSet];
-    for (NSUInteger i=0;i<self.rows.count;i++) if ([selection containsObject:RowIdentity(self.rows[i])]) [selected addIndex:i];
+    NSArray* documents = [state[@"selectedDocuments"] isKindOfClass:NSArray.class] ? state[@"selectedDocuments"] : @[];
+    for (NSUInteger i=0;i<self.rows.count;i++)
+        if ([selection containsObject:RowIdentity(self.rows[i])] || [documents containsObject:self.rows[i][@"document"][@"id"]])
+            [selected addIndex:i];
     [self.table selectRowIndexes:selected byExtendingSelection:NO];
     [self.window.contentView layoutSubtreeIfNeeded];
     // Restore after row heights and list layout settle; reloading a table can otherwise

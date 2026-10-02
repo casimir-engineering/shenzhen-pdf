@@ -1,3 +1,4 @@
+#import "SPDFMacCollectionImportIntegration.h"
 #import "SPDFMacCollectionIntegration.h"
 #import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionStore.h"
@@ -9,6 +10,9 @@
 #import "SPDFMacTabGroups.h"
 static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported, kCollectionRecoveryPath, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionIntegration)
+- (void)collectionAllowImportRetryAfterFailure {
+    objc_setAssociatedObject(self,&kCollectionImported,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
 - (void)collectionGroupBackupTab:(SPDFDocumentTab*)tab {
     SPDFDocumentTab* selected = [self selectedTab];
     spdf_tab_group_collection_copy(_tabs,tab);
@@ -125,6 +129,10 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
             [self collectionRecordUserOpenForPath:source document:[store documentForPath:source]];
             return;
         }
+        if (!objc_getAssociatedObject(self, &kCollectionImported)) {
+            objc_setAssociatedObject(self, &kCollectionImported, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [self collectionImportRecentDocuments];
+        }
         // Legacy render caches remain readable during launch without a new
         // permission prompt. Their next actual consultation renews the binding.
         if (unboundCopy) {
@@ -145,10 +153,6 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
                 if (error) self->_statusLabel.stringValue = [NSString stringWithFormat:@"Collection: copy failed — %@", error.localizedDescription];
             });
         }];
-        if (!objc_getAssociatedObject(self, &kCollectionImported)) {
-            objc_setAssociatedObject(self, &kCollectionImported, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            [store importRecentPaths:[self->_recentlyOpenedPaths copy]];
-        }
     });
 }
 - (BOOL)collectionProtectPath:(NSString*)path operation:(NSString*)operation {
