@@ -132,12 +132,17 @@ BOOL spdf_inactive_magnify_tap_authorized(void);
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 @end
 
-@interface SPDFMinimapDividerView : NSView
+// Painted gutter remains five points; the transparent hit target extends evenly
+// into both neighboring panes and owns the identical cursor rectangle.
+static const CGFloat SPDFPaneDividerHitWidth = 13;
+@interface SPDFPaneDividerView : NSView
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
+- (void)draggedByDeltaX:(CGFloat)delta;
+- (void)didFinishDragging;
 @end
-
-@interface SPDFSidebarDividerView : NSView
-@property(nonatomic, weak) id<SPDFMacUIReader> reader;
+@interface SPDFMinimapDividerView : SPDFPaneDividerView
+@end
+@interface SPDFSidebarDividerView : SPDFPaneDividerView
 @end
 
 @interface SPDFScrollView : NSScrollView

@@ -3,6 +3,7 @@
 #import "../SPDFMacDelayedLinkActivation.h"
 #import "../SPDFMacDocumentView.h"
 #import "../SPDFMacPageRendering.h"
+#import "SPDFMacCursorOverlayChecks.h"
 
 // The production model implementation also owns document-tab state and links
 // MuPDF. This focused view test only needs the rendered-page Objective-C model.
@@ -435,6 +436,9 @@ int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
     @autoreleasepool {
+        SPDFDocumentView* cursorView=[SPDFDocumentView new];
+        SPDFCursorOverlayTestReader* cursorReader=[SPDFCursorOverlayTestReader new]; cursorView.reader=(id)cursorReader;
+        SPDFCheckCanvasOverlayCursor(cursorView);
         test_single_link_is_delayed();
         test_double_click_cancels_link_and_selects_word();
         test_triple_click_cancels_link_and_selects_block();

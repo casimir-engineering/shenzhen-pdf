@@ -1,4 +1,5 @@
 #import "SPDFMacMarkdownPageCanvasPrivate.h"
+#import "SPDFMacCursorOverlay.h"
 
 #import <CoreText/CoreText.h>
 
@@ -77,6 +78,7 @@
     // one, so an unfocused window only touches the cursor when it is actually
     // the top window at the point (key windows skip the window-server IPC).
     if (!self.window.isKeyWindow && ![self spdf_windowIsFrontmostAtWindowPoint:windowPoint]) return;
+    if (SPDFApplyCursorOverlay(self,windowPoint)) return;
     SPDFCursorRegionKind kind = [self cursorRegionAtPoint:[self convertPoint:windowPoint fromView:nil]];
     if (kind == SPDFCursorRegionLink) [NSCursor.pointingHandCursor set];
     else if (kind == SPDFCursorRegionText) [NSCursor.IBeamCursor set];
@@ -97,10 +99,9 @@
 }
 
 - (void)mouseExited:(NSEvent*)event {
-    // Leaving the view resets the cursor, but an occluded unfocused window must
-    // not fight the cursor of whatever window is actually under the pointer.
-    if (self.window.isKeyWindow || [self spdf_windowIsFrontmostAtWindowPoint:event.locationInWindow])
-        [NSCursor.arrowCursor set];
+    if (self.spdf_panController.isPanning || self.isDraggingSelection) return;
+    if ((self.window.isKeyWindow || [self spdf_windowIsFrontmostAtWindowPoint:event.locationInWindow]) &&
+        !SPDFApplyCursorOverlay(self,event.locationInWindow)) [NSCursor.arrowCursor set];
 }
 
 @end

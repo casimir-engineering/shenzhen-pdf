@@ -171,7 +171,8 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [_minimapToggleButton.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor constant:8],
         [_minimapToggleButton.widthAnchor constraintEqualToConstant:28],
         [_minimapToggleButton.heightAnchor constraintEqualToConstant:28]]];
-    state.toolbarRight = [_toolbar.trailingAnchor constraintEqualToAnchor:_minimapDividerView.leadingAnchor];
+    [_documentContainer addSubview:_minimapDividerView positioned:NSWindowAbove relativeTo:nil];
+    state.toolbarRight = [_toolbar.trailingAnchor constraintEqualToAnchor:_pageScrollView.trailingAnchor];
     state.toolbarRight.active = YES;
 
     state.command = Icon(@"magnifyingglass",@"Find documents, groups and text · ⌘K",self,@selector(showFavoritesPalette:));

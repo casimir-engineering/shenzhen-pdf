@@ -268,6 +268,7 @@ static void CheckIconReadability(NSControl* control) {
     _pageView.needsDisplay=YES;
     [_window.contentView layoutSubtreeIfNeeded];
     Check(!_window.visible,@"reader window stays offscreen");
+    Check([self probePanelDividerTargets]==0,@"both resize overlays own their full hit and cursor regions");
     if (_sidebarVisible && !_presentationMode) {
         for (NSButton* row in _sidebarModeControl.accessibilityChildren) {
             for (NSNumber* y in @[@1,@7,@14,@21,@27]) {
