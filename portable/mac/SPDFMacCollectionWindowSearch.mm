@@ -73,11 +73,15 @@ static NSString* DateLabel(NSDictionary* version) {
     NSInteger page = [row[@"selectedPage"] integerValue];
     if (!page && [row[@"matches"] count]) page = [row[@"matches"][0][@"page"] integerValue];
     NSString* key = [RowKey(row) stringByAppendingFormat:@"/%ld",(long)page];
+    // Originals are mutable; revalidate only consulted rows after a refresh.
+    if (!version[@"id"]) key = [key stringByAppendingFormat:@"/original-%lu",(unsigned long)self.generation];
     image.identifier = key; image.image = [self.thumbnailCache objectForKey:key] ?: [NSImage imageWithSystemSymbolName:
         @"doc" accessibilityDescription:@"Saved page preview"];
-    image.accessibilityLabel = page>0 ? [NSString stringWithFormat:@"Page %ld preview",(long)page] : @"Saved copy preview";
+    image.accessibilityLabel = page>0 ? [NSString stringWithFormat:@"Page %ld preview",(long)page] :
+        version[@"id"] ? @"Saved copy preview" : @"Original document preview";
+    if (!version[@"id"]) image.toolTip = @"Preview of the original document; no saved copy yet.";
     [cell addSubview:image];
-    if (version[@"id"]) {
+    if (version[@"id"] || ([doc[@"path"] length] && ![doc[@"sourceReplaced"] boolValue] && ![doc[@"originalUnavailable"] boolValue])) {
         NSMutableDictionary* thumbnailRow = [row mutableCopy]; thumbnailRow[@"selectedPage"] = @(page);
         [self requestThumbnail:thumbnailRow key:key];
     }
