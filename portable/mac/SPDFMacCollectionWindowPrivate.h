@@ -38,6 +38,8 @@
 @property(nonatomic) BOOL hasLoadedResults;
 @property(nonatomic) NSString* resultQuery;
 @property(nonatomic) BOOL reloadingResults;
+@property(nonatomic) BOOL storeRefreshPending;
+@property(nonatomic) BOOL loadingResults;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic) dispatch_queue_t preferenceQueue;
 @property(nonatomic) BOOL mutationPending;
@@ -59,6 +61,7 @@
 - (void)historyForRow:(id)sender;
 - (NSView*)resultCellForRow:(NSInteger)row;
 - (void)reload:(id)sender;
+- (void)refreshFromStore;
 - (NSDictionary*)selectedDocument;
 - (NSDictionary*)selectedVersion;
 - (void)updateDetails;

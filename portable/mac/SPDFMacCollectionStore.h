@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+// Emitted after a committed document/history mutation, with the store as object.
+FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotification;
 // Dates are Unix seconds. Document rows: id, path, aliases, title, versions,
 // latestVersionID, capturedAt, status, excluded. Version rows: id, hash, size,
 // capturedAt, modifiedAt, reason, keep, assets, assetWarnings, encrypted, indexFile.

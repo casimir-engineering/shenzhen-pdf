@@ -45,7 +45,7 @@ static NSMutableDictionary* UniqueLostHistory(NSDictionary* rows, NSString* hash
 }
 static BOOL RelinkSourceStillLost(NSDictionary* document, NSError** error) {
     if (!document || OriginalIsProvablyLost(document)) return YES;
-    if (error) *error=SPDFCollectionError(5,@"The original reappeared while linking its history. Retrying the opened document.");
+    if (error) *error=SPDFCollectionSourceUnavailable(@"The original reappeared while linking its history. Retrying the opened document.");
     return NO;
 }
 static NSDictionary* TextIndex(NSData* data, NSString* path, NSArray* assets, NSURL* root) {
@@ -105,7 +105,11 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
     }
     NSData* bytes; struct stat before = {}, after = {}; BOOL stable = NO;
     for (NSUInteger retry=0; retry<3; ++retry) {
-        if (stat(path.fileSystemRepresentation,&before) != 0 || !S_ISREG(before.st_mode)) break;
+        if (stat(path.fileSystemRepresentation,&before) != 0) {
+            if (error) *error=[NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+            break;
+        }
+        if (!S_ISREG(before.st_mode)) break;
         if (before.st_size > 512LL*1024*1024) {
             if (error) *error = SPDFCollectionError(4,@"Document exceeds the 512 MB snapshot limit; reading is available.");
             return nil;
@@ -116,7 +120,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
         if (stable) break;
     }
     if (!stable) {
-        if (error && !*error) *error = SPDFCollectionError(5,@"Source is unavailable or changed during capture. Retry after saving finishes.");
+        if (error && !*error) *error = SPDFCollectionSourceUnavailable(@"Source is unavailable or changed during capture. Retry after saving finishes.");
         return nil;
     }
     NSString* identity = [NSString stringWithFormat:@"%llu:%llu",(unsigned long long)after.st_dev,
@@ -165,7 +169,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
             NSDictionary* index=TextIndex(bytes,path,dependencies[@"entries"],self.rootURL);
             struct stat current={};
             if (stat(path.fileSystemRepresentation,&current)!=0 || !SameSource(after,current)) {
-                if(error)*error=SPDFCollectionError(5,@"Source changed during indexing; retry capture."); return nil;
+                if(error)*error=SPDFCollectionSourceUnavailable(@"Source changed during indexing; retry capture."); return nil;
             }
             NSMutableDictionary* updated=[last mutableCopy];
             if (!InstallTextIndex(index,updated,path,self.rootURL,error)) return nil;
@@ -189,16 +193,16 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
     // Recheck after writing assets: an edit gate may only protect the source revision it is about to overwrite.
     struct stat final = {};
     if (stat(path.fileSystemRepresentation,&final)!=0 || !SameSource(after,final)) {
-        if (error) *error = SPDFCollectionError(5,@"Source changed while committing its snapshot; retry capture."); return nil;
+        if (error) *error = SPDFCollectionSourceUnavailable(@"Source changed while committing its snapshot; retry capture."); return nil;
     }
     NSDictionary* index = TextIndex(bytes,path,dependencies[@"entries"],self.rootURL);
     if (stat(path.fileSystemRepresentation,&final)!=0 || !SameSource(after,final)) {
-        if(error)*error=SPDFCollectionError(5,@"Source changed during indexing; retry capture."); return nil;
+        if(error)*error=SPDFCollectionSourceUnavailable(@"Source changed during indexing; retry capture."); return nil;
     }
     for (NSDictionary* asset in dependencies[@"entries"]) {
         NSString* assetPath=[path.stringByDeletingLastPathComponent stringByAppendingPathComponent:asset[@"relativePath"]];
         if (![SPDFCollectionFingerprint(assetPath) isEqual:asset[@"captureFingerprint"]]) {
-            if(error)*error=SPDFCollectionError(5,@"A linked asset changed during capture; retry after saving finishes."); return nil;
+            if(error)*error=SPDFCollectionSourceUnavailable(@"A linked asset changed during capture; retry after saving finishes."); return nil;
         }
     }
     NSNumber* now = @(NSDate.date.timeIntervalSince1970);
@@ -223,7 +227,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
     [self recordCaptureUserOpenInDocument:doc path:path];
     if (![self enforceStorageLimitInManifest:manifest protectedVersionID:version[@"id"] error:error]) return nil;
     if (![capturedSource isEqual:SPDFCollectionFingerprint(path)]) {
-        if(error)*error=SPDFCollectionError(5,@"Source changed before committing its snapshot; retry capture."); return nil;
+        if(error)*error=SPDFCollectionSourceUnavailable(@"Source changed before committing its snapshot; retry capture."); return nil;
     }
     return doc;
 }
@@ -249,7 +253,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
         ok=NO;
         failure=[NSError errorWithDomain:@"SPDFCollection" code:5 userInfo:@{
             NSLocalizedDescriptionKey:@"Source changed before capture completed; retrying its newer revision.",
-            @"continuingDocumentID":result[@"id"]}];
+            @"continuingDocumentID":result[@"id"],@"sourceUnavailable":@YES}];
     }
     if (!ok && failure && !([failure.domain isEqual:@"SPDFCollection"] && failure.code==19)) {
         [self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
@@ -302,7 +306,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
         NSMutableDictionary* current=manifest[@"documents"][protectedDocument[@"id"]];
         if ([current[@"sourceReplaced"] boolValue] ||
             ![current[@"sourceFingerprint"] isEqual:SPDFCollectionFingerprint(path)]) {
-            if (failure) *failure=SPDFCollectionError(5,@"Source changed before edit protection completed. Retry.");
+            if (failure) *failure=SPDFCollectionSourceUnavailable(@"Source changed before edit protection completed. Retry.");
             return NO;
         }
         current[@"protectionEpoch"]=NSUUID.UUID.UUIDString;

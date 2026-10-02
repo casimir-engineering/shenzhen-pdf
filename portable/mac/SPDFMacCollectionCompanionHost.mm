@@ -9,11 +9,26 @@
     SPDFCollectionNavigateHandler _navigate;
     NSTask* _task;
     SPDFCollectionPipe* _pipe;
+    BOOL _refreshPending;
 }
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store open:(SPDFCollectionOpenHandler)open
                      navigate:(SPDFCollectionNavigateHandler)navigate {
-    if ((self=[super init])) { _store=store; _open=[open copy]; _navigate=[navigate copy]; }
+    if ((self=[super init])) {
+        _store=store; _open=[open copy]; _navigate=[navigate copy];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(storeChanged:)
+            name:SPDFCollectionStoreDidChangeNotification object:store];
+    }
     return self;
+}
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)storeChanged:(NSNotification*)notification {
+    (void)notification;
+    @synchronized(self) { if (_refreshPending) return; _refreshPending=YES; }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized(self) { self->_refreshPending=NO; }
+        // Never starts or activates the helper for a background capture.
+        [self->_pipe send:@{@"kind":@"refresh"}];
+    });
 }
 - (void)receive:(NSDictionary*)message {
     NSString* kind=message[@"kind"];

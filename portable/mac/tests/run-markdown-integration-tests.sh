@@ -118,6 +118,7 @@ $PORTABLE/mac/SPDFMacCollectionStoreMarkdown.mm
 $PORTABLE/mac/SPDFMacCollectionStoreSearch.mm
 $PORTABLE/mac/SPDFMacSearchFileCache.mm
 $PORTABLE/mac/SPDFMacCollectionStoreScheduling.mm
+$PORTABLE/mac/SPDFMacCollectionStoreImport.mm
 $PORTABLE/mac/SPDFMacCollectionCompareEngine.mm
 $PORTABLE/mac/SPDFMacCollectionCompareLoad.mm
 $PORTABLE/mac/SPDFMacCollectionPaletteModel.mm

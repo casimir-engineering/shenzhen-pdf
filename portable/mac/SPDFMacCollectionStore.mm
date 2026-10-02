@@ -1,6 +1,8 @@
 #import "SPDFMacCollectionStorePrivate.h"
 #import "SPDFMacSearchFileCache.h"
 
+NSNotificationName const SPDFCollectionStoreDidChangeNotification = @"SPDFCollectionStoreDidChange";
+
 NSError* SPDFCollectionError(NSInteger code, NSString* message) {
     return [NSError errorWithDomain:@"SPDFCollection" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
 }
@@ -78,7 +80,10 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
               @"documents":[NSMutableDictionary dictionary]} mutableCopy];
 }
 - (BOOL)transaction:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {
-    return [self manifestTransaction:body writeBack:YES error:error];
+    BOOL committed = [self manifestTransaction:body writeBack:YES error:error];
+    // Deliver only after releasing both locks; observers may read the committed store.
+    if (committed) [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:self];
+    return committed;
 }
 - (BOOL)withLockedManifest:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {
     return [self manifestTransaction:body writeBack:NO error:error];
@@ -143,9 +148,10 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
     [values addEntriesFromDictionary:saved ?: @{}]; return values;
 }
 - (BOOL)updateSettings:(NSDictionary*)changes error:(NSError**)error {
-    return [self transaction:^BOOL(NSMutableDictionary* m,NSError** e) {
+    // Browsing preferences are persisted by the manager itself, not document mutations.
+    return [self manifestTransaction:^BOOL(NSMutableDictionary* m,NSError** e) {
         (void)e; [m[@"settings"] addEntriesFromDictionary:changes]; return YES;
-    } error:error];
+    } writeBack:YES error:error];
 }
 - (BOOL)isEnabled { return [[self settings][@"choice"] isEqual:@"enabled"]; }
 - (NSArray*)documents {

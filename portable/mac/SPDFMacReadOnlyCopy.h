@@ -28,6 +28,9 @@ typedef struct SPDFReadOnlyCopyResolution {
 } SPDFReadOnlyCopyResolution;
 SPDFReadOnlyCopyResolution SPDFResolveReadOnlyCopy(
     NSString* sourcePath, NSString* copyPath, NSDictionary* existingBinding, void (^authorizeRead)(void));
+SPDFReadOnlyCopyResolution SPDFResolveReadOnlyCopyWithError(
+    NSString* sourcePath, NSString* copyPath, NSDictionary* existingBinding,
+    void (^authorizeRead)(void), NSError** error);
 // Legacy caches stay usable at startup/speculative preload without migrating
 // metadata or requesting source access. Explicit consultation returns NO.
 static inline BOOL SPDFReuseLegacyReadOnlyCopy(NSString* copyPath, unsigned long long size, NSDate* modified,

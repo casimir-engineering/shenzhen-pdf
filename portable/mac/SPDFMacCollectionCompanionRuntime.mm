@@ -40,6 +40,10 @@ static SPDFCollectionCompanionRuntime* activeRuntime;
         if ([_credentialRequests containsObject:request]) _credentialReplies[request]=message[@"password"] ?: NSNull.null;
         [_credentialsReady broadcast]; [_credentialsReady unlock]; return;
     }
+    if ([message[@"kind"] isEqual:@"refresh"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self.manager refreshFromStore]; });
+        return;
+    }
     if (![message[@"kind"] isEqual:@"show"]) return;
     dispatch_async(dispatch_get_main_queue(), ^{
         NSString* root=message[@"root"];

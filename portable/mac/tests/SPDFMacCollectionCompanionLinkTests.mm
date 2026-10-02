@@ -35,6 +35,7 @@ static NSImage* Thumbnail(SPDFMacCollectionWindow* manager,NSDictionary* row,NSS
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     return [manager.thumbnailCache objectForKey:key];
 }
+#import "SPDFMacCollectionLiveRefreshChecks.h"
 int main(void) {
     @autoreleasepool {
         Expect(@"helper links its runtime without activating it",NSClassFromString(@"SPDFCollectionCompanionRuntime")!=nil &&
@@ -44,6 +45,7 @@ int main(void) {
             NSClassFromString(@"SPDFCollectionCompanionHost")==nil);
         Expect(@"dynamic Markdown renderer is present",NSClassFromString(@"SPDFMarkdownDocument")!=nil);
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        CheckCollectionLiveRefresh();
         NSString* directory=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSFileManager* fm=NSFileManager.defaultManager;
         [fm createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];

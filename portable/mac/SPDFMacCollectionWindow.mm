@@ -40,7 +40,23 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
     [self buildManagerLayout];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(managerWindowWillClose:)
         name:NSWindowWillCloseNotification object:window];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(storeDidChange:)
+        name:SPDFCollectionStoreDidChangeNotification object:store];
     return self;
+}
+- (void)storeDidChange:(NSNotification*)notification {
+    (void)notification; [self refreshFromStore];
+}
+- (void)refreshFromStore {
+    @synchronized(self) { if (_storeRefreshPending) return; _storeRefreshPending=YES; }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized(self) {
+            if (self.loadingResults) return; // One trailing refresh, never parallel store-change searches.
+            self.storeRefreshPending=NO;
+        }
+        // Construction alone remains lazy. Refresh only an already consulted manager.
+        if (self.generation || self.hasLoadedResults) [self reload:self.store];
+    });
 }
 - (void)showDocumentID:(NSString*)documentID query:(NSString*)query {
     if (documentID.length || query != nil) {
@@ -59,9 +75,9 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
     if (sender == _search || sender == _viewPicker) {
         _documentID = nil; _restoreHistoryVersionID = nil;
     }
-    [self persistManagerPreferences];
+    if (sender != _store) [self persistManagerPreferences];
     NSDictionary* browseState = [self captureBrowseState];
-    NSUInteger generation = ++_generation;
+    NSUInteger generation = ++_generation; _loadingResults=YES;
     NSInteger view = _viewPicker.selectedItem.tag, sort = _sortPicker.indexOfSelectedItem;
     NSString* query = [_search.stringValue copy]; NSString* selectedID = [_documentID copy];
     _storage.stringValue = @"Loading local history…";
@@ -98,12 +114,14 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation != self.generation) return;
             self.reloadingResults = YES;
-            [self restoreBrowseState:browseState toRows:rows query:query];
+            NSDictionary* restoredState = self.hasLoadedResults && [self.resultQuery isEqual:query]
+                ? [self captureBrowseState] : browseState;
+            [self restoreBrowseState:restoredState toRows:rows query:query];
             if (![browseState[@"query"] isEqual:query]) [self.expandedResults removeAllObjects];
             self.documents = docs; self.rows = rows; self.resultQuery = query; self.hasLoadedResults = YES;
             self.table.rowHeight = 100;
             [self.table reloadData];
-            [self restoreBrowseSelectionAndScroll:browseState];
+            [self restoreBrowseSelectionAndScroll:restoredState];
             self.reloadingResults = NO;
             self.resultSummary.stringValue = query.length ? @"No matching documents." : @"Documents you open will appear here when Collection is enabled.";
             self.resultSummary.hidden = rows.count > 0;
@@ -122,6 +140,10 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
                 [NSByteCountFormatter stringFromByteCount:(long long)used countStyle:NSByteCountFormatterCountStyleFile],
                 self.store.isEnabled ? @"Capturing" : @"Capture off"];
             [self updateDetails];
+            self.loadingResults=NO;
+            @synchronized(self) {
+                if (self.storeRefreshPending) { self.storeRefreshPending=NO; [self refreshFromStore]; }
+            }
         });
     });
 }
