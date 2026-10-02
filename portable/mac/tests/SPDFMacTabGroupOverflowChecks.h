@@ -1,3 +1,4 @@
+#include "SPDFMacTabGroupPickerChecks.h"
 // Focused tab-strip layout regressions; included by the interaction test TU.
 static void check_group_overflow(void) {
     for (NSNumber* count in @[@50, @100]) for (NSNumber* customFirst in @[@NO, @YES])
@@ -88,6 +89,7 @@ static void check_hidden_groups(void) {
 }
 
 static void check_compact_workspace_tabs(void) {
+    check_group_picker_toggle();
     SPDFGroupTestStrip* strip=[[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,1050,44)];
     SPDFTabGroup* purple=[SPDFTabGroup groupWithColor:@"Purple"];
     SPDFTabGroup* general=SPDFTabGroup.generalGroup; general.collapsed=YES;

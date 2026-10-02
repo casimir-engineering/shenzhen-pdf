@@ -1,5 +1,24 @@
 #import "SPDFMacTabStripViewPrivate.h"
 
+// Transient popovers dismiss before the anchor's mouseDown is delivered. Let
+// the anchor own that click, otherwise its toggle sees "closed" and reopens it.
+@interface SPDFTabGroupPickerPopover : NSPopover
+@property(nonatomic, weak) SPDFTabStripView* anchorStrip;
+- (BOOL)shouldCloseForEvent:(NSEvent*)event;
+@end
+@implementation SPDFTabGroupPickerPopover
+- (BOOL)shouldCloseForEvent:(NSEvent*)event {
+    SPDFTabStripView* strip = self.anchorStrip;
+    if (!strip.window || event.window != strip.window ||
+        (event.type != NSEventTypeLeftMouseDown && event.type != NSEventTypeLeftMouseUp)) return YES;
+    NSPoint point = [strip convertPoint:event.locationInWindow fromView:nil];
+    return !NSPointInRect(point,spdf_tab_strip_control_interaction_rect([strip overflowRect]));
+}
+- (BOOL)popoverShouldClose:(NSPopover*)popover {
+    (void)popover; return [self shouldCloseForEvent:NSApp.currentEvent];
+}
+@end
+
 @interface SPDFTabGroupPickerContent : NSView
 @end
 @implementation SPDFTabGroupPickerContent
@@ -103,7 +122,8 @@
         controller.view=scroll;
         [content scrollPoint:NSMakePoint(0,NSHeight(content.frame)-420)];
     } else controller.view=content;
-    _groupPicker=[NSPopover new]; _groupPicker.behavior=NSPopoverBehaviorTransient;
+    SPDFTabGroupPickerPopover* picker=[SPDFTabGroupPickerPopover new]; picker.anchorStrip=self;
+    _groupPicker=picker; _groupPicker.behavior=NSPopoverBehaviorTransient;
     _groupPicker.animates=NO; _groupPicker.contentViewController=controller;
     [_groupPicker showRelativeToRect:[self overflowRect] ofView:self preferredEdge:NSRectEdgeMinY];
 }
