@@ -64,6 +64,14 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     [self collectionObserveSettings];
     // Only called after a document has opened. Neither main nor empty launch instantiates the store.
     NSString* source = [path copy];
+    NSInteger sourceIndex = [self indexOfTabForPath:source];
+    SPDFDocumentTab* openedTab = sourceIndex >= 0 ? _tabs[(NSUInteger)sourceIndex] : nil;
+    NSDictionary* authorizedCopy = nil;
+    BOOL unboundCopy = openedTab.readOnly && openedTab.workingPath.length && !openedTab.readOnlyCopyBinding.count;
+    if (openedTab.readOnly && openedTab.workingPath.length && openedTab.readOnlyCopyBinding.count) {
+        NSMutableDictionary* binding = [openedTab.readOnlyCopyBinding mutableCopy];
+        binding[@"path"] = openedTab.workingPath; authorizedCopy = [binding copy];
+    }
     NSMutableDictionary* pending = objc_getAssociatedObject(self, &kCollectionContinuity);
     NSString* continuingID = pending[source]; [pending removeObjectForKey:source];
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -117,8 +125,13 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
             [self collectionRecordUserOpenForPath:source document:[store documentForPath:source]];
             return;
         }
+        // Legacy render caches remain readable during launch without a new
+        // permission prompt. Their next actual consultation renews the binding.
+        if (unboundCopy) {
+            [self collectionRecordUserOpenForPath:source document:[store documentForPath:source]]; return;
+        }
         NSUInteger userOpenCount = [self collectionConsumeUserOpenForPath:source];
-        [store capturePath:source reason:continuingID ? @"Observed save" : @"Opened"
+        [store capturePath:source authorizedCopy:authorizedCopy reason:continuingID ? @"Observed save" : @"Opened"
             continuingDocumentID:continuingID userOpenCount:userOpenCount
             completion:^(NSDictionary* doc, NSError* error, BOOL userOpenCountRecorded) {
             // Reading succeeded even when capture was excluded or could not save a new version.

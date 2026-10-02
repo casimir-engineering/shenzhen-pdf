@@ -11,6 +11,27 @@ NSDictionary* SPDFCollectionFingerprintFromStat(const struct stat* value) {
       @"mtimeNS":@(st.st_mtimespec.tv_nsec),@"ctime":@((long long)st.st_ctimespec.tv_sec),@"ctimeNS":@(st.st_ctimespec.tv_nsec)};
 }
 @implementation SPDFMacCollectionStore (Fingerprint)
+- (NSData*)readCaptureBytesForPath:(NSString*)path error:(NSError**)error {
+    NSDictionary* context = NSThread.currentThread.threadDictionary[[NSString stringWithFormat:@"SPDFCollectionCapture.%p",self]];
+    NSDictionary* copy = [context[@"path"] isEqual:SPDFCollectionPath(path)] ? context[@"userOpenState"][@"authorizedCopy"] : nil;
+    if ([context[@"directSourceProtection"] boolValue]) copy = nil;
+    if (!copy) return [NSData dataWithContentsOfFile:path options:0 error:error];
+    NSString* readPath = copy[@"path"];
+    NSDictionary* sourceStat = copy[@"source"], *copyStat = copy[@"copy"];
+    if (![readPath isKindOfClass:NSString.class] || ![sourceStat isKindOfClass:NSDictionary.class] ||
+        ![copyStat isKindOfClass:NSDictionary.class] || !sourceStat.count || !copyStat.count || ![sourceStat isEqual:SPDFCollectionFingerprint(path)] ||
+        ![copyStat isEqual:SPDFCollectionFingerprint(readPath)]) {
+        if (error) *error=SPDFCollectionError(5,@"The authorized reading copy no longer matches its original. Reopen the document to refresh it.");
+        return nil;
+    }
+    NSData* bytes = [NSData dataWithContentsOfFile:readPath options:0 error:error];
+    if (bytes && (![sourceStat isEqual:SPDFCollectionFingerprint(path)] ||
+        ![copyStat isEqual:SPDFCollectionFingerprint(readPath)] || bytes.length != [sourceStat[@"size"] unsignedLongLongValue])) {
+        if (error) *error=SPDFCollectionError(5,@"The original or reading copy changed during capture. Reopen the document to refresh it.");
+        return nil;
+    }
+    return bytes;
+}
 - (void)recordFingerprints:(NSMutableDictionary*)doc source:(NSDictionary*)source dependencies:(NSDictionary*)dependencies {
     NSDictionary* version=[doc[@"versions"] lastObject];
     doc[@"sourceFingerprint"]=source;

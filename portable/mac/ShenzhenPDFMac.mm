@@ -1,3 +1,4 @@
+#import "SPDFMacReadOnlyCopy.h"
 #import "SPDFMacMenuText.h"
 #import "SPDFMacClipboardIntegration.h"
 #import "SPDFMacUnsavedImageClose.h"
@@ -19,16 +20,6 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <sys/stat.h>
 
-// Error-only logging for the read-only "shadow copy" feature. Reserved for real
-// failures (e.g. a copy write that fails); no routine/info logging.
-static os_log_t SPDFReadOnlyLog(void) {
-    static os_log_t log;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-      log = os_log_create("com.intuition.shenzhenpdf", "readonly");
-    });
-    return log;
-}
 #import "SPDFMacDefaultReader.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacCollectionReaderNavigation.h"
@@ -155,17 +146,6 @@ typedef struct SPDFPageAnchor {
     NSPoint offsetInViewport;
     BOOL valid;
 } SPDFPageAnchor;
-
-// Resolved read-only render-copy binding for a tab, computed off-main and applied
-// to the tab on the main thread. `hasCopyBinding` distinguishes "render from the
-// app-owned copy" (record fileSize/modificationDate) from "render from the source
-// directly" (writable source or read/write fallback — clear the binding).
-typedef struct SPDFReadOnlyCopyResolution {
-    NSString* workingPath;
-    unsigned long long fileSize;
-    NSDate* modificationDate;
-    BOOL hasCopyBinding;
-} SPDFReadOnlyCopyResolution;
 
 static CGFloat spdf_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
@@ -6357,7 +6337,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 // `attributes` MUST be the SOURCE's (NSFileSize, NSFileModificationDate) — for a
 // read-only source callers pass the bare-lstat attributes (silent), never
 // -attributesOfItemAtPath: on the source. Change detection compares those
-// (mtime,size) against the stat the copy reflects (copiedSource*). The copy is
+// full source/copy fingerprints against the stat the copy reflects. The copy is
 // refreshed from the source CONTENT only when it is missing or the source
 // changed; that content read is the ONE place the macOS prompt may appear. An
 // unchanged source reopens the existing copy with no content read.
@@ -6384,7 +6364,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (SPDFReadOnlyCopyResolution)resolveWorkingPathForTab:(SPDFDocumentTab*)tab
                                             sourcePath:(NSString*)sourcePath
                                             attributes:(NSDictionary*)attributes {
-    SPDFReadOnlyCopyResolution resolution = {nil, 0, nil, NO};
+    SPDFReadOnlyCopyResolution resolution = {nil, 0, nil, NO, nil};
     if (!tab || !sourcePath.length) {
         resolution.workingPath = sourcePath;
         return resolution;
@@ -6398,56 +6378,16 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return resolution;
     }
 
-    unsigned long long sourceSize = spdf_file_size_from_attributes(attributes);
-    NSDate* sourceModified = spdf_file_modification_date_from_attributes(attributes);
-
-    NSString* copyPath = tab.workingPath.length
-                             ? tab.workingPath
-                             : [[self readOnlyCopiesDirectory]
-                                   stringByAppendingPathComponent:[self readOnlyCopyFileNameForSourcePath:sourcePath]];
-
-    BOOL copyExists = [NSFileManager.defaultManager fileExistsAtPath:copyPath];
-    BOOL unchanged = copyExists && tab.copiedSourceModificationDate && sourceModified &&
-                     [tab.copiedSourceModificationDate isEqualToDate:sourceModified] &&
-                     tab.copiedSourceFileSize == sourceSize;
-    if (unchanged) {
-        // Source unchanged vs the stat the copy reflects: reuse the copy with no
-        // source content read (no prompt). Preserve the existing stat binding.
-        resolution.workingPath = copyPath;
-        resolution.fileSize = tab.copiedSourceFileSize;
-        resolution.modificationDate = tab.copiedSourceModificationDate;
-        resolution.hasCopyBinding = YES;
-        return resolution;
-    }
-
-    // Missing or changed: author a FRESH copy from the source bytes.
-    // A plain copyItemAtPath: PRESERVES the source's restricted xattrs
-    // (com.apple.provenance / com.apple.macl / com.apple.quarantine), which mark
-    // the file as "from another app" and re-trigger the prompt — and those
-    // xattrs cannot be stripped after the fact. Reading the bytes and writing a
-    // NEW file makes the copy authored by OUR process, so it gets OUR provenance.
-    //
-    // Acquire security-scoped access first, mirroring -openSpdfDocumentAtPath:,
-    // so a sandboxed restored read-only source does not fail the read with EPERM
-    // (which would silently fall back to reading the source and re-prompt). This
-    // is the ONE allowed source-content read.
-    [self ensureSecurityAccessForPath:sourcePath];
-    NSError* ioError = nil;
-    NSData* data = [NSData dataWithContentsOfFile:sourcePath options:0 error:&ioError];
-    NSFileManager* fm = NSFileManager.defaultManager;
-    if (copyExists) [fm removeItemAtPath:copyPath error:nil];
-    if (!data || ![data writeToFile:copyPath options:NSDataWritingAtomic error:&ioError]) {
-        // Read or write failed (e.g. denied): fall back to opening the source
-        // directly so the document still loads; no copy binding is recorded.
-        os_log_error(SPDFReadOnlyLog(), "read-only copy write failed: %{public}@", ioError.localizedDescription);
-        resolution.workingPath = sourcePath;
-        return resolution;
-    }
-    resolution.workingPath = copyPath;
-    resolution.fileSize = sourceSize;
-    resolution.modificationDate = sourceModified;
-    resolution.hasCopyBinding = YES;
-    return resolution;
+    NSString* copyPath = tab.workingPath.length ? tab.workingPath : [[self readOnlyCopiesDirectory]
+        stringByAppendingPathComponent:[self readOnlyCopyFileNameForSourcePath:sourcePath]];
+    // Migrating legacy metadata must not cause a new source read on launch or
+    // speculative preload. Actual consultation can renew this unproven copy.
+    if (!tab.readOnlyCopyBinding.count && SPDFReuseLegacyReadOnlyCopy(copyPath, tab.copiedSourceFileSize,
+        tab.copiedSourceModificationDate, attributes, _startupDocumentWorkInProgress || tab != [self selectedTab]))
+        return {copyPath, tab.copiedSourceFileSize, tab.copiedSourceModificationDate, YES, nil};
+    return SPDFResolveReadOnlyCopy(sourcePath, copyPath, tab.readOnlyCopyBinding, ^{
+        [self ensureSecurityAccessForPath:sourcePath];
+    });
 }
 
 // Apply a resolved read-only copy binding to the tab. MUST run on the main thread
@@ -6457,14 +6397,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
 // fallback).
 - (void)applyReadOnlyCopyResolution:(SPDFReadOnlyCopyResolution)resolution toTab:(SPDFDocumentTab*)tab {
     if (!tab) return;
+    // A renewed copy may represent a same-size/date source replacement; the
+    // page cache's older size/date key alone cannot safely reuse its document.
+    if (tab.cachedDocument && ![tab.readOnlyCopyBinding isEqual:resolution.fingerprintBinding] &&
+        (tab.readOnlyCopyBinding.count || resolution.fingerprintBinding.count)) [self discardCachedRuntimeForTab:tab];
     if (resolution.hasCopyBinding) {
         tab.workingPath = resolution.workingPath;
         tab.copiedSourceFileSize = resolution.fileSize;
         tab.copiedSourceModificationDate = resolution.modificationDate;
+        tab.readOnlyCopyBinding = resolution.fingerprintBinding;
     } else {
         tab.workingPath = nil;
         tab.copiedSourceFileSize = 0;
         tab.copiedSourceModificationDate = nil;
+        tab.readOnlyCopyBinding = nil;
     }
 }
 
@@ -7274,6 +7220,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 }
                 [self discardCachedRuntimeForTab:currentTab];
                 currentTab.cachedDocument = completedDocument;
+                [self collectionDidOpenPath:currentTab.path];
                 currentTab.cachedRenderedPages = [completedPages mutableCopy];
                 [self recordFileAttributes:completedAttributes forTab:currentTab];
                 currentTab.missingFile = NO;
@@ -7899,6 +7846,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         tab.workingPath = nil;
         tab.copiedSourceFileSize = 0;
         tab.copiedSourceModificationDate = nil;
+        tab.readOnlyCopyBinding = nil;
         tab.readOnly = [self sourcePathIsReadOnly:_path];
         tab.cachedDocument = _doc;
         tab.cachedRenderedPages = _renderedPages;
@@ -8268,7 +8216,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           // finishDeferredCloudOpenWithToken: (which then re-reads it into
           // _workingPath via prepareSelectedTabViewState). Mirrors the main-thread
           // mutation discipline of every other ensureWorkingPathForTab: caller.
-          SPDFReadOnlyCopyResolution resolution = {nil, 0, nil, NO};
+          SPDFReadOnlyCopyResolution resolution = {nil, 0, nil, NO, nil};
           NSString* openPath = path;
           if (attributes) {
               resolution = [self resolveWorkingPathForTab:tab sourcePath:path attributes:attributes];
@@ -8426,7 +8374,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // from the source content only when missing or the bare-lstat shows a change),
     // the source itself otherwise. Render/open use workingPath; path (== source)
     // stays the identity everywhere else.
+    NSDictionary* previousCopyBinding = tab.readOnlyCopyBinding;
     NSString* workingPath = [self ensureWorkingPathForTab:tab sourcePath:path attributes:attributes];
+    BOOL renewedCopy = (previousCopyBinding.count || tab.readOnlyCopyBinding.count) &&
+        ![previousCopyBinding isEqual:tab.readOnlyCopyBinding];
+    if (renewedCopy) {
+        [selectedPreload discardForegroundDocumentWithHandler:^(void* stale) { if (stale) spdf_close((spdf_document*)stale); }];
+        selectedPreload = nil;
+    }
 
     if ([self tab:tab cacheMatchesFileAttributes:attributes]) {
         [self activateCachedSelectedTab:tab path:path attributes:attributes savedFindMatchIndex:savedFindMatchIndex];
@@ -8446,7 +8401,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         newDoc = NULL;
     }
     if (newDoc) spdf_launch_profile_log(@"spdf_open %@ adopted from inactive preload", path.lastPathComponent);
-    if (!newDoc) newDoc = [self takeLaunchPrerenderedDocumentForPath:workingPath attributes:attributes];
+    if (!newDoc && !renewedCopy) newDoc = [self takeLaunchPrerenderedDocumentForPath:workingPath attributes:attributes];
     if (newDoc) spdf_launch_profile_log(@"spdf_open %@ adopted from prerender", path.lastPathComponent);
     spdf_open_status openStatus = SPDF_OPEN_OK;
     if (!newDoc) {
@@ -8637,7 +8592,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (targetIndex == _selectedTabIndex && [self hasActiveDocument]) {
             // A stranded Loading markdown session still counts as an active
             // document: re-kick it instead of early-returning into the strand.
-            [self ensureActiveMarkdownTabHasContent]; [self collectionDidOpenPath:_path];
+            SPDFDocumentTab* existingTab = [self selectedTab];
+            if (existingTab.readOnly && existingTab.workingPath.length && !existingTab.readOnlyCopyBinding.count)
+                [self loadSelectedTab]; // Explicit reopen renews legacy provenance after launch.
+            else { [self ensureActiveMarkdownTabHasContent]; [self collectionDidOpenPath:_path]; }
             if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
             [self savePersistentState];
             [self focusActiveDocumentViewAfterTabSelection];

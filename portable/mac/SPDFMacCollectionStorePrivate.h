@@ -44,6 +44,7 @@ FOUNDATION_EXPORT NSDictionary* SPDFCollectionAssets(NSString* sourcePath, NSDat
                   attempt:(NSUInteger)attempt generation:(NSNumber*)generation epoch:(NSString*)epoch
                  userOpenState:(NSMutableDictionary*)state
                  completion:(nullable void (^)(NSDictionary* _Nullable,NSError* _Nullable,BOOL))completion;
+- (nullable NSData*)readCaptureBytesForPath:(NSString*)path error:(NSError**)error;
 - (NSUInteger)captureUserOpenCountForPath:(NSString*)path;
 - (void)recordCaptureUserOpenInDocument:(NSMutableDictionary*)document path:(NSString*)path;
 - (void)markCaptureUserOpenRecordedForPath:(NSString*)path;

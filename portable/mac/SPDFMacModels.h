@@ -101,6 +101,7 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
 // Derived from the durable clipboard source path; restored with the existing YAML path.
 @property(nonatomic, readonly) BOOL unsavedPastedImage;
 @property(nonatomic, copy) NSString* workingPath;
+@property(nonatomic, copy) NSDictionary* readOnlyCopyBinding;
 @property(nonatomic) unsigned long long copiedSourceFileSize;
 @property(nonatomic, strong) NSDate* copiedSourceModificationDate;
 @property(nonatomic) spdf_document* cachedDocument;

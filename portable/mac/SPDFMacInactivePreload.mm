@@ -95,6 +95,12 @@ typedef NS_ENUM(NSInteger, SPDFMacInactivePreloadState) {
     }
 }
 
+- (void)discardForegroundDocumentWithHandler:(void (^)(void*))handler {
+    dispatch_group_notify(_completionGroup, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        handler([self takeForegroundDocumentWithAttributes:nil]);
+    });
+}
+
 - (void*)takeForegroundDocumentWithAttributes:(NSDictionary**)attributes {
     dispatch_group_wait(_completionGroup, DISPATCH_TIME_FOREVER);
     @synchronized(self) {

@@ -175,6 +175,32 @@ static int test_inactive_preload_finished_result_has_one_consumer(void) {
     return 0;
 }
 
+static int test_rejected_preload_drains_once_without_blocking(void) {
+    for (NSInteger phase=0; phase<3; ++phase) {
+        SPDFMacInactivePreload* preload=[SPDFMacInactivePreload new];
+        void* expected=phase ? (void*)0x2345 : NULL;
+        if (phase) EXPECT([preload workerMayBeginOpen]);
+        if (phase==2) {
+            EXPECT([preload workerMayContinueWithDocument:expected attributes:@{}]);
+            [preload workerFinishedWithPages:nil];
+        }
+        EXPECT([preload claimForForeground]);
+        dispatch_semaphore_t finished=dispatch_semaphore_create(0);
+        __block void* disposed=NULL; __block BOOL onMain=YES;
+        [preload discardForegroundDocumentWithHandler:^(void* document) {
+            disposed=document; onMain=NSThread.isMainThread; dispatch_semaphore_signal(finished);
+        }];
+        if (phase==1) {
+            EXPECT(dispatch_semaphore_wait(finished,DISPATCH_TIME_NOW)!=0);
+            EXPECT([preload workerFinishedCancelledDocument:expected attributes:@{}]);
+        }
+        EXPECT(dispatch_semaphore_wait(finished,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC))==0);
+        EXPECT(disposed==expected && !onMain);
+        EXPECT([preload takeForegroundDocumentWithAttributes:nil]==NULL);
+    }
+    return 0;
+}
+
 static int test_adjacent_then_mru_then_distance_order(void) {
     NSObject* a = [NSObject new];
     NSObject* b = [NSObject new];
@@ -296,6 +322,7 @@ int main(void) {
         if (test_prerender_abandonment_stops_new_work()) return 1;
         if (test_inactive_preload_foreground_claims_inflight_open()) return 1;
         if (test_inactive_preload_finished_result_has_one_consumer()) return 1;
+        if (test_rejected_preload_drains_once_without_blocking()) return 1;
         if (test_adjacent_then_mru_then_distance_order()) return 1;
         if (test_selected_tab_promotion_rebuilds_priority()) return 1;
         if (test_file_identity_does_not_resolve_symlinks()) return 1;

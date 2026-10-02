@@ -50,6 +50,14 @@ int main(void) {
         Expect(@"ordinary tabs allocate zero group objects through normalize/save/restore", groupAllocations == 0);
         SPDFDocumentTab* source = Tab(@"/original.md"), *saved = Tab(@"/archive/v1.md");
         saved.readOnly = YES;
+        saved.readOnlyCopyBinding = @{@"source":@{@"device":@1,@"inode":@9007199254740993ULL,@"size":@8,
+            @"mtime":@1700000000,@"mtimeNS":@123456789,@"ctime":@1700000001,@"ctimeNS":@987654321},
+            @"copy":@{@"device":@1,@"inode":@4,@"size":@8,@"mtime":@1700000000,@"mtimeNS":@0,@"ctime":@1700000000,@"ctimeNS":@0}};
+        SPDFDocumentTab* rebound = spdf_tab_from_dictionary(spdf_dictionary_from_tab(saved,0));
+        Expect(@"full source and render-copy identities persist without numeric narrowing",
+            [rebound.readOnlyCopyBinding isEqual:saved.readOnlyCopyBinding] &&
+            [spdf_copy_document_tab(saved).readOnlyCopyBinding isEqual:saved.readOnlyCopyBinding]);
+        Expect(@"ordinary tabs do not serialize copy metadata",!spdf_dictionary_from_tab(source,0)[@"roCopyBinding"]);
         NSMutableArray* backupTabs = [@[source,saved] mutableCopy];
         spdf_tab_group_collection_copy(backupTabs,saved);
         Expect(@"opening a copy creates the special group while originals stay in General",
