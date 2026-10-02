@@ -4,6 +4,7 @@
 #import "markdown/SPDFMarkdownDocument.h"
 #import "SPDFMacCollectionThumbnail.h"
 #import "SPDFMacCollectionThumbnailDelivery.h"
+#import "SPDFMacCollectionAvailability.h"
 #import "SPDFMacPassword.h"
 #import "SPDFMacCollectionCompanion.h"
 
@@ -23,7 +24,15 @@
         @autoreleasepool {
             NSDictionary* version = row[@"version"];
             NSError* error = nil;
-            NSURL* URL = [store materializeVersionID:version[@"id"] documentID:row[@"document"][@"id"] error:&error];
+            NSURL* URL = nil;
+            if (version[@"id"]) {
+                URL = [store materializeVersionID:version[@"id"] documentID:row[@"document"][@"id"] error:&error];
+            } else if (SPDFCollectionOriginalAvailable(row[@"document"])) {
+                // Imported entries may have no snapshot yet. Preview their original
+                // only when its row is requested, on this serial background queue.
+                URL = [NSURL fileURLWithPath:row[@"document"][@"path"]];
+            }
+            // Never substitute today's original for a missing historical version.
             NSImage* image = nil;
             if (URL && SPDFIsRenderedTextDocumentPath(URL.path)) {
                 SPDFMarkdownDocument* markdown = [SPDFMarkdownDocument documentWithURL:URL options:nil error:&error];
@@ -59,7 +68,9 @@
                 if (!owner) return;
                 [owner.pendingThumbnails removeObject:key];
                 if (image) [owner.thumbnailCache setObject:image forKey:key cost:260*300*4];
-                SPDFCollectionDeliverThumbnail(owner.table,owner.rows.count,key,image,error.localizedDescription);
+                NSString* failure = version[@"id"] ? error.localizedDescription :
+                    @"Original preview unavailable; open the original document to check access.";
+                SPDFCollectionDeliverThumbnail(owner.table,owner.rows.count,key,image,failure);
             });
         }
     }];

@@ -64,6 +64,47 @@ static void CheckCollectionThumbnailRequests(SPDFMacCollectionWindow* manager) {
     while ([manager.pendingThumbnails containsObject:key] && deadline.timeIntervalSinceNow > 0)
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Expect(@"encrypted list thumbnail resolves to page pixels",[manager.thumbnailCache objectForKey:key]!=nil);
+    // Imported metadata can exist before a document has ever been captured.
+    NSDictionary* imported = @{@"id":@"uncaptured",@"path":path,@"title":@"Restricted.pdf"};
+    manager.rows = @[@{@"document":imported}];
+    NSString* originalKey = [NSString stringWithFormat:@"uncaptured//0/original-%lu",(unsigned long)manager.generation];
+    [manager.thumbnailQueue waitUntilAllOperationsAreFinished];
+    Expect(@"uncaptured original does no preview work before its row is consulted",
+        ![manager.pendingThumbnails containsObject:originalKey] && ![manager.thumbnailCache objectForKey:originalKey]);
+    NSView* originalCell = [manager resultCellForRow:0];
+    Expect(@"consulting uncaptured original schedules a lazy thumbnail",[manager.pendingThumbnails containsObject:originalKey]);
+    [manager.thumbnailQueue waitUntilAllOperationsAreFinished];
+    deadline = [NSDate dateWithTimeIntervalSinceNow:1];
+    while ([manager.pendingThumbnails containsObject:originalKey] && deadline.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    Expect(@"uncaptured original has a real preview",[manager.thumbnailCache objectForKey:originalKey]!=nil);
+    BOOL labeledOriginal=NO;
+    for (NSView* child in originalCell.subviews)
+        if ([child.identifier isEqual:originalKey]) labeledOriginal=[child.accessibilityLabel isEqual:@"Original document preview"];
+    Expect(@"original preview is not described as a saved copy",labeledOriginal);
+    Expect(@"thumbnail reading never creates a snapshot",[store versionsForDocumentID:@"uncaptured"].count==0);
+    (void)[manager resultCellForRow:0];
+    Expect(@"reconsulting a cached preview does not schedule duplicate rendering",![manager.pendingThumbnails containsObject:originalKey]);
+    manager.generation++;
+    NSString* refreshedKey = [NSString stringWithFormat:@"uncaptured//0/original-%lu",(unsigned long)manager.generation];
+    (void)[manager resultCellForRow:0];
+    Expect(@"refresh lazily revalidates mutable original instead of using stale pixels",[manager.pendingThumbnails containsObject:refreshedKey]);
+    [manager.thumbnailQueue waitUntilAllOperationsAreFinished];
+    deadline = [NSDate dateWithTimeIntervalSinceNow:1];
+    while ([manager.pendingThumbnails containsObject:refreshedKey] && deadline.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    for (NSDictionary* denied in @[
+        @{@"document":imported,@"version":@{@"id":@"missing-history"}},
+        @{@"document":@{@"id":@"replaced",@"path":path,@"sourceReplaced":@YES}},
+        @{@"document":@{@"id":@"identity",@"path":path,@"fileIdentity":@"wrong-identity"}}]) {
+        NSString* deniedKey = NSUUID.UUID.UUIDString;
+        [manager requestThumbnail:denied key:deniedKey];
+        [manager.thumbnailQueue waitUntilAllOperationsAreFinished];
+        deadline = [NSDate dateWithTimeIntervalSinceNow:1];
+        while ([manager.pendingThumbnails containsObject:deniedKey] && deadline.timeIntervalSinceNow > 0)
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Expect(@"missing history or replaced originals never get misleading original pixels",![manager.thumbnailCache objectForKey:deniedKey]);
+    }
     manager.store = originalStore; manager.rows = originalRows;
     [manager.table reloadData];
     [fm removeItemAtPath:directory error:nil];
