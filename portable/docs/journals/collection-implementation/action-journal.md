@@ -832,3 +832,23 @@ Headless tests cover native drag delegate callbacks, filter/cancel restoration, 
 The real sidebar action test also passes moves in both ordering directions, duplicate-path resolution, destination visibility, selection and YAML restoration of membership/order/reading position. Review found and fixed an adjacent issue where clicking a duplicate-path document could select the copy in another group.
 
 Final `dist/ShenzhenPDF.app` rebuild passed with all native sources included. Strict deep code-signature verification and executable freshness checks passed. Local metadata remains 26.10.2-4; next-release notes contain these additions. The running app was not restarted and no release was published.
+
+## 2 October — Shared sidebar navigation click routing
+
+The earlier History fix enlarged the child button cell hit area, but it did not remove the legacy `NSSegmentedControl` container behind the custom icon row. Existing tests delivered `mouseDown:` directly to buttons, bypassing native window dispatch. This explains why the earlier verification did not cover the reported routing failure.
+
+The investigation checked content-view and frame-view hit targets, sidebar/tab-strip geometry, native tracking bounds, panel rebuilds and event sequencing. Unordered windows discard dispatched events, so a dedicated probe realizes only a fully transparent test window without activating the user app. Several initial synthetic-event experiments were rejected: queued drag coordinates became invalid when AppKit repositioned the fixture, and invalid multiclick counts reused an earlier target.
+
+The corrected full-reader experiment uses valid click counts, stable geometry and real window dispatch while switching modes. With the legacy segmented parent, clicks at the lower tested positions fail before reaching their intended button. Substituting an ordinary `NSControl` parent with explicit mode metadata makes the same sequence pass, including repeated History clicks. The fix therefore removes the legacy segmented event machinery for every sidebar icon together, while keeping native child buttons, keyboard navigation, accessibility labels and existing mode/config semantics.
+
+```mermaid
+flowchart LR
+  A[Window click] --> B[Plain navigation container]
+  B --> C[Groups / Chapters / Search / Comments / History]
+  C --> D[Native button tracking]
+  D --> E[Selected panel]
+```
+
+Focused navigation, outline/mode availability, workspace persistence, Groups and find-interaction suites pass. An independent review confirmed that count changes, stable mode tags, disabled-mode keyboard skipping, focus and radio-button accessibility remain consistent. The updater's 32 tests and the launch-work policy pass. The rebuilt `dist/ShenzhenPDF.app` retains 26.10.2-4 metadata, includes the latest native sources and passes strict deep signature verification. No user app was launched or restarted and nothing was published.
+
+Final full-reader validation exits successfully: 60 real `SPDFWindow`-dispatched clicks across five vertical positions and both appearances, all sidebar modes, repeated History clicks and disabled Comments behavior. The temporary probe preserves AppKit KVO classes and restores window geometry/alpha/method hooks; cleanup also passes.

@@ -65,7 +65,7 @@
     NSMenu* _toolbarOverflowMenu;
     NSMenu* _recentlyOpenedMenu;
     NSTextField* _statusLabel;
-    NSSegmentedControl* _sidebarModeControl;
+    NSControl* _sidebarModeControl;
     NSSearchField* _sidebarFilterField;
     NSLayoutConstraint* _sidebarFilterTopConstraint;
     NSLayoutConstraint* _sidebarScrollBelowFilterConstraint;

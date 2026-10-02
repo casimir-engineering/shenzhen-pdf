@@ -19,7 +19,7 @@
 @property NSInteger snapshotCount;
 - (void)seed:(NSArray*)tabs;
 - (NSArray*)tabs;
-- (NSSegmentedControl*)navigation;
+- (NSControl*)navigation;
 - (CGFloat)sidebarWidth;
 - (void)preferSidebarVisible:(BOOL)visible;
 @end
@@ -37,7 +37,7 @@
         [_sidebarModeControl.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor]]];
 }
 - (NSArray*)tabs { return _tabs; }
-- (NSSegmentedControl*)navigation { return _sidebarModeControl; }
+- (NSControl*)navigation { return _sidebarModeControl; }
 - (CGFloat)sidebarWidth { return _sidebarWidth; }
 - (void)preferSidebarVisible:(BOOL)visible { _sidebarPreferredVisible=visible; }
 - (NSArray*)sidebarGroupSnapshots { self.snapshotCount++; return [super sidebarGroupSnapshots]; }

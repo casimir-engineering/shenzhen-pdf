@@ -193,7 +193,7 @@ int main(void) {
 
         // Workspace panels return before the regular list builder, so their
         // route must still refresh document-dependent mode availability.
-        NSSegmentedControl* workspaceModes = [SPDFSidebarNavigationControl new];
+        NSControl* workspaceModes = [SPDFSidebarNavigationControl new];
         spdf_sidebar_mode_control_configure_navigation(workspaceModes, YES, YES);
         workspaceModes.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
         spdf_sidebar_mode_control_set_document_availability(workspaceModes, NO, NO);
