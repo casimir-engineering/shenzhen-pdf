@@ -58,7 +58,7 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
 - **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine, no JavaScript, no network.
 
-Agents can inspect PDF, Markdown and text/source documents through the optional [native CLI and MCP adapter](portable/docs/agent-interface.md), review page images and layout reports, and navigate to highlighted passages.
+For AI integrations, see the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md): CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
 
 ## <a id="search"></a>Search-oriented architecture
 

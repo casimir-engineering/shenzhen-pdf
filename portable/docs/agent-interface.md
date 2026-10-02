@@ -1,9 +1,33 @@
-# Agent interface (macOS)
+# AI control and Markdown authoring (macOS)
 
 ShenzhenPDF exposes an explicit command-line mode and an optional stdio MCP
 adapter. Neither starts a listener, daemon, or polling loop when the reader
 launches normally. Inspection is headless and does not open the reader's window.
 Navigation opens the reader and changes its active document and saved position.
+
+This guide describes the controls shipped in **26.10.2-4**. It is the public
+integration reference; implementation details live in the
+[Markdown engine contract](../mac/markdown/README.md).
+
+- [Native inspection and layout settings](#native-command)
+- [Author, inspect and refine Markdown output](#author-inspect-and-refine-markdown-output)
+- [Navigate and highlight](#navigate-and-highlight)
+- [Organize persistent tab groups](#tab-groups-and-persisted-sessions)
+- [MCP setup and tool names](#mcp-setup)
+
+| Goal | Control |
+|---|---|
+| Read document text and measured layout | `inspect` / `inspect_document` |
+| Review actual page appearance | Inspection with `renderDirectory` |
+| Set Markdown paper and pagination | Document front matter and `<!-- pagebreak -->` |
+| Open a document at a page or passage | `open` / `open_document` |
+| Create, name, recolor, order, hide or expand groups | Group actions / MCP group tools below |
+| Persist group organization | Normal reader session YAML, shared with the UI |
+
+The reader is a viewer. Author or edit Markdown using your normal file-writing
+tools, then inspect it or open it in ShenzhenPDF. There is no agent command for
+editing document contents, exporting a complete PDF, running OCR, translation,
+or managing Collection; do not infer such tools from the reader's UI features.
 
 ## Native command
 
@@ -70,6 +94,85 @@ Content.
 Supported sizes: A3, A4, A5, Letter, Legal. Margins are points; individual
 `paper-margin-top/right/bottom/left` values override `paper-margin`. Invalid
 geometry produces an error. See [the Markdown contract](../mac/markdown/README.md).
+
+## Author, inspect and refine Markdown output
+
+Use this loop when generating a report intended to look good in ShenzhenPDF:
+
+1. Write the Markdown and any local image assets. Keep images beside the document
+   or in a child directory; use relative links. Use heading levels for chapters,
+   fenced code with explicit language names, GFM tables, and supported Mermaid
+   fences for diagrams. Standalone `.html` files open as syntax-highlighted source;
+   sanitized HTML inside Markdown has the limited rendering support described in
+   the engine contract.
+2. Set paper geometry in front matter if the document requires it. Supported
+   author controls are listed below; CSS and arbitrary typography keys are not
+   layout controls. Omitted values retain the renderer's defaults.
+3. Run `inspect` with a fresh `renderDirectory`. Read the report and examine the
+   returned page PNGs before deciding whether the layout works.
+4. Correct oversized tables/figures, awkward code or section splits, and page
+   breaks in the source. Inspect again into another new directory. Render one
+   page with `page` when the document exceeds the 100-page image limit.
+5. Use `open` to show the finished document or a specific highlighted passage.
+   Inspection alone never opens a reader window.
+
+| Front-matter key | Accepted value |
+|---|---|
+| `paper-size` | `A3`, `A4`, `A5`, `Letter`, `Legal` |
+| `paper-orientation` | `portrait`, `landscape` |
+| `paper-margin` | Nonnegative number of points, applied to all four sides |
+| `paper-margin-top`, `paper-margin-right`, `paper-margin-bottom`, `paper-margin-left` | Nonnegative points, overriding the corresponding side |
+
+There are 72 points per inch. Margins must leave at least 72 points of printable
+width and height. Put `<!-- pagebreak -->` on its own line for an explicit break.
+There is no author key for exact page counts, forced table-column widths, or
+font scale. The reader's A+/A− controls are user preferences, not fields in the
+agent inspection API.
+
+A wide-table report can start with:
+
+```markdown
+---
+paper-size: A4
+paper-orientation: landscape
+paper-margin: 36
+---
+# Measurements
+
+| Component | Measurement | Notes |
+| --- | ---: | --- |
+| Sensor | 12.5 | Stable across three runs |
+
+<!-- pagebreak -->
+
+# Analysis
+
+The measurements support the next experiment.
+```
+
+Inspect without `paper` to verify the document's own settings. A JSON `paper`
+object overrides matching front-matter keys for that call only; it does not edit
+the document or update the reader's settings.
+
+### Reading the layout report
+
+| Field | What to check |
+|---|---|
+| `paper`, `pageCount` | Actual paper size, printable area and resulting page count |
+| `pages[].fragments` | Each fragment's `block`, `range`, `rect`, `scale` and one-based `page` |
+| `blocks`, `tables`, `sections` | Canonical ranges, pages, `split`, and `portions` with per-page `fraction` and bounding rectangle |
+| `diagnostics` | `overflow`, `scaled-block`, `split-code`, and `split-table` entries |
+| `images` | Absolute paths to page PNGs when `renderDirectory` was supplied |
+
+A split table or code block can be intentional; review its PNGs rather than
+assuming every diagnostic is an error. Fractions describe visible canonical text,
+not source bytes or the percentage of page area occupied. `sourceRange` is null:
+use the report's block/section identity and your source structure to revise the
+file, never apply canonical offsets directly to the original Markdown.
+
+Images are rendered offline during inspection. Remote image placeholders can
+therefore differ from a live reader after downloads; use verified local assets
+when an agent needs reproducible visual review.
 
 ## Navigate and highlight
 
