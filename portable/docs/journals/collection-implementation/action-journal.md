@@ -941,3 +941,11 @@ The import/store/integrity/cleanup suite passes: permission callbacks hold compl
 The final import regression also covers a replaced original at the same path: an older saved history does not suppress permission recovery for the current empty failed entry, and skipping the current entry preserves the older version. Final store/import/integrity/cleanup rerun passed with exit 0. File-size and whitespace checks pass without raising caps.
 
 Final application build passed, followed by strict deep signature verification and freshness checks across all 18 changed production files. The local bundle remains 26.10.2-4. No running user app was restarted, no user Collection records were changed during validation, and no release was published.
+
+## 2 October — Blank Collection after import cleanup
+
+The user reported that all documents disappeared. Read-only manifest and filesystem checks found 93 documents, 97 saved versions and all 127 referenced archive objects present. The manager had saved a vertical origin of 10,877 points, beyond the entire shortened 93-row list (10,788 points before subtracting viewport height). Scroll restoration used that origin without constraining it after cleanup, leaving the viewport below its rows. No user data was changed during diagnosis.
+
+The native manager regression reproduces the blank viewport with the old restoration code, both on a 93-row restore at Y=10,877 and after a list shrinks. The corrected code settles layout, bounds the requested position against actual last-row geometry minus viewport height, sanitizes non-finite coordinates, and applies native clip constraints. Changed queries begin at the top; valid positions are preserved. No polling or storage mutation is added.
+
+Final native manager/helper tests passed (exit 0), including oversized/negative/non-finite saved positions, list shrink, empty results and valid-position preservation. Updater and launch-work checks passed. `dist/ShenzhenPDF.app` rebuilt successfully, passes strict deep signature verification and includes the corrected source. No user app was restarted or user Collection data altered.
