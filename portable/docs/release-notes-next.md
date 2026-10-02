@@ -15,3 +15,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Group headers in the Groups panel use the same pastel backgrounds as the tab bar.
 - Collection Backups always uses pastel Orange. Saved copies may move to other groups and retain a distinct pale-orange outline and their saved membership across relaunches.
 - Fixed unreliable sidebar navigation clicks across Groups, Chapters, Search, Comments and History by removing the legacy segmented-control parent behind the custom icon buttons.
+- The top-bar Groups button reliably opens and closes its popover on consecutive clicks, without waiting or moving the pointer.
