@@ -110,7 +110,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
             if (error) *error = SPDFCollectionError(4,@"Document exceeds the 512 MB snapshot limit; reading is available.");
             return nil;
         }
-        bytes = [NSData dataWithContentsOfFile:path options:0 error:error];
+        bytes = [self readCaptureBytesForPath:path error:error];
         stable = bytes && stat(path.fileSystemRepresentation,&after)==0 && SameSource(before,after) &&
                  bytes.length == (NSUInteger)after.st_size;
         if (stable) break;
@@ -286,7 +286,15 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
     }
     if (![self isEnabled] || [[self documentForPath:path][@"excluded"] boolValue]) return YES;
     [self advanceCaptureGenerationForPath:path];
-    NSDictionary* protectedDocument=[self capturePath:path reason:reason continuingDocumentID:documentID error:error];
+    NSString* key=[NSString stringWithFormat:@"SPDFCollectionCapture.%p",self];
+    NSDictionary* previous=NSThread.currentThread.threadDictionary[key];
+    if (previous) {
+        NSMutableDictionary* direct=[previous mutableCopy]; direct[@"directSourceProtection"]=@YES;
+        NSThread.currentThread.threadDictionary[key]=direct;
+    }
+    NSDictionary* protectedDocument;
+    @try { protectedDocument=[self capturePath:path reason:reason continuingDocumentID:documentID error:error]; }
+    @finally { if (previous) NSThread.currentThread.threadDictionary[key]=previous; }
     if (!protectedDocument) return NO;
     // This durable epoch invalidates older jobs in every window/process before
     // the source write is allowed to begin, including a reused protected copy.

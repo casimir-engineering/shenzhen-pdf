@@ -894,3 +894,30 @@ Native window dispatch passes 120 divider gestures across both handles, both app
 The full Markdown integration suite and PDF selection/cursor suite pass, including active gesture precedence. Reading-theme chrome, tab-strip interaction, updater (32 cases), launch-work policy and file-size checks also pass.
 
 Final application build succeeded. `dist/ShenzhenPDF.app` passes strict deep signature verification and is newer than all nine changed production source/header files. Version remains 26.10.2-4. No user app was launched or restarted and nothing was published.
+
+## 2 October — Collection after permission-granted reading
+
+The reported Safari temporary PDF had a Collection row with no versions and a persisted permission-denied capture error. Its original was a regular read-only file; the reader already authors a private working copy after the authorized source read. Existing foreground presentation and cached activation both request Collection capture, but that capture independently rereads the protected original. Permission to perform the reader's first read therefore did not guarantee the later Collection read would succeed.
+
+The fix must preserve original-path identity while reusing bytes from a verified working copy. A successful source read binds its copy to a full original fingerprint; stale or replaced originals must never inherit old bytes as a new latest version. Capture remains lazy and uses the existing background queue. No user file contents were inspected during diagnosis, and no app was restarted.
+
+Read-only working copies now carry source and copy fingerprints through tab copying and YAML persistence. Collection's asynchronous capture uses this immutable binding to read the authorized copy, with before/after verification; archive paths, source identity and final commit checks remain tied to the original. Editing protection still uses its original-source contract. An independent production-YAML probe round-tripped nested fingerprints exactly, including integers above 2^53 and signed/unsigned 64-bit boundaries.
+
+```mermaid
+flowchart LR
+  A[Permission-granted source read] --> B[Verified reader copy]
+  B --> C[Successful document load]
+  C --> D[Background Collection capture]
+  D --> E[Original document history]
+  F[Changed original or copy] --> G[Reject stale binding]
+```
+
+The regression simulates permission denial after the initial authorized read: direct-original capture fails, while verified-copy capture repairs the failed history without another original-content read. Exact encrypted bytes remain encrypted and are not text-indexed. Further cases reject same-size/date source replacement and a copy changed while queued, including retries, and verify direct-source edit protection and restoration of nested capture context.
+
+Successful inactive-load adoption now requests capture after token, tab and cache validation. Foreground/password/deferred completion and cached activation retain their existing hooks. Legacy unbound copies stay usable at launch without a new protected-source read; explicit reopen (including an already-selected tab) or later consultation renews the binding. When renewal changes provenance, stale cached and in-flight documents are rejected. Rejected foreground preload ownership is drained on its completion group off-main, with tests for preparing, opening and finished workers and exactly one document consumer.
+
+Collection store/integrity/cleanup, tab-group persistence, preload/launch-work policy and updater suites pass. Size ratchets and whitespace checks pass. Independent review found no remaining major or medium issue; actual Safari permission dialogs were not exercised, while the denied-read regression verifies the underlying failure headlessly.
+
+A differential build reverting only Collection's byte read to the former direct-original path fails the new authorized-copy regression (exit 1); the same suite with the fix passes (exit 0).
+
+Final `dist/ShenzhenPDF.app` build succeeds, passes strict deep signature verification and is newer than all 13 changed production source/header files. Local version remains 26.10.2-4. The user's running app and Collection data were not modified by the validation; no release was published.

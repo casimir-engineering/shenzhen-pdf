@@ -39,6 +39,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)capturePath:(NSString*)path reason:(NSString*)reason
         continuingDocumentID:(nullable NSString*)documentID userOpenCount:(NSUInteger)count
         completion:(nullable void (^)(NSDictionary* _Nullable, NSError* _Nullable, BOOL userOpenCountRecorded))completion;
+// Reader-authorized raw shadow bytes, bound to both original and copy stat.
+// Metadata/identity remain the original; stale bindings fail closed. Edit gates
+// deliberately use the direct-source API above.
+- (void)capturePath:(NSString*)path authorizedCopy:(nullable NSDictionary*)copy reason:(NSString*)reason
+        continuingDocumentID:(nullable NSString*)documentID userOpenCount:(NSUInteger)count
+        completion:(nullable void (^)(NSDictionary* _Nullable, NSError* _Nullable, BOOL))completion;
 - (void)importRecentPaths:(NSArray<NSString*>*)paths;
 - (BOOL)ensureProtectedPath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;
 - (BOOL)ensureProtectedPath:(NSString*)path reason:(NSString*)reason

@@ -41,10 +41,12 @@ static NSData* PlainPDF(void) {
 @end
 
 #include "SPDFMacCollectionMaterializationChecks.h"
+#include "SPDFMacCollectionAuthorizedCopyChecks.h"
 
 int main(void) {
     @autoreleasepool {
         CheckCollectionMaterializationPerformance();
+        CheckCollectionAuthorizedCopy();
         NSString* sandbox=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSFileManager* fm=NSFileManager.defaultManager;
         [fm createDirectoryAtPath:sandbox withIntermediateDirectories:YES attributes:nil error:nil];

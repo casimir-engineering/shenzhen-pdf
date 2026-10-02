@@ -103,6 +103,7 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.markdownAnchor = source.markdownAnchor;
     copy.readOnly = source.readOnly;
     copy.workingPath = source.workingPath;
+    copy.readOnlyCopyBinding = source.readOnlyCopyBinding;
     copy.copiedSourceFileSize = source.copiedSourceFileSize;
     copy.copiedSourceModificationDate = source.copiedSourceModificationDate;
     return copy;
@@ -142,8 +143,9 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
         @"roCopyModifiedAt" :
             @(tab.copiedSourceModificationDate ? tab.copiedSourceModificationDate.timeIntervalSince1970 : 0.0)
     };
-    if (!tab.group && !tab.collectionHistoryDocumentID.length && !tab.collectionVersionLabel.length) return result;
+    if (!tab.group && !tab.collectionHistoryDocumentID.length && !tab.collectionVersionLabel.length && !tab.readOnlyCopyBinding.count) return result;
     NSMutableDictionary* grouped = [result mutableCopy];
+    if (tab.readOnlyCopyBinding.count) grouped[@"roCopyBinding"] = tab.readOnlyCopyBinding;
     if (tab.group) grouped[@"group"] = tab.group.dictionary;
     if (tab.collectionVersionLabel.length) grouped[@"collectionVersionLabel"] = tab.collectionVersionLabel;
     if (tab.collectionHistoryDocumentID.length) grouped[@"collectionHistoryID"] = tab.collectionHistoryDocumentID;
@@ -190,6 +192,7 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     tab.readOnly = [item[@"readOnly"] boolValue];
     if ([item[@"workingPath"] isKindOfClass:NSString.class] && [item[@"workingPath"] length] > 0)
         tab.workingPath = item[@"workingPath"];
+    tab.readOnlyCopyBinding = [item[@"roCopyBinding"] isKindOfClass:NSDictionary.class] ? item[@"roCopyBinding"] : nil;
     tab.copiedSourceFileSize = (unsigned long long)[item[@"roCopyFileSize"] unsignedLongLongValue];
     double roModified = [item[@"roCopyModifiedAt"] doubleValue];
     if (roModified > 0.0) tab.copiedSourceModificationDate = [NSDate dateWithTimeIntervalSince1970:roModified];

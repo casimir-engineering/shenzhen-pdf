@@ -69,6 +69,12 @@
 }
 - (void)capturePath:(NSString*)path reason:(NSString*)reason continuingDocumentID:(NSString*)documentID
         userOpenCount:(NSUInteger)count completion:(void (^)(NSDictionary*,NSError*,BOOL))completion {
+    [self capturePath:path authorizedCopy:nil reason:reason continuingDocumentID:documentID
+        userOpenCount:count completion:completion];
+}
+- (void)capturePath:(NSString*)path authorizedCopy:(NSDictionary*)copy reason:(NSString*)reason
+        continuingDocumentID:(NSString*)documentID userOpenCount:(NSUInteger)count
+        completion:(void (^)(NSDictionary*,NSError*,BOOL))completion {
     if (![self isEnabled] || [self isArchivePath:path]) {
         if (completion) dispatch_async(dispatch_get_main_queue(),^{ completion(nil,nil,NO); }); return;
     }
@@ -77,6 +83,8 @@
             self.captureQueue.qualityOfService=NSQualityOfServiceUtility; }
     }
     NSMutableDictionary* state=[@{@"count":@(count),@"recorded":@NO,@"explicitOpen":@(count>0)} mutableCopy];
+    if (copy.count) state[@"authorizedCopy"] = @{@"path":[copy[@"path"] copy] ?: @"",
+        @"source":[copy[@"source"] copy] ?: @{}, @"copy":[copy[@"copy"] copy] ?: @{}};
     [self enqueueCapturePath:path reason:reason continuingDocumentID:documentID attempt:0
                   generation:[self advanceCaptureGenerationForPath:path]
                        epoch:[self documentForPath:path][@"protectionEpoch"] ?: @""
@@ -87,13 +95,17 @@
                  userOpenState:(NSMutableDictionary*)state completion:(void (^)(NSDictionary*,NSError*,BOOL))completion {
     NSBlockOperation* operation=[NSBlockOperation blockOperationWithBlock:^{
         NSString* contextKey = [NSString stringWithFormat:@"SPDFCollectionCapture.%p", self];
+        id previousContext = NSThread.currentThread.threadDictionary[contextKey];
         NSThread.currentThread.threadDictionary[contextKey] = @{@"path":SPDFCollectionPath(path), @"generation":generation, @"epoch":epoch, @"userOpenState":state};
         NSError* error=nil; NSDictionary* row;
         @try {
             row=[self capturePath:path reason:reason continuingDocumentID:documentID error:&error];
             if (!row) [self recordUncapturedUserOpenForPath:path];
         }
-        @finally { [NSThread.currentThread.threadDictionary removeObjectForKey:contextKey]; }
+        @finally {
+            if (previousContext) NSThread.currentThread.threadDictionary[contextKey] = previousContext;
+            else [NSThread.currentThread.threadDictionary removeObjectForKey:contextKey];
+        }
         BOOL transient=([error.domain isEqual:@"SPDFCollection"] &&
                         (error.code==5 || error.code==EAGAIN || error.code==EINTR || error.code==EBUSY)) ||
                        ([error.domain isEqual:NSCocoaErrorDomain] && error.code==NSFileReadUnknownError);

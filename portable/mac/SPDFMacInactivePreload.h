@@ -20,6 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)workerFinishedWithoutDocument;
 
 - (BOOL)claimForForeground;
+// Release a rejected foreground claim only after its worker relinquishes the
+// document. Completion runs off-main exactly once, including an empty claim.
+- (void)discardForegroundDocumentWithHandler:(void (^)(void* _Nullable document))handler;
 - (void* _Nullable)takeForegroundDocumentWithAttributes:(NSDictionary* _Nullable* _Nullable)attributes;
 - (void* _Nullable)takeBackgroundDocumentWithAttributes:(NSDictionary* _Nullable* _Nullable)attributes
                                                   pages:(NSArray* _Nullable* _Nullable)pages;

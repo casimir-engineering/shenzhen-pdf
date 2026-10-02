@@ -18,3 +18,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - The top-bar Groups button reliably opens and closes its popover on consecutive clicks, without waiting or moving the pointer.
 - Collection entries without a saved copy now load a preview lazily from the original when their row is viewed. Refreshing rechecks the original; historical previews never substitute a different version.
 - Fixed intermittent resize drags after tab-bar interactions and competing document cursors over pane dividers. Map and left-panel handles have consistent hover/drag targets on both sides, with unchanged visible gutters and document spacing.
+- Collection reuses the verified working copy after a protected document is successfully read, avoiding a second permission-dependent read of the original. Successfully loaded background tabs are captured too.
