@@ -949,3 +949,19 @@ The user reported that all documents disappeared. Read-only manifest and filesys
 The native manager regression reproduces the blank viewport with the old restoration code, both on a 93-row restore at Y=10,877 and after a list shrinks. The corrected code settles layout, bounds the requested position against actual last-row geometry minus viewport height, sanitizes non-finite coordinates, and applies native clip constraints. Changed queries begin at the top; valid positions are preserved. No polling or storage mutation is added.
 
 Final native manager/helper tests passed (exit 0), including oversized/negative/non-finite saved positions, list shrink, empty results and valid-position preservation. Updater and launch-work checks passed. `dist/ShenzhenPDF.app` rebuilt successfully, passes strict deep signature verification and includes the corrected source. No user app was restarted or user Collection data altered.
+
+
+## 2026-10-03 — Public README and image refresh
+
+Updated the README for release 26.10.2-4: current workspace, Collection actions,
+local history and storage behavior, text/source/image support, image OCR, translation,
+properties and the public AI guide. Removed obsolete legacy build instructions and
+an outdated toolbar screenshot. Replaced old reader imagery with native offscreen
+fixture renders; added History and Collection settings. The fixtures contain only
+fictional documents and use temporary state. No installed app was launched, quit or
+captured. WebP encoding keeps the public images compact; the generation and crop
+recipe is reproducible in `portable/mac/tests/refresh-readme-images.py`.
+
+Validation: workspace probe, Collection README probe, file-size ratchet, local
+README links and image decoding. Reviewed the combined image contact sheet for
+readability and framing. Production app sources and release artifacts are unchanged.

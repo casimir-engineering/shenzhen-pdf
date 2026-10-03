@@ -1,5 +1,5 @@
 <h1 align="center">ShenzhenPDF</h1>
-<p align="center"><b>A fast, tabbed native Mac reader for PDFs and Markdown, with on-device OCR and offline translation built in.</b></p>
+<p align="center"><b>A fast native Mac reader for PDFs, Markdown, code and images, with document groups, local history, OCR and offline translation.</b></p>
 
 <div align="center">
 
@@ -15,40 +15,46 @@
 
 <p align="center">Type anywhere to search. Jump anywhere with the map. Launches instantly. Relaunches exactly as you left it.</p>
 
-ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.** Everything below, exhaustively: **[docs/features.md](docs/features.md)**.
+ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)** and **[AI control guide](portable/docs/agent-interface.md)**.
 
-<sub><a href="#reading">Reading</a> · <a href="#markdown">Markdown</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
+<sub><a href="#reading">Reading</a> · <a href="#collection">Collection</a> · <a href="#markdown">Markdown &amp; code</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
 
 ---
 
 ## <a id="reading"></a>Reading
 
-<p align="center"><img src="docs/images/portable/macos-multi-window.webp" alt="Two ShenzhenPDF windows side by side: a Markdown document with a gantt chart and nested chapters on the left, a PDF with a results table, a scatter plot and the document map on the right" width="880"></p>
+<p align="center"><img src="docs/images/portable/macos-groups.webp" alt="Current native reader with colored Research, General and Design groups, compact tabs and direct sidebar tools" width="880"></p>
 
-- **Tabs and windows** — compact outlined tabs, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
+- **Tabs and windows** — compact tabs with colored groups, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
 - **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. New groups immediately ask for a name, with the color name selected for quick replacement or Enter to keep it. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Membership, order, colors, names, and collapse state survive relaunch.
 - **Paste pictures** <sub>macOS</sub> — paste an image or copied image file into the reader. A red dot marks an unsaved clipboard picture; Save As offers image or PDF and opens the saved file.
 - **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
 - **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
 - **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).
 
-## Collection and history <sub>macOS</sub>
+## <a id="collection"></a>Collection and history <sub>macOS</sub>
 
-<p align="center"><img src="docs/images/portable/macos-collection.jpg" alt="Collection showing one latest saved copy per document and direct History actions" width="880"></p>
+<p align="center"><img src="docs/images/portable/macos-collection.webp" alt="Collection showing one latest saved copy per document and direct History actions" width="880"></p>
 
 - **Keep local copies and history** — choose at first use, then continue opening the originals. Protected versions stay read-only; copies and history can be turned off in Settings.
 - **Permission-aware import** — initial Collection setup waits for file-access decisions and skips inaccessible entries without saved history. Successfully read protected documents use their verified reader copy; saved-copy buttons and previews refresh as history becomes available.
 - **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
-- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and optional storage limits; storage is unlimited by default.
+- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open original reads the source; Open collection copy reads the protected version in Collection Backups. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and optional storage limits; storage is unlimited by default.
+- **Storage** — identical documents and local assets share stored objects by content hash. Changed versions are full copies; there is no extra compression or delta storage. An optional cap removes old versions from the least-opened documents first; **Keep forever** protects that document’s history from cleanup while a version is marked.
 - **Compare revisions** — PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
 - **Return to the previous tab** — <kbd>Cmd+D</kbd> toggles between the last two documents, reopening a closed tab with its reading position.
+
+<table align="center"><tr>
+<td width="50%" valign="top"><img src="docs/images/portable/macos-history.webp" alt="Current reader with the History sidebar and latest-version marker" width="100%"><br><sub>Versions stay in the reader's History panel.</sub></td>
+<td width="50%" valign="top"><img src="docs/images/portable/macos-collection-settings.webp" alt="Collection settings with local storage location, Unlimited by default and Apply directly below the storage limit" width="100%"><br><sub>Local storage, with an optional cap.</sub></td>
+</tr></table>
 
 ## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
 
 <p align="center"><img src="docs/images/portable/macos-markdown.webp" alt="A Markdown document rendered as an A4 sheet: heading, flowchart drawn natively, a table with header band and grid, nested chapters in the side panel, page thumbnails in the map" width="880"></p>
 
 <table align="center"><tr>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-markdown-code.webp" alt="LaTeX math typeset inline and a C code block with a Copy button and a language pill" width="100%"></td>
+<td width="50%" valign="top"><img src="docs/images/portable/macos-markdown-code.webp" alt="Native math and a highlighted Python code block with Copy and language controls" width="100%"></td>
 <td width="50%" valign="top"><img src="docs/images/portable/macos-markdown-gantt.webp" alt="A mermaid gantt chart drawn as vector art, taking the width of the page" width="100%"></td>
 </tr></table>
 
@@ -56,16 +62,16 @@ ShenzhenPDF opens PDFs (and more) instantly, keeps documents in tidy tabs, and d
 - **Real sheets, same reader** — GitHub-flavored typography, paginated onto numbered A4 sheets ("Page 2 of 10" in every footer); same tabs, chapters, map, search, zoom and export as a PDF. Rotate turns the paper landscape, and each file reopens on the sheet you last read it on.
 - **Text and source files** — open plain text and the languages supported by the code highlighter, including HTML as source. A− / A+ beside zoom reflows text, with the same search, export and Collection history.
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
-- **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine, no JavaScript, no network.
+- **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine or executable JavaScript. Remote HTTPS images load lazily when their document is active.
 
 For AI integrations, see the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md): CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
 
 ## <a id="search"></a>Search-oriented architecture
 
-<p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="A search across a Markdown document: matches highlighted in the page, listed in the side panel grouped under their chapter headings, with a current / total counter in the toolbar" width="880"></p>
+<p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="PDF search with highlighted passages, chapter-grouped context, a match counter and document-map markers" width="880"></p>
 
 <table align="center"><tr>
-<td width="36%" valign="top"><img src="docs/images/portable/macos-chapters.webp" alt="The Chapters panel: nested headings with disclosure arrows, a filter field, and the expand / collapse all button at its end" width="100%"></td>
+<td width="36%" valign="top"><img src="docs/images/portable/macos-chapters.webp" alt="Current Chapters sidebar with direct tool icons, full filename, nested headings and filtering" width="100%"></td>
 <td width="64%" valign="top">
 
 - **Type anywhere to search** — a live "current / total" counter, every hit highlighted in the page and marked in the map and on the scrollbar. <sub>macOS · Linux</sub>
@@ -77,7 +83,7 @@ For AI integrations, see the separate [AI control and Markdown authoring guide](
 
 ## <a id="dark"></a>Dark reading theme, for every document
 
-<p align="center"><img src="docs/images/portable/macos-dark-theme.webp" alt="The same Markdown page in the light and the dark reading theme side by side: dark paper, the gantt chart's orange and blue bars keep their hues" width="880"></p>
+<p align="center"><img src="docs/images/portable/macos-dark-theme.webp" alt="The same native Markdown code and Gantt chart in light and dark reading themes" width="880"></p>
 
 - **One toggle** (<kbd>Cmd+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto soft #1E1E1E paper rather than pure black.
 - **A remap, not an inversion** — rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue link stays blue. *Keep Image Colors* leaves photographs untouched, per document, on by default.
@@ -85,22 +91,21 @@ For AI integrations, see the separate [AI control and Markdown authoring guide](
 
 ## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
 
-<p align="center"><img src="docs/images/portable/macos-translate.webp" alt="A paper translated whole from English to Chinese, offline: the translated PDF opened as a second tab next to the original, with the translation overlaid line by line" width="880"></p>
-
-- **Offline translation (Argos Translate)** — a selection into a panel, or a whole document into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. Works on PDFs and Markdown. ~19 languages incl. Chinese; text never leaves your machine.
-- **Local OCR for scanned PDFs** — OCRmyPDF + Tesseract on your own machine; Simplified/Traditional Chinese, English and ~20 more, language data fetched on demand.
+- **Offline translation (Argos Translate)** — a selection into a panel, or a whole document into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. Works on PDFs, Markdown and supported text/source formats. ~19 languages incl. Chinese; text never leaves your machine.
+- **Local OCR for scanned PDFs and images** — images become searchable PDFs; OCRmyPDF + Tesseract on your own machine; Simplified/Traditional Chinese, English and ~20 more, language data fetched on demand.
 - **One-click toolchain install** — a missing tool or language pack is installed for you (Homebrew; apt/dnf/pacman/zypper) and the job resumes.
 
 ## <a id="fast"></a>Fast by design
 
 - **Snappy native rendering** — the visible page first at high priority, neighbours and inactive tabs warmed quietly behind it; cached display lists and crop-to-viewport rendering keep repeats cheap. <sub>macOS · Linux</sub>
 - **MuPDF-backed C core** — a compact ~93 KB core wrapping statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends.
-- **Far more than PDF** — XPS, CBZ, EPUB/MOBI, FB2, HTML and images through MuPDF; Markdown through the native paginated renderer.
+- **Far more than PDF** — open PDF, XPS, comics, e-books and supported images, including drag and drop. Markdown, plain text and supported code use the native paginated renderer; HTML opens as source.
 
 ## Files, printing & updates
 
 - **Verified daily auto-updater** — checked once a day off the launch path; every update verified offline against a pinned Developer ID (Team 66LJ4BV7Q3), hardened runtime and stapled notarization before an atomic swap with rollback.
 - **Shenzhen Files as your file manager** <sub>macOS</sub> — install it and *Show in Folder* reveals there; *Settings ▸ File Manager* switches back to Finder. Picking a file always uses the native panel.
+- **File properties** — available from the File menu for every document, with image dimensions, color space and format details where available.
 - **Native printing** with Fit / Actual Size / Custom scaling; **one-click default reader**; **human-readable YAML state** you can read, diff and edit.
 
 ## Platform support
@@ -224,10 +229,6 @@ ShenzhenPDF.exe --portable     :: state in ShenzhenPDF-data beside the exe
 If you write a script that launches a real window, pass `--state-dir` or set
 `SPDF_WIN_SETUP_NO_PROMPT=1`: the first-run question is a modal dialog and
 appears before the window.
-
-A separate legacy Win32 C++ tree, independent of the portable core, still
-builds with `bun ./cmd/build.ts` into `./out/dbg64/SumatraPDF.exe`. It is not
-rebranded and is not the app described above.
 
 </details>
 
