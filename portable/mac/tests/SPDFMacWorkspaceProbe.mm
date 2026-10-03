@@ -1,4 +1,5 @@
 #import "SPDFMacSidebarHitProbe.h"
+#import "SPDFMacReadmeFixtures.h"
 // Offscreen integration fixture: actual reader window, controls, constraints,
 // PDF canvas and minimap. This does not call the application's entry point or
 // launch delegate. It never reads the user's configuration or opens a window.
@@ -121,7 +122,7 @@ static void CheckIconReadability(NSControl* control) {
         PDFPage* original=[PDF pageAtIndex:i]; NSRect bounds=[original boundsForBox:kPDFDisplayBoxMediaBox];
         SPDFRenderedPage* page=[SPDFRenderedPage new]; page.pageIndex=i;
         page.pageWidth=NSWidth(bounds); page.pageHeight=NSHeight(bounds);
-        page.image=[original thumbnailOfSize:bounds.size forBox:kPDFDisplayBoxMediaBox];
+        page.image=[original thumbnailOfSize:NSMakeSize(bounds.size.width*3,bounds.size.height*3) forBox:kPDFDisplayBoxMediaBox];
         page.imagePointWidth=NSWidth(bounds); page.imagePointHeight=NSHeight(bounds);
         page.imageZoom=1; page.imageScale=1; page.minimapImage=page.image;
         [_renderedPages addObject:page];
@@ -136,7 +137,8 @@ static void CheckIconReadability(NSControl* control) {
     [self installMarkdownHostInDocumentContainer];
     id state=[self valueForKey:@"markdownState"];
     NSView* host=[state valueForKey:@"hostView"]; host.hidden=NO; _pageScrollView.hidden=YES;
-    SPDFMacMarkdownSession* session=[[SPDFMacMarkdownSession alloc] initWithDocumentURL:URL];
+    SPDFMacMarkdownSession* session=[[SPDFMacMarkdownSession alloc] initWithDocumentURL:URL fontScale:1 themeVariant:
+        [_window.appearance.name isEqual:NSAppearanceNameDarkAqua] ? SPDFMarkdownThemeVariantDark : SPDFMarkdownThemeVariantLight];
     [state setValue:session forKey:@"activeSession"];
     __block BOOL done=NO, ready=NO;
     [session activateInHostView:host workQueue:dispatch_queue_create("workspace-probe.markdown",DISPATCH_QUEUE_SERIAL)
@@ -257,12 +259,17 @@ static void CheckIconReadability(NSControl* control) {
         // Real resize invalidates cached map images. The probe has no render
         // service, so refill these fixtures from the same PDF before capture.
         PDFPage* original=[self.fixturePDF pageAtIndex:page.pageIndex];
-        page.image=[original thumbnailOfSize:[original boundsForBox:kPDFDisplayBoxMediaBox].size forBox:kPDFDisplayBoxMediaBox];
+        page.image=[original thumbnailOfSize:NSMakeSize(page.pageWidth*3,page.pageHeight*3) forBox:kPDFDisplayBoxMediaBox];
         page.imagePointWidth=page.pageWidth; page.imagePointHeight=page.pageHeight; page.imageZoom=1; page.imageScale=1;
         page.minimapImage=[[self.fixturePDF pageAtIndex:page.pageIndex]
             thumbnailOfSize:NSMakeSize(140,198) forBox:kPDFDisplayBoxMediaBox];
         page.minimapImageZoom=140/page.pageWidth; page.minimapImageScale=1;
         [_minimapView noteThumbnailLoadedForPageIndex:page.pageIndex];
+    }
+    if ([self isMarkdownActive]) {
+        _fitMode=SPDFFitModePage; _tabs[(NSUInteger)_selectedTabIndex].fitMode=SPDFFitModePage;
+        [self.activeMarkdownSession applyFitMode:SPDFMacMarkdownPageFitPage];
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]]; [self updateControls];
     }
     [self syncSidebarTableColumnWidth];
     _pageView.needsDisplay=YES;
@@ -407,22 +414,7 @@ static void CheckNavigationShortcuts(WorkspaceReaderProbe* reader) {
 }
 static NSURL* Fixture(NSString* root) {
     NSURL* URL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Interface specification.pdf"]];
-    NSMutableData* data=[NSMutableData data];
-    CGRect paper=CGRectMake(0,0,595,842);
-    CGDataConsumerRef consumer=CGDataConsumerCreateWithCFData((__bridge CFMutableDataRef)data);
-    CGContextRef context=CGPDFContextCreate(consumer,&paper,NULL); CGDataConsumerRelease(consumer);
-    for (NSUInteger page=0;page<3;page++) {
-        CGPDFContextBeginPage(context,NULL);
-        NSGraphicsContext* saved=NSGraphicsContext.currentContext;
-        NSGraphicsContext.currentContext=[NSGraphicsContext graphicsContextWithCGContext:context flipped:NO];
-        [NSColor.whiteColor setFill]; NSRectFill(NSRectFromCGRect(paper));
-        [[NSString stringWithFormat:@"%lu. Interface specification",page+1] drawAtPoint:NSMakePoint(48,750)
-            withAttributes:@{NSFontAttributeName:[NSFont boldSystemFontOfSize:24],NSForegroundColorAttributeName:NSColor.blackColor}];
-        [@"A focused workspace for reading and organizing documents.\n\nAll controls remain native, and reading positions are preserved.\nThe map continues to show the real document and viewport."
-            drawInRect:NSMakeRect(48,560,499,150) withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:14],NSForegroundColorAttributeName:NSColor.darkGrayColor}];
-        NSGraphicsContext.currentContext=saved; CGPDFContextEndPage(context);
-    }
-    CGPDFContextClose(context); CGContextRelease(context);
+    NSData* data=SPDFReadmePDFData();
     PDFDocument* PDF=[[PDFDocument alloc] initWithData:data]; PDFOutline* outline=[PDFOutline new];
     for (NSUInteger i=0;i<3;i++) { PDFOutline* entry=[PDFOutline new];
         entry.label=@[@"Overview",@"Reading workspace",@"Technical decisions"][i];
@@ -441,8 +433,7 @@ int main(int argc,const char* argv[]) {
         if (output.length) [NSFileManager.defaultManager createDirectoryAtPath:output withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL* URL=Fixture(root);
         NSURL* markdownURL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Project notes.md"]];
-        [@"# Project notes\n\nThe same compact chrome surrounds Markdown.\n\n## Reading workspace\n\nA native document map, visible tools and a single sidebar.\n\n## Interaction\n\nSelect a document to read; collapse a group without changing the document."
-            writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [SPDFReadmeMarkdown() writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader);
@@ -476,6 +467,9 @@ int main(int argc,const char* argv[]) {
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil
                     width:width.doubleValue sidebar:YES map:YES];
             }
+            [reader.activeMarkdownSession goToPageAtIndex:1];
+            [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-code.png" : @"reader-light-code.png"] : nil
+                width:1280 sidebar:YES map:YES];
         }
         NSURL* textURL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Plain text.txt"]];
         [@"# This remains plain text, not a heading.\n\nText size applies to plain text too."

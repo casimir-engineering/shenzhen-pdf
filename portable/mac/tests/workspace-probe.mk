@@ -14,3 +14,13 @@ $(MAC_WORKSPACE_PROBE): $(MAC_WORKSPACE_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(M
 	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(MAC_WORKSPACE_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -Wl,-x -o "$@"
 mac-workspace-probe: $(MAC_WORKSPACE_PROBE)
 	"$(MAC_WORKSPACE_PROBE)" "$(WORKSPACE_EVIDENCE_DIR)"
+
+# Public README fixtures reuse the production objects from the workspace probe.
+MAC_README_PROBE := $(BUILD)/SPDFMacReadmeProbe
+MAC_README_PROBE_OBJS := $(filter-out $(BUILD)/workspace-probe/mac/tests/SPDFMacWorkspaceProbe.o,$(MAC_WORKSPACE_PROBE_OBJS)) $(BUILD)/workspace-probe/mac/tests/SPDFMacReadmeProbe.o
+-include $(MAC_README_PROBE_OBJS:.o=.d)
+$(MAC_README_PROBE): $(MAC_README_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) mupdf-libs
+	clang++ $(PORTABLE_TEST_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(MAC_README_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -Wl,-x -o "$@"
+.PHONY: mac-readme-probe
+mac-readme-probe: $(MAC_README_PROBE)
+	"$(MAC_README_PROBE)" "$(WORKSPACE_EVIDENCE_DIR)"

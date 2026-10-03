@@ -188,3 +188,19 @@ explicitly and add no service to normal reader startup.
   semantics.
 - Treat macOS-only polish as macOS-only in docs until the GTK frontend has the
   same behavior implemented and validated.
+
+### Refresh the public README images
+
+The image fixtures use actual native reader and Collection components with fictional
+content and isolated temporary state. They never launch the installed app or capture
+the screen. Build and render them, then crop/encode the images with Pillow:
+
+```sh
+make -C portable -f Makefile -f mac/tests/workspace-probe.mk \
+  mac-workspace-probe mac-readme-probe WORKSPACE_EVIDENCE_DIR=/tmp/sz-readme-evidence
+python3 portable/mac/tests/refresh-readme-images.py /tmp/sz-readme-evidence
+```
+
+Check both commands' exit status and review the images before committing. Screenshot
+fixtures and crop recipes live under `portable/mac/tests/`; changing them does not
+change the reader's runtime behavior.
