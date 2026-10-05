@@ -63,9 +63,14 @@ int main(int argc, const char* argv[]) {
             Check(ink,[@"page contains visible content: " stringByAppendingString:filename]);
             if (spdf_recolor_path_is_picture(path.UTF8String)) {
                 spdf_bitmap dark={};
-                Check(spdf_render_page_rgba_opts(doc,0,.5,SPDF_RENDER_DARK_THEME,NULL,&dark,error,sizeof(error)),@"dark picture render");
+                Check(spdf_render_page_rgba_opts(doc,0,.5,SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES,NULL,&dark,error,sizeof(error)),@"dark picture render");
                 Check(dark.width==pixels.width && dark.height==pixels.height && dark.stride==pixels.stride &&
                     !memcmp(dark.rgba,pixels.rgba,pixels.stride*pixels.height),@"dark theme preserves picture pixels");
+                spdf_free_bitmap(&dark);
+                Check(spdf_render_page_rgba_opts(doc,0,.5,SPDF_RENDER_DARK_THEME,NULL,&dark,error,sizeof(error)),
+                    @"dark picture render with Keep Image Colors disabled");
+                Check(dark.width==pixels.width && dark.height==pixels.height && dark.stride==pixels.stride &&
+                    memcmp(dark.rgba,pixels.rgba,pixels.stride*pixels.height),@"disabled preservation recolors picture pixels");
                 spdf_free_bitmap(&dark);
             }
             if ([@[@"png",@"jpg",@"tiff",@"bmp",@"gif",@"jp2"] containsObject:path.pathExtension]) {
