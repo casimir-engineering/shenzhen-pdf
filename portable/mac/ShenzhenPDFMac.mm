@@ -10148,7 +10148,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _pendingFindPreferredMatchIndex = -1;
     _findSearchInProgress = YES;
     [self updateFindControls];
-    [self showSearchSidebarForFind];
+    if (resetSavedIndex || revealMatch) [self showSearchSidebarForFind];
     _statusLabel.stringValue = [NSString stringWithFormat:@"Searching for \"%@\"...", query];
     [_findQueue addOperationWithBlock:^{
       @autoreleasepool {

@@ -1,6 +1,5 @@
 #import "SPDFMacSidebarHitProbe.h"
 #import "SPDFMacReadmeFixtures.h"
-// Offscreen integration fixture: actual reader window, controls, constraints,
 // PDF canvas and minimap; no app launch, user configuration or visible window.
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -432,6 +431,7 @@ static NSURL* Fixture(NSString* root) {
     PDF.outlineRoot=outline; Check([PDF writeToURL:URL],@"PDF fixture written"); return URL;
 }
 #import "SPDFMacImageColorChoiceChecks.h"
+#import "SPDFMacRestoredFindPanelChecks.h"
 int main(int argc,const char* argv[]) {
     setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
@@ -448,7 +448,7 @@ int main(int argc,const char* argv[]) {
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
-            CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader);
+            CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader); CheckRestoredFindPanel(reader);
             [reader checkResponsivePanels]; [reader checkRepeatedMapClicks]; [reader checkBatchChanges];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
@@ -474,7 +474,7 @@ int main(int argc,const char* argv[]) {
                 width:1280 sidebar:NO map:NO];
             [reader setProbePresentation:NO];
             [reader prepareMarkdown:markdownURL];
-            [reader checkTextSizeActions];
+            [reader checkTextSizeActions]; CheckRestoredFindPanel(reader);
             for (NSNumber* width in @[@1280,@880,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-markdown-%@.png",dark.boolValue ? @"dark" : @"light",width];
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil

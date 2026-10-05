@@ -117,7 +117,7 @@
     [self startMarkdownFindForQuery:query
                      preferredIndex:resetSavedIndex ? -1 : tab.findMatchIndex
                              reveal:revealMatch];
-    [self showSearchSidebarForFind];
+    if (resetSavedIndex || revealMatch) [self showSearchSidebarForFind];
 }
 
 - (void)startMarkdownFindForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex reveal:(BOOL)reveal {
