@@ -20,11 +20,30 @@
     [super keyDown:event];
 }
 @end
-NSImage* SPDFGroupDocumentIcon(NSString* path) {
-    // File-type icons need no access to the document and include installed type associations.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    NSImage* icon=[NSWorkspace.sharedWorkspace iconForFileType:path.pathExtension];
-#pragma clang diagnostic pop
-    return icon ?: [NSImage imageWithSystemSymbolName:@"doc" accessibilityDescription:nil];
+@interface SPDFGroupExtensionBadge : NSView
+@property(nonatomic,copy) NSString* text;
+@end
+@implementation SPDFGroupExtensionBadge
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    [[NSColor.labelColor colorWithAlphaComponent:.055] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:4 yRadius:4] fill];
+    NSDictionary* attributes=@{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName:NSColor.labelColor};
+    NSSize size=[self.text sizeWithAttributes:attributes];
+    [self.text drawAtPoint:NSMakePoint(floor((NSWidth(self.bounds)-size.width)/2),floor((NSHeight(self.bounds)-size.height)/2))
+        withAttributes:attributes];
+}
+@end
+NSView* SPDFGroupDocumentBadge(NSString* path) {
+    SPDFGroupExtensionBadge* badge=[SPDFGroupExtensionBadge new];
+    NSString* extension=path.pathExtension.lowercaseString;
+    badge.text=extension.length ? [@"." stringByAppendingString:extension] : @"file";
+    badge.accessibilityElement=YES; badge.accessibilityRole=NSAccessibilityStaticTextRole;
+    badge.accessibilityLabel=[NSString stringWithFormat:@"File type: %@",badge.text];
+    badge.toolTip=badge.text;
+    CGFloat width=MAX(36,ceil([badge.text sizeWithAttributes:@{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightMedium]}].width)+10);
+    [badge.widthAnchor constraintEqualToConstant:width].active=YES;
+    [badge.heightAnchor constraintEqualToConstant:18].active=YES;
+    return badge;
 }

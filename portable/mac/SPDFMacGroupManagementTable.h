@@ -3,4 +3,4 @@
 @interface SPDFGroupManagementTable : NSTableView
 @property(nonatomic) BOOL draggedDuringPress;
 @end
-NSImage* SPDFGroupDocumentIcon(NSString* path);
+NSView* SPDFGroupDocumentBadge(NSString* path);
