@@ -73,7 +73,7 @@
 @end
 
 static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
-    button.image=[NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:nil];
+    button.image=[NSImage imageWithSystemSymbolName:group.hidden ? @"eye.slash" : @"eye" accessibilityDescription:nil];
     [button.image setTemplate:YES];
     button.contentTintColor=group.hidden ? NSColor.secondaryLabelColor : NSColor.labelColor;
     button.toolTip=group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
