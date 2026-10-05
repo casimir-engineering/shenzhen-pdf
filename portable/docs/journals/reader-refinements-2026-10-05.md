@@ -220,3 +220,9 @@ A supplied OCR photo PDF reproduced the report in the production C renderer: dar
 Removed that exception. Full-page images now honor the explicit preservation flag like embedded figures and standalone pictures. On the supplied PDF, the preserved dark render now exactly matches the normal render, while the recolored dark render remains different. The source document was read only; private PDF/renders are not checked into this journal.
 
 Regression coverage includes a synthetic full-page image with invisible OCR text. It verifies exact pixel preservation when enabled and recoloring when disabled, alongside the existing embedded-image and standalone-picture suites. Both core recolor and production render-theme suites pass. No new launch or analysis work is introduced; the existing lazy image-region cache is retained.
+
+### Saved searches no longer replace Group Management
+
+The delayed PDF tab-restore stage called `startFindForCurrentQueryResetSavedIndex:NO revealMatch:NO`, which correctly avoided moving the viewport but still unconditionally opened the Search panel. That could override Group Management after document activation had already restored it. Search restoration now refreshes results without requesting a panel change. Explicit searches (resetting the query or revealing a match) retain their normal Search-panel behavior. Applied the same rule to the corresponding Markdown/text entry point.
+
+The native reader regression probe starts a saved query while Groups is selected, waits for actual search results, and checks that Groups remains selected both immediately and after completion. It also verifies that an explicit search still opens Search, for PDF and Markdown fixtures. No user document or saved query is altered by this fix.
