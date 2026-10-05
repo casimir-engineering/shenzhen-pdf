@@ -79,3 +79,16 @@ Validation:
 - Core theme and recolor tests pass, including enabled/disabled preservation, cropped renders, generic-suffix copies, lazy classification, unchanged scanned PDFs and unchanged print output. The previous core fails five new color/classification assertions.
 - Reading-theme chrome, window chrome, page wheel, launch-work policy and all 32 updater tests pass. Source-size and whitespace checks pass. Existing oversized files shrank through extraction; no cap was raised.
 - Rebuilt and signature-verified `dist/ShenzhenPDF.app` with its Collection helper. No running user app was restarted and no release was published.
+
+
+## Follow-up: history deletion and deduplication
+
+Collection already stores document/asset bytes by SHA-256: identical content shares one object, including across separate document histories. Consecutive identical captures are suppressed. A → B → A can retain three chronological events while storing only two content objects; Markdown asset changes can also require a new event despite an unchanged source hash. This behavior is retained.
+
+Older History rows now offer **Delete version…** on right-click. The latest row linked to an available original offers **Delete all previous backups…** instead. The latter preserves the latest saved snapshot, document/source identity and original file; it removes older snapshots, including manually kept versions, after an explicit confirmation. A missing original's latest backup remains individually deletable. The Collection bulk action uses the same previous-backups wording and scope.
+
+Deletion snapshots the chosen version/document before confirmation, so changing selection cannot change the target. Previous-backup cleanup chooses the latest version atomically under the manifest lock, protecting a new capture made while the confirmation is open. Existing garbage collection removes only unreferenced objects, indexes and preview files. No work is added to construction or launch.
+
+The headless UI suite verifies native menu labels and targets, cancel behavior, deferred mutation, and selection changes during confirmation. Compiling the current tests against the prior History controller fails the new context-action assertions. An isolated store fixture verifies A → B → A deduplication, kept-history pruning, latest/source preservation, persistence after reopening, individual deletion, missing originals and shared-object survival/reclamation. Its initial rewrite fixture was corrected to pass the same explicit document-continuity identity used by real edit/external-change captures; a replacement file intentionally starts a separate history.
+
+Collection store, integrity and cleanup tests and the full Markdown/UI integration suite pass. The app and Collection helper are rebuilt in `dist`; the user's running app is untouched. No release is published by this change.

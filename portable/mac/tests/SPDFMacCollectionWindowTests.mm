@@ -109,7 +109,7 @@ int main(void) {
             [manager.limitPicker selectItemAtIndex:0]; [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
             NSMenu* actions = [NSMenu new]; [manager populateDocumentMenu:actions];
             Expect(@"unlimited Collection exposes document commands without retention or capture toggles",actions.numberOfItems == 8 &&
-                [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Delete Selected Copies…"]);
+                [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Delete all previous backups…"]);
             NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_WINDOW_EVIDENCE"];
             if (evidence.length) {
                 NSBitmapImageRep* bitmap = [manager.window.contentView bitmapImageRepForCachingDisplayInRect:manager.window.contentView.bounds];

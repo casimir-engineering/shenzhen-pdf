@@ -18,3 +18,5 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 - Fixed first-press fitting in **Fit Height** and **Fit Width** too: scrollbar changes no longer clip the image bottom or change the fit on the next press.
 - Standalone images retain their colors in dark mode while **Keep Image Colors in Dark Theme** is enabled; turning it off applies the dark theme. This also works for image copies with a generic filename extension.
+
+- Right-click a saved History version to **Delete version…**. On the linked original, **Delete all previous backups…** removes older snapshots while retaining the original and latest saved copy. Collection’s former “Delete Selected Copies” action now uses that name and scope.

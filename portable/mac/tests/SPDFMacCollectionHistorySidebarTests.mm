@@ -64,12 +64,21 @@ static NSView* Identified(NSView* view, NSString* identifier) {
 @property BOOL empty;
 @property BOOL kept;
 @property unsigned long long storageLimit;
+@property NSString* deletedVersion;
+@property NSString* clearedDocument;
 @end
 @implementation HistoryFixtureStore
 - (NSDictionary*)settings { return @{@"storageLimitBytes":@(self.storageLimit)}; }
 - (NSArray*)documents {
     return @[@{@"id":@"fixture",@"title":@"Garden notes.md",@"status":@"Protected local copies",@"path":self.fixturePath ?: @"/missing/Notes.md",@"versions":(self.empty ? @[] : @[
         @{@"id":@"old",@"capturedAt":@1780358400,@"size":@1240,@"reason":@"Before edit"},@{@"id":@"new",@"keep":@(self.kept),@"capturedAt":@1790121600,@"size":@1510,@"reason":@"Saved"}])}];
+}
+- (BOOL)deleteDocumentID:(NSString*)documentID versionID:(NSString*)versionID error:(NSError**)error {
+    (void)documentID; (void)error;
+    dispatch_async(dispatch_get_main_queue(), ^{ self.deletedVersion=versionID; }); return YES;
+}
+- (BOOL)deletePreviousBackupsForDocumentID:(NSString*)documentID error:(NSError**)error {
+    (void)error; dispatch_async(dispatch_get_main_queue(), ^{ self.clearedDocument=documentID; }); return YES;
 }
 - (NSURL*)materializeVersionID:(NSString*)version documentID:(NSString*)document error:(NSError**)error {
     (void)document; (void)error;
@@ -87,8 +96,14 @@ static NSView* Identified(NSView* view, NSString* identifier) {
 @property NSString* revealedPath;
 @property NSString* savedVersion;
 @property BOOL restoresLink;
+@property(copy) void (^pendingDeletion)(BOOL);
+@property NSString* deletionVersion;
+@property BOOL deletionPrevious;
 @end
 @implementation HistoryProbe
+- (void)confirmDeletionOfVersion:(NSDictionary*)version previousBackups:(BOOL)previous completion:(void (^)(BOOL))completion {
+    self.deletionVersion=version[@"id"]; self.deletionPrevious=previous; self.pendingDeletion=completion;
+}
 - (void)revealPath:(NSString*)path { self.revealedPath = path; }
 - (void)saveVersion:(NSDictionary*)version restoreLink:(BOOL)restore { self.savedVersion = version[@"id"]; self.restoresLink = restore; }
 @end
@@ -195,6 +210,10 @@ int main(void) {
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
         Expect(Await(^BOOL { return opens == 1; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"new.md"],
             "missing latest opens saved version without a prompt");
+        [history menuNeedsUpdate:table.menu];
+        Expect([table.menu itemWithTitle:@"Delete version…"].enabled &&
+            ![table.menu itemWithTitle:@"Delete all previous backups…"],
+            "missing original's latest saved copy remains a deletable backup");
         [NSFileManager.defaultManager createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil];
         store.fixturePath = [root.path stringByAppendingPathComponent:@"Original.md"];
         [@"live edit" writeToFile:store.fixturePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -298,6 +317,35 @@ int main(void) {
         store.storageLimit = 0;
         [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:store];
         Expect(Await(^BOOL { return keep.hidden; }) && store.kept,"unlimited storage hides retention without clearing existing marks");
+        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
+        [history menuNeedsUpdate:table.menu];
+        NSMenuItem* remove=[table.menu itemWithTitle:@"Delete version…"];
+        Expect(remove.enabled && [remove.representedObject[@"version"][@"id"] isEqual:@"old"],
+            "older version has scoped deletion in its context menu");
+        if(remove) {
+            [NSApp sendAction:remove.action to:remove.target from:remove];
+            Expect([history.deletionVersion isEqual:@"old"] && !history.deletionPrevious && !store.deletedVersion,
+                "deletion requests confirmation before touching stored copies");
+            history.pendingDeletion(NO);
+            Expect(!store.deletedVersion,"cancelling deletion preserves stored copies");
+            [NSApp sendAction:remove.action to:remove.target from:remove];
+            [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            history.pendingDeletion(YES);
+            Expect(Await(^BOOL { return [store.deletedVersion isEqual:@"old"]; }),
+                "selection changes during confirmation cannot retarget deletion");
+            Expect(Await(^BOOL { return ![[history valueForKey:@"deletionPending"] boolValue]; }),"version deletion completes");
+        }
+        [history menuNeedsUpdate:table.menu];
+        NSMenuItem* clear=[table.menu itemWithTitle:@"Delete all previous backups…"];
+        Expect(clear.enabled && ![table.menu itemWithTitle:@"Delete version…"],
+            "linked original offers previous-backup cleanup instead of deleting itself");
+        if(clear) {
+            [NSApp sendAction:clear.action to:clear.target from:clear];
+            Expect(history.deletionPrevious,"original context action has previous-backups scope");
+            history.pendingDeletion(YES);
+            Expect(Await(^BOOL { return [store.clearedDocument isEqual:@"fixture"]; }),"original clears only its document's previous backups");
+            Expect(Await(^BOOL { return ![[history valueForKey:@"deletionPending"] boolValue]; }),"previous-backup deletion completes");
+        }
         store.empty = YES; [history reload];
         Expect(Await(^BOOL { return table.numberOfRows == 0; }),"empty History reloads without opening a document");
         Expect(!Button(history.view,@"Compare with Latest").enabled &&

@@ -20,6 +20,7 @@ static NSDictionary* Capture(SPDFMacCollectionStore* store,NSString* path,NSStri
     Expect([NSString stringWithFormat:@"capture %@: %@",path,error ?: @""],row!=nil); return row;
 }
 #include "SPDFMacCollectionRelinkChecks.h"
+#include "SPDFMacCollectionHistoryDeletionChecks.h"
 
 int main(int argc,const char* argv[]) {
     @autoreleasepool {
@@ -28,6 +29,7 @@ int main(int argc,const char* argv[]) {
             return [s capturePath:@(argv[3]) reason:@"Other window" error:nil] ? 0 : 1;
         }
         CheckAutomaticRelink();
+        CheckHistoryDeletion();
         NSString* sandbox=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [NSFileManager.defaultManager createDirectoryAtPath:sandbox withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL* root=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"Collection"]];
