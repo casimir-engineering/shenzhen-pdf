@@ -121,3 +121,7 @@ BOOL spdf_window_event_needs_key_handshake(NSWindow* window, NSEvent* event);
 // or a click inside a segmented pill's frame padding off the visible bezel).
 SPDFWindowChromeAction spdf_window_chrome_action_for_event(NSWindow* window, NSEvent* event, BOOL fullScreen,
                                                            BOOL presentation);
+
+// Treat button presses independently of a preceding titlebar drag/double click.
+NSEvent* spdf_window_button_press_event(NSWindow* window, NSEvent* event);
+BOOL spdf_window_route_button_press(NSWindow* window, NSEvent* event);

@@ -45,6 +45,11 @@ static char chromeKey;
 @interface SPDFWorkspaceIconCell : NSButtonCell
 @end
 @implementation SPDFWorkspaceIconCell
+- (NSCellHitResult)hitTestForEvent:(NSEvent*)event inRect:(NSRect)frame ofView:(NSView*)view {
+    (void)frame;
+    return self.enabled && NSPointInRect([view convertPoint:event.locationInWindow fromView:nil],view.bounds)
+        ? NSCellHitContentArea | NSCellHitTrackableArea : NSCellHitNone;
+}
 - (void)drawWithFrame:(NSRect)frame inView:(NSView*)view {
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(frame,1,1) xRadius:6 yRadius:6];
     if (self.highlighted) { [SPDFCollectionColor(@"selected") setFill]; [shape fill]; }
@@ -64,14 +69,41 @@ static void StyleIcon(NSButton* button) {
     cell.title = title; cell.bordered = NO; cell.imagePosition = NSImageOnly;
     button.cell = cell; button.target = target; button.action = action; button.enabled = enabled;
 }
+@interface SPDFWorkspaceIconButton : NSButton
+@end
+@implementation SPDFWorkspaceIconButton
+- (NSEdgeInsets)alignmentRectInsets { return NSEdgeInsetsMake(0,0,0,0); }
+- (NSView*)hitTest:(NSPoint)point {
+    return !self.hidden && NSPointInRect([self convertPoint:point fromView:self.superview],self.bounds) ? self : nil;
+}
+- (void)mouseDown:(NSEvent*)event {
+    if(!self.enabled) return;
+    [self highlight:YES];
+    for(;;) {
+        NSEvent* next=[self.window nextEventMatchingMask:NSEventMaskLeftMouseDragged|NSEventMaskLeftMouseUp
+            untilDate:NSDate.distantFuture inMode:NSEventTrackingRunLoopMode dequeue:YES];
+        if(!next) break;
+        BOOL inside=NSPointInRect([self convertPoint:next.locationInWindow fromView:nil],self.bounds);
+        [self highlight:inside];
+        if(next.type==NSEventTypeLeftMouseUp) {
+            [self highlight:NO];
+            if(inside) [self sendAction:self.action to:self.target];
+            break;
+        }
+    }
+    [self highlight:NO];
+}
+- (BOOL)acceptsFirstMouse:(NSEvent*)event { (void)event; return YES; }
+- (BOOL)mouseDownCanMoveWindow { return NO; }
+@end
 static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) {
     NSImage* image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
     [image setTemplate:YES];
-    NSButton* button = [NSButton buttonWithImage:image target:target action:action];
+    NSButton* button = [SPDFWorkspaceIconButton buttonWithImage:image target:target action:action];
     StyleIcon(button); button.bordered = NO; button.toolTip = title; button.accessibilityLabel = title;
     button.translatesAutoresizingMaskIntoConstraints = NO;
-    [button.widthAnchor constraintEqualToConstant:28].active = YES;
-    [button.heightAnchor constraintEqualToConstant:28].active = YES;
+    [button.widthAnchor constraintEqualToConstant:24].active = YES;
+    [button.heightAnchor constraintEqualToConstant:24].active = YES;
     return button;
 }
 @interface ShenzhenMacDelegate (WorkspaceActions)
@@ -158,6 +190,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         row.spacing = 4; row.translatesAutoresizingMaskIntoConstraints = NO;
 
     }
+    [state.primaryRow setCustomSpacing:8 afterView:state.next];
     [state.primaryRow setCustomSpacing:12 afterView:_zoomSegments];
     state.headerRow = [NSStackView stackViewWithViews:@[state.primaryRow,state.toolsRow]];
     state.headerRow.spacing = 4; state.headerRow.alignment = NSLayoutAttributeCenterY;
