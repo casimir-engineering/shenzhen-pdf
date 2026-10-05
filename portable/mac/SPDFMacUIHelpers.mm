@@ -3,11 +3,9 @@
 #import "SPDFMacSupport.h"
 #import "SPDFMacInactiveZoom.h"
 #import "SPDFMacWindowChrome.h"
-
 static CGFloat spdf_ui_clamp_cg(CGFloat value, CGFloat minValue, CGFloat maxValue) {
     return MAX(minValue, MIN(maxValue, value));
 }
-
 void spdf_activate_window_for_view(NSView* view) {
     NSWindow* window = view.window;
     if (!window) return;
@@ -286,12 +284,14 @@ void spdf_activate_window_for_view(NSView* view) {
 }
 
 - (void)sendEvent:(NSEvent*)event {
+    event = spdf_window_button_press_event(self,event);
     if (spdf_page_wheel_handle_window_scroll(self, event)) return;  // Option + wheel pages, wherever the pointer is
     spdf_window_activate_for_click_event(self, event);  // any click in the window focuses it, before any handler
     // Let AppKit establish key status before consuming the first tab-strip click.
     BOOL keyHandshake = spdf_window_event_needs_key_handshake(self, event);
     if (keyHandshake) [super sendEvent:event];
     if (self.reader && [self.reader handleTabStripMouseEvent:event]) return;
+    if (!keyHandshake && spdf_window_route_button_press(self,event)) return;
     if (self.reader && [self.reader handlePresentationEvent:event]) return;
     if (self.reader && [self.reader handleWindowArrangementShortcutEvent:event]) return;
     if (event.type == NSEventTypeKeyDown && (event.keyCode == 36 || event.keyCode == 76) &&

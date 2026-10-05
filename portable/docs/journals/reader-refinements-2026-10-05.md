@@ -256,3 +256,9 @@ Reduced vertical padding from 8 to 4 points and the standard toolbar height from
 ![Compact reader toolbar in the native dark Markdown fixture](images/reader-refinements-2026-10-05/compact-toolbar-dark.png)
 
 The full native workspace probe passes across PDF, Markdown, narrow/wide windows, themes, version indicators and presentation mode. Its control-bounds checks now cover vertical containment as well as horizontal containment. Inspected light narrow and dark wide offscreen renders; text and controls remain unclipped.
+
+### Button routing after window moves
+
+Expanded the invisible native-window interaction probe to move the fixture between presses and send multi-click counts to different controls. The initial test reproduced missed command-search presses and a sidebar selection miss. Reader-window button presses now resolve from the current content hit target before native window routing can reuse an earlier multi-click target. Text inputs keep native double-click selection; modal/sheet routing remains native. Standalone workspace icons use explicit press/release tracking with release-outside cancellation, while retaining native keyboard/accessibility actions.
+
+The icon glyph remains 16 points, but its target becomes 24 rather than 28 points. Explicit alignment and hit rectangles remove native bezel overhang. Edge tests also exposed the zoom popup reaching into the next-page target; a small additional gap separates them. Tests verify left/center/right icon clicks, repeated presses after window moves, complete sidebar button heights, both themes, map/divider interactions, and draggable space beside the command icon. Synthetic window moves are allowed to settle before posting their mouse-up events, avoiding AppKit reprojecting queued test events against an earlier frame origin. Full workspace and window-chrome suites pass; the user’s app was not launched, quit, or captured.

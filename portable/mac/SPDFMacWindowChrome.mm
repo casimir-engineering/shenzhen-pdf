@@ -139,3 +139,35 @@ SPDFWindowChromeAction spdf_window_chrome_action_for_event(NSWindow* window, NSE
     return spdf_window_chrome_action(event.clickCount, fullScreen, presentation,
                                      spdf_window_chrome_view_is_interactive(hitView));
 }
+
+NSEvent* spdf_window_button_press_event(NSWindow* window, NSEvent* event) {
+    if(event.type!=NSEventTypeLeftMouseDown || event.clickCount<2) return event;
+    NSView* content=window.contentView;
+    NSView* reference=content.superview ?: content;
+    NSView* hit=[content hitTest:[reference convertPoint:event.locationInWindow fromView:nil]];
+    Class button=NSClassFromString(@"NSButton"), segments=NSClassFromString(@"NSSegmentedControl");
+    for(NSView* view=hit;view;view=view.superview) {
+        if(![view isKindOfClass:button] && ![view isKindOfClass:segments]) continue;
+        // AppKit otherwise reuses the previous multi-click target, which may be
+        // the titlebar drag surface. Text fields retain native word selection.
+        return [NSEvent mouseEventWithType:event.type location:event.locationInWindow
+            modifierFlags:event.modifierFlags timestamp:event.timestamp windowNumber:event.windowNumber
+            context:nil eventNumber:event.eventNumber clickCount:1 pressure:event.pressure];
+    }
+    return event;
+}
+
+BOOL spdf_window_route_button_press(NSWindow* window, NSEvent* event) {
+    if(event.type!=NSEventTypeLeftMouseDown || window.attachedSheet) return NO;
+    id app=[NSClassFromString(@"NSApplication") sharedApplication];
+    if([app modalWindow] && [app modalWindow]!=window) return NO;
+    NSView* content=window.contentView;
+    NSView* reference=content.superview ?: content;
+    NSView* hit=[content hitTest:[reference convertPoint:event.locationInWindow fromView:nil]];
+    Class button=NSClassFromString(@"NSButton"), segments=NSClassFromString(@"NSSegmentedControl");
+    for(NSView* view=hit;view;view=view.superview) {
+        if(![view isKindOfClass:button] && ![view isKindOfClass:segments]) continue;
+        [view mouseDown:event]; return YES;
+    }
+    return NO;
+}

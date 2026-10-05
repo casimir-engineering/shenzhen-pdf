@@ -2,6 +2,7 @@
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacPaneDividerGeometry.h"
 #import <objc/runtime.h>
+#import "SPDFMacChromeButtonChecks.h"
 
 static IMP OriginalWindowOrder;
 static void GuardWindowOrder(id object,SEL action,NSInteger place,NSInteger other) {
@@ -175,7 +176,8 @@ static void ProbeCursorSet(id object,SEL action) {
     Method active=class_getInstanceMethod(NSApplication.class,@selector(isActive));
     IMP oldActive=method_setImplementation(active,(IMP)ProbeAppActive);
     failures += [self probeDividerMouseDrags];
-    NSString* previousTitle=nil; NSInteger eventNumber=0;
+    failures += CheckChromeButtonClicks(_window,@[_window.contentView]);
+    NSInteger eventNumber=0;
     for (NSNumber* y in @[@1,@7,@14,@21,@27]) for (NSString* title in @[@"Groups",@"Search",@"Comments",@"History",@"History",@"Chapters"]) {
         [_window.contentView layoutSubtreeIfNeeded];
         NSButton* button=nil;
@@ -190,9 +192,9 @@ static void ProbeCursorSet(id object,SEL action) {
             fprintf(stderr,"FAIL: reader overlay intercepts %s at y=%.0f\n",title.UTF8String,y.doubleValue); failures++;
         }
         NSTimeInterval timestamp=NSProcessInfo.processInfo.systemUptime;
-        // Native multi-click dispatch intentionally retains the first target.
-        // Only repeated clicks at the same button get a multi-click count.
-        NSInteger count=[title isEqual:previousTitle] ? 2 : 1;
+        // Reproduce the retained multi-click count even when the next press
+        // targets a different control after moving the window.
+        NSInteger count=2; // A fast press after dragging may retain the prior click count.
         NSEvent* down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:timestamp
             windowNumber:_window.windowNumber context:nil eventNumber:++eventNumber clickCount:count pressure:1];
         NSEvent* up=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:point modifierFlags:0 timestamp:timestamp+.01
@@ -200,7 +202,7 @@ static void ProbeCursorSet(id object,SEL action) {
         _tabStripCapturingMouse=YES; // A prior tab popup consumed mouse-up.
         [NSApp postEvent:up atStart:YES]; [_window sendEvent:down];
         while ([NSApp nextEventMatchingMask:NSEventMaskLeftMouseUp|NSEventMaskLeftMouseDragged untilDate:NSDate.distantPast inMode:NSEventTrackingRunLoopMode dequeue:YES]) {}
-        previousTitle=title; [_window.contentView layoutSubtreeIfNeeded];
+        [_window.contentView layoutSubtreeIfNeeded];
         if (_sidebarModeControl.spdf_selectedSidebarMode != expected || _tabStripCapturingMouse) {
             fprintf(stderr,"FAIL: %s click y=%.0f mode=%ld expected=%ld staleCapture=%d\n",title.UTF8String,y.doubleValue,
                 (long)_sidebarModeControl.spdf_selectedSidebarMode,(long)expected,_tabStripCapturingMouse); failures++;
