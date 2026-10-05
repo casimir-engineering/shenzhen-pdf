@@ -127,3 +127,11 @@ The first hover implementation reserved blank width for rename/hide icons even w
 ![Overlay actions without reserved padding](reader-refinements-2026-10-05/compact-group-hover.png)
 
 The compact-width assertion fails against the previous layout and passes with this correction. Group click/drag/scroll/hover, tab geometry/style and the full production reader probe pass. The app is rebuilt and signature-verified in `dist`; no user window was launched or interrupted.
+
+## Correction: group visibility through the eye
+
+All Groups now shows only the group name and document count. The eye is the same symbol in both states: normal label color for visible groups and gray for hidden groups. Clicking it updates the tint immediately; tooltips and accessible labels still explain Show/Hide without adding visible status text.
+
+![Group picker with gray eye for a hidden group](reader-refinements-2026-10-05/group-picker-eyes.png)
+
+Headless group interaction tests and source-size checks pass. The image above comes from the native offscreen fixture, without opening or capturing the user's app.

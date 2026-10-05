@@ -72,6 +72,14 @@
 }
 @end
 
+static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
+    button.image=[NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:nil];
+    [button.image setTemplate:YES];
+    button.contentTintColor=group.hidden ? NSColor.secondaryLabelColor : NSColor.labelColor;
+    button.toolTip=group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
+    button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.hidden ? @"Show" : @"Hide",group.displayName];
+}
+
 @implementation SPDFTabStripView (GroupPicker)
 - (NSView*)groupPickerContentView {
     NSMutableArray<SPDFTabGroup*>* groups = [NSMutableArray array];
@@ -88,17 +96,14 @@
     for (SPDFTabGroup* group in groups) {
         SPDFTabGroupPickerRow* row=[[SPDFTabGroupPickerRow alloc] initWithFrame:NSMakeRect(6,y,224,32)];
         row.group=group; row.title=group.displayName;
-        row.detail=[NSString stringWithFormat:@"%@%@",group.hidden ? @"Hidden · " : @"",counts[group.identifier]];
+        row.detail=counts[group.identifier].stringValue;
         row.bordered=NO; row.target=self; row.action=@selector(browseGroupPickerRow:);
         row.accessibilityLabel=[NSString stringWithFormat:@"%@, %@ documents%@",group.displayName,counts[group.identifier],group.hidden ? @", hidden" : @""];
         row.toolTip=[NSString stringWithFormat:@"Show %@ tabs without changing the document",group.displayName];
         row.frame=NSMakeRect(6,y,198,32);
         NSButton* eye=[[NSButton alloc] initWithFrame:NSMakeRect(204,y+4,26,24)];
-        eye.bordered=NO; eye.image=[NSImage imageWithSystemSymbolName:group.hidden ? @"eye.slash" : @"eye"
-            accessibilityDescription:group.hidden ? @"Show group" : @"Hide group"];
+        eye.bordered=NO; StylePickerEye(eye,group);
         eye.target=self; eye.action=@selector(toggleGroupPickerVisibility:); eye.identifier=group.identifier;
-        eye.toolTip=group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
-        eye.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.hidden ? @"Show" : @"Hide",group.displayName];
         [content addSubview:row]; [content addSubview:eye]; y-=32;
     }
     NSBox* line=[[NSBox alloc] initWithFrame:NSMakeRect(6,40,224,1)]; line.boxType=NSBoxSeparator;
@@ -117,9 +122,7 @@
 - (void)toggleGroupPickerVisibility:(NSButton*)sender {
     for (SPDFDocumentTab* tab in self.tabs) if ([tab.group.identifier isEqual:sender.identifier]) {
         [self.groupReader setTabGroup:tab.group hidden:!tab.group.hidden];
-        sender.image=[NSImage imageWithSystemSymbolName:tab.group.hidden ? @"eye.slash" : @"eye" accessibilityDescription:nil];
-        sender.toolTip=tab.group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
-        sender.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",tab.group.hidden ? @"Show" : @"Hide",tab.group.displayName];
+        StylePickerEye(sender,tab.group);
         return;
     }
 }
