@@ -158,13 +158,9 @@ int main(void) {
         check(out[0].x0 == 15 && out[0].y0 == 34 && out[0].x1 == 55 && out[0].y1 == 74,
               "the exclusion is scaled to the render and offset to the bitmap origin");
 
-        /* THE SCANNED-PAGE TRAP: a scan is one image block covering the sheet.
-         * Excluding it would leave dark mode a no-op on exactly the documents
-         * that need it most, so an image-backed page reports NO exclusions and
-         * is recolored whole. */
         entry->image_backed = 1;
-        check(spdf_recolor_page_entry_exclusions(entry, 2.0f, 0, 0, out, SPDF_RECOLOR_MAX_REGIONS) == 0,
-              "an image-backed page is recolored whole despite the preserve-images setting");
+        check(spdf_recolor_page_entry_exclusions(entry, 2.0f, 0, 0, out, SPDF_RECOLOR_MAX_REGIONS) == 1,
+              "an image-backed page respects the preserve-images setting");
 
         /* Least-recently-used eviction, so a long document cannot grow the
          * cache without bound. */

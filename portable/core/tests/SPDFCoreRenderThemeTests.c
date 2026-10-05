@@ -108,6 +108,15 @@ static int write_pdf(fz_context* ctx, const char* path, int image_side) {
             pdf_dict_puts_drop(ctx, xobjects, "Im0", pdf_add_image(ctx, doc, photo));
         }
         contents = fz_new_buffer_from_copied_data(ctx, (const unsigned char*)content, strlen(content));
+        if (image_side == PAGE_SIDE) {
+            /* OCR retains the full-page image and adds invisible searchable text. */
+            pdf_obj* fonts = pdf_dict_put_dict(ctx, resources, PDF_NAME(Font), 1);
+            pdf_obj* font = pdf_dict_puts_dict(ctx, fonts, "F1", 3);
+            pdf_dict_put(ctx, font, PDF_NAME(Type), PDF_NAME(Font));
+            pdf_dict_put(ctx, font, PDF_NAME(Subtype), PDF_NAME(Type1));
+            pdf_dict_put_name(ctx, font, PDF_NAME(BaseFont), "Helvetica");
+            fz_append_string(ctx, contents, "BT /F1 12 Tf 3 Tr 20 100 Td (OCR searchable text) Tj ET\n");
+        }
         page = pdf_add_page(ctx, doc, fz_make_rect(0, 0, PAGE_SIDE, PAGE_SIDE), 0, resources, contents);
         pdf_insert_page(ctx, doc, -1, page);
         pdf_save_document(ctx, doc, path, NULL);
@@ -235,13 +244,16 @@ static void test_scanned_page(const char* path) {
     if (!doc) return;
 
     if (render(doc, SPDF_RENDER_DEFAULT, &plain)) {
-        /* THE SCANNED-PAGE TRAP. This page is one image covering the sheet. If
-         * "leave images alone" were honored literally, dark mode would be a
-         * silent no-op on every scanned document. It must recolor anyway. */
         if (render(doc, SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES, &preserved)) {
             long identical = identical_pixels(&plain, &preserved);
+            EXPECT(identical == (long)plain.width * plain.height,
+                   "full-page scan retains original pixels when preservation is enabled");
+            spdf_free_bitmap(&preserved);
+        }
+        if (render(doc, SPDF_RENDER_DARK_THEME, &preserved)) {
+            long identical = identical_pixels(&plain, &preserved);
             EXPECT(identical * 20 < (long)plain.width * plain.height,
-                   "an image-backed page is recolored whole despite preserve-images (%ld px identical)", identical);
+                   "full-page scan is recolored when preservation is disabled");
             spdf_free_bitmap(&preserved);
         }
         spdf_free_bitmap(&plain);
