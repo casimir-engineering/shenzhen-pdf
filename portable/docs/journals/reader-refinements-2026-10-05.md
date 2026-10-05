@@ -212,3 +212,11 @@ Drops between document rows carry a before-document anchor, including within the
 Added an image-color button immediately beside night mode. It and Cmd+Shift+I change the selected document's image-preservation choice; the View menu now describes the positive action as **Invert Image Colors in Dark Theme**. A separate **Keep Image Colors in Dark Theme by Default** Settings item has no shortcut and changes only the seed for new documents. The icon switches between outline and filled photo states, with an explicit action tooltip.
 
 Session YAML already stored each open tab's choice, but closing and reopening a file seeded the global default again. Explicit toggles now also merge into document memory, and new tabs restore that file-specific value before falling back to the default. This adds no file reads or rendering work to launch. Existing documents are unaffected by changing the default. The native workspace probe verifies independent choices, session roundtrip, file reopening, new-document defaults and toolbar layout at narrow/wide widths.
+
+### OCR PDF image-color override
+
+A supplied OCR photo PDF reproduced the report in the production C renderer: dark rendering with and without image preservation produced identical output. The image-region cache had a deliberate legacy exception that returned no preservation regions for image-backed pages, forcing full-page scans through dark recoloring regardless of the document's choice.
+
+Removed that exception. Full-page images now honor the explicit preservation flag like embedded figures and standalone pictures. On the supplied PDF, the preserved dark render now exactly matches the normal render, while the recolored dark render remains different. The source document was read only; private PDF/renders are not checked into this journal.
+
+Regression coverage includes a synthetic full-page image with invisible OCR text. It verifies exact pixel preservation when enabled and recoloring when disabled, alongside the existing embedded-image and standalone-picture suites. Both core recolor and production render-theme suites pass. No new launch or analysis work is introduced; the existing lazy image-region cache is retained.

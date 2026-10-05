@@ -238,11 +238,8 @@ int spdf_recolor_page_entry_exclusions(const spdf_recolor_page_entry* entry, flo
     int i;
 
     if (!entry || !out || max <= 0 || zoom <= 0.0f) return 0;
-    /* THE SCANNED-PAGE TRAP. A scan is one image block covering the sheet, so
-     * honoring "leave images alone" there would leave the page untouched and
-     * dark mode would look broken on exactly the documents that need it most.
-     * Report no exclusions instead, which recolors the page whole. */
-    if (entry->image_backed) return 0;
+    /* A full-page scan is still an image. Honor the explicit preservation
+     * flag exactly as for an embedded figure or a standalone picture. */
 
     for (i = 0; i < entry->count && count < max; ++i) {
         const spdf_recolor_frect* r = &entry->rects[i];
