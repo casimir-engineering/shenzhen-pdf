@@ -117,3 +117,13 @@ Root integration persists manual scroll per window in `session.yaml` under `wind
 Validation covers pinned headers before/after a 60-document group; bilateral indicators and edge clamping; real NSEvent trackpad deltas; explicit selected-tab reveal; restored/manual scroll retention; 20 collapsed groups forcing the continuous-strip fallback; stable hover targets, rename/hide routing and All Groups eye controls; accessibility; and existing drag/drop, title, geometry and style behavior. The old GroupLayout compiles with the final harness and fails the pinned-header regression. Previous workspace code fails the new scroll restoration/callback checks. YAML roundtrip and coalesced-save tests pass.
 
 Repeated scroll plus layout work measured 0.049 ms/input at 60 tabs, 0.127 ms at 200 and 0.522 ms at 1,000, so no additional geometry-cache architecture was needed. Full reader probes pass at four widths in both themes with PDF/Markdown/text, Find/History, panel click/drag, hidden/presentation layouts and updater-menu routing. Tab group integration, lifecycle/state, window chrome, launch-work policy and all 32 updater tests pass. Source-size and whitespace checks pass. The rebuilt `dist` app is signature-verified; the running user app is untouched. No release is published here.
+
+
+## Correction: compact pills, overlay hover controls
+
+The first hover implementation reserved blank width for rename/hide icons even when they were absent. This contradicted the compact-tab design. Group width now follows the name with 14 points of total inset and a 48-point minimum; Collection Backups adds only its existing identifying icon width. Hover controls overlay the trailing title, fading that text inside a transparency layer just like document-tab close buttons. Neither title geometry nor pill width changes on hover, and the action overlay stays clipped to the rounded pill.
+
+![Compact group names](reader-refinements-2026-10-05/compact-group-pills.png)
+![Overlay actions without reserved padding](reader-refinements-2026-10-05/compact-group-hover.png)
+
+The compact-width assertion fails against the previous layout and passes with this correction. Group click/drag/scroll/hover, tab geometry/style and the full production reader probe pass. The app is rebuilt and signature-verified in `dist`; no user window was launched or interrupted.

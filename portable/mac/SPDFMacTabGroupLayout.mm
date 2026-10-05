@@ -33,8 +33,10 @@
             current.firstIndex = i;
             current.tabRects = [NSMutableDictionary dictionary];
             current.members = [NSMutableArray array];
-            CGFloat labelWidth = MIN(tab.group.collectionBackups ? 196.0 : 160.0, ceil([tab.group.displayName sizeWithAttributes:
-                @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + (tab.group.collectionBackups ? 74 : 54));
+            CGFloat labelWidth = MAX(48.0, MIN(tab.group.collectionBackups ? 196.0 : 160.0,
+                ceil([tab.group.displayName sizeWithAttributes:
+                    @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width)
+                    + (tab.group.collectionBackups ? 34 : 14)));
             current.header = NSMakeRect(0, floor((NSHeight(self.bounds)-20)/2), labelWidth, 20);
             [groups addObject:current];
         }
@@ -184,13 +186,33 @@
             [icon drawInRect:NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12)];
         }
         CGFloat height = [layout.group.displayName sizeWithAttributes:attributes].height;
-        [layout.group.displayName drawInRect:NSMakeRect(NSMinX(layout.header)+7+iconSpace,
-            NSMidY(layout.header)-height/2, NSWidth(layout.header)-54-iconSpace, height) withAttributes:attributes];
-        if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header)) {
+        BOOL hovered=_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header);
+        NSRect titleRect=NSMakeRect(NSMinX(layout.header)+7+iconSpace,
+            NSMidY(layout.header)-height/2,MAX(1,NSWidth(layout.header)-14-iconSpace),height);
+        [NSGraphicsContext saveGraphicsState]; NSRectClip(titleRect);
+        CGContextRef graphics=NSGraphicsContext.currentContext.CGContext;
+        if (hovered) CGContextBeginTransparencyLayer(graphics,NULL);
+        [layout.group.displayName drawInRect:titleRect withAttributes:attributes];
+        // Like tab close buttons: keep the full title geometry and fade beneath
+        // overlay actions, without reserving empty space or changing pill width.
+        if (hovered) {
+            CGFloat edge=NSMaxX(layout.header)-40;
+            CGContextSetBlendMode(graphics,kCGBlendModeDestinationOut);
+            CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+            CGFloat colors[]={0,0,0,0,0,0,0,1}, stops[]={0,1};
+            CGGradientRef fade=CGGradientCreateWithColorComponents(space,colors,stops,2);
+            CGContextDrawLinearGradient(graphics,fade,CGPointMake(edge-8,NSMidY(titleRect)),
+                CGPointMake(edge,NSMidY(titleRect)),0);
+            CGContextSetRGBFillColor(graphics,0,0,0,1);
+            CGContextFillRect(graphics,CGRectMake(edge,NSMinY(titleRect),40,NSHeight(titleRect)));
+            CGGradientRelease(fade); CGColorSpaceRelease(space); CGContextEndTransparencyLayer(graphics);
+        }
+        [NSGraphicsContext restoreGraphicsState];
+        if (hovered) {
+            [NSGraphicsContext saveGraphicsState];
+            [[NSBezierPath bezierPathWithRoundedRect:layout.header xRadius:4 yRadius:4] addClip];
             for (NSNumber* hide in @[@NO,@YES]) {
                 NSRect action = [self groupActionRect:layout.header hide:hide.boolValue];
-                [NSColor.windowBackgroundColor setFill]; NSRectFill(action);
-                [[accent colorWithAlphaComponent:.16] setFill]; NSRectFill(action);
                 if (NSPointInRect(_lastHoverPoint,action)) {
                     [[NSColor.labelColor colorWithAlphaComponent:.12] setFill];
                     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(action,1,1) xRadius:3 yRadius:3] fill];
@@ -201,6 +223,7 @@
                     configurationWithPaletteColors:@[NSColor.labelColor]]];
                 [actionIcon drawInRect:NSInsetRect(action,4,4)];
             }
+            [NSGraphicsContext restoreGraphicsState];
         }
     }
 }

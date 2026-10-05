@@ -43,9 +43,14 @@ static void check_scrollable_group_strip(void) {
     expect(strip.tabScrollOffset<end,@"left + count must scroll back through the hidden documents");
     strip.tabScrollOffset=0; [strip groupLayouts];
     NSRect header=[[layout_for_group(strip,before) valueForKey:@"header"] rectValue];
+    CGFloat expected=MAX(48.0,ceil([before.displayName sizeWithAttributes:
+        @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width)+14);
+    expect(fabs(NSWidth(header)-expected)<.01,@"group pill reserves space for hidden hover actions");
     NSRect rename=[strip groupActionRect:header hide:NO];
     click=NSMakePoint(NSMidX(rename),NSMidY(rename)); [strip updateHoverForPoint:click];
     render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-scroll-group-hover.png");
+    expect(NSEqualRects(header,[[layout_for_group(strip,before) valueForKey:@"header"] rectValue]),
+        @"hover changed group pill geometry");
     [strip handleGroupMouseDown:mouse(window,NSEventTypeLeftMouseDown,click)];
     [strip handleGroupMouseUp:mouse(window,NSEventTypeLeftMouseUp,click)];
     expect(strip.renameRequests==1 && reader.toggles==0,@"hover rename icon toggled the group instead of renaming");

@@ -24,4 +24,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Removed self-comparison from Collection. **Compare with Latest** is available on older History versions’ context menus and uses the clicked snapshot.
 
 - Scroll crowded tab groups with the mouse wheel or a two-finger trackpad gesture. Other collapsed group names remain visible when they fit; left/right `+` counts navigate offscreen tabs. Scroll position persists per window.
-- Hover a group name for **Rename** and **Hide** controls. The All Groups picker includes eye toggles to show or hide groups without closing documents.
+- Hover a compact group name for **Rename** and **Hide** controls overlaid on fading text, without reserving empty pill space. The All Groups picker includes eye toggles to show or hide groups without closing documents.
