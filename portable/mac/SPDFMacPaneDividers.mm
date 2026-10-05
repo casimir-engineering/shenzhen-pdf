@@ -1,4 +1,5 @@
 #import "SPDFMacUIHelpers.h"
+#import "SPDFMacPaneDividerGeometry.h"
 
 @implementation SPDFPaneDividerView {
     CGFloat _lastWindowX;
@@ -7,8 +8,12 @@
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent*)event { (void)event; return YES; }
 - (BOOL)mouseDownCanMoveWindow { return NO; }
+- (NSView*)hitTest:(NSPoint)point {
+    NSPoint local=[self convertPoint:point fromView:self.superview];
+    return !self.hidden && NSPointInRect(local,SPDFPaneDividerResizeRect(self.bounds)) ? self : nil;
+}
 - (void)resetCursorRects {
-    [self addCursorRect:self.bounds cursor:NSCursor.resizeLeftRightCursor];
+    [self addCursorRect:SPDFPaneDividerResizeRect(self.bounds) cursor:NSCursor.resizeLeftRightCursor];
 }
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;

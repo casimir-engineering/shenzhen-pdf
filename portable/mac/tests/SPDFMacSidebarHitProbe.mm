@@ -1,5 +1,6 @@
 #import "SPDFMacSidebarHitProbe.h"
 #import "SPDFMacSidebarModeControl.h"
+#import "SPDFMacPaneDividerGeometry.h"
 #import <objc/runtime.h>
 
 static IMP OriginalWindowOrder;
@@ -84,7 +85,7 @@ static void ProbeCursorSet(id object,SEL action) {
     NSInteger number=0;
     for (NSView* divider in @[_sidebarDividerView,_minimapDividerView])
         for (NSNumber* stale in @[@NO,@YES]) for (NSNumber* x in @[@.5,@4.5,@6.5,@8.5,@12.5])
-            for (NSNumber* y in @[@20,@(NSHeight(divider.bounds)/2),@(NSHeight(divider.bounds)-1)]) {
+            for (NSNumber* y in @[@20,@(NSHeight(divider.bounds)/2),@(NSMaxY(SPDFPaneDividerResizeRect(divider.bounds))-1)]) {
                 DividerFocusCalls=DividerDragCalls=DividerFinishCalls=DividerCallbackKind=0;
                 DividerDeltas[0]=DividerDeltas[1]=NAN;
                 _tabStripCapturingMouse=stale.boolValue;
@@ -131,8 +132,16 @@ static void ProbeCursorSet(id object,SEL action) {
             fprintf(stderr,"FAIL: wider map resize target changed the 5pt reading-area gutter\n"); failures++;
         }
         NSView* frameView=_window.contentView.superview;
+        NSRect painted=[divider convertRect:divider.bounds toView:_window.contentView];
+        if(fabs(NSMinY(painted))>.01) {
+            fprintf(stderr,"FAIL: %s divider drawing stops above the bottom edge\n",name.UTF8String); failures++;
+        }
+        NSPoint passive=[divider convertPoint:NSMakePoint(6.5,NSMaxY(divider.bounds)-3) toView:divider.superview];
+        if([divider hitTest:passive]) {
+            fprintf(stderr,"FAIL: %s divider claims native bottom-edge resize zone\n",name.UTF8String); failures++;
+        }
         for (NSNumber* x in @[@.5,@3,@6.5,@10,@12.5])
-            for (NSNumber* y in @[@1,@20,@(NSHeight(divider.bounds)/2),@(NSHeight(divider.bounds)-1)]) {
+            for (NSNumber* y in @[@1,@20,@(NSHeight(divider.bounds)/2),@(NSMaxY(SPDFPaneDividerResizeRect(divider.bounds))-1)]) {
                 NSPoint point=[divider convertPoint:NSMakePoint(x.doubleValue,y.doubleValue) toView:frameView.superview];
                 NSView* hit=[frameView hitTest:point];
                 if (hit != divider) {
@@ -142,7 +151,7 @@ static void ProbeCursorSet(id object,SEL action) {
             }
         DividerCursorTarget=divider; DividerCursorRect=NSZeroRect; DividerResizeCursor=NO;
         [divider resetCursorRects];
-        if (!DividerResizeCursor || !NSEqualRects(DividerCursorRect,divider.bounds)) {
+        if (!DividerResizeCursor || !NSEqualRects(DividerCursorRect,SPDFPaneDividerResizeRect(divider.bounds))) {
             fprintf(stderr,"FAIL: %s resize cursor does not cover its complete hit target\n",name.UTF8String); failures++;
         }
         DividerCursorTarget=nil;

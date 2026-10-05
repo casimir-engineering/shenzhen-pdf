@@ -2947,9 +2947,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_pageScrollView.leadingAnchor constraintEqualToAnchor:_documentContainer.leadingAnchor],
         [_pageScrollView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
         _pageScrollToMinimapConstraint,
-        // Keep the native bottom-edge window-resize target separate from pane resizing.
+        // Paint full height; divider hit testing leaves the native bottom resize zone passive.
         [_minimapDividerView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
-        [_minimapDividerView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor constant:-6],
+        [_minimapDividerView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
         [_minimapDividerView.centerXAnchor constraintEqualToAnchor:_minimapView.leadingAnchor constant:-kMinimapDividerWidth/2],
         _minimapDividerWidthConstraint, [_minimapView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
         [_minimapView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor],
@@ -2982,7 +2982,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_splitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [_splitView.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
         [_sidebarDividerView.topAnchor constraintEqualToAnchor:_splitView.topAnchor],
-        [_sidebarDividerView.bottomAnchor constraintEqualToAnchor:_splitView.bottomAnchor constant:-6],
+        [_sidebarDividerView.bottomAnchor constraintEqualToAnchor:_splitView.bottomAnchor],
         [_sidebarDividerView.widthAnchor constraintEqualToConstant:kSidebarDividerWidth],
         [_sidebarDividerView.centerXAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor]
     ]];
