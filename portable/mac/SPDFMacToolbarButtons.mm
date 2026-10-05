@@ -130,19 +130,35 @@
 
 @end
 
+@interface SPDFCenteredZoomCell : NSPopUpButtonCell
+@end
+@implementation SPDFCenteredZoomCell
+- (NSRect)drawTitle:(NSAttributedString*)title withFrame:(NSRect)frame inView:(NSView*)view {
+    NSMutableAttributedString* centered=[title mutableCopy];
+    NSMutableParagraphStyle* paragraph=[NSMutableParagraphStyle new]; paragraph.alignment=NSTextAlignmentCenter;
+    [centered addAttribute:NSParagraphStyleAttributeName value:paragraph range:NSMakeRange(0,centered.length)];
+    return [super drawTitle:centered withFrame:frame inView:view];
+}
+@end
+
 void spdf_fit_popup_select_and_size(NSPopUpButton* popup, NSMenuItem* itemToSelect) {
     if (!popup) return;
+    if (![popup.cell isKindOfClass:SPDFCenteredZoomCell.class]) {
+        NSPopUpButtonCell* old=(NSPopUpButtonCell*)popup.cell;
+        SPDFCenteredZoomCell* cell=[[SPDFCenteredZoomCell alloc] initTextCell:@"" pullsDown:NO];
+        NSMenuItem* selected=popup.selectedItem;
+        cell.menu=old.menu; cell.font=old.font; cell.bordered=old.bordered;
+        cell.enabled=old.enabled; cell.target=old.target; cell.action=old.action;
+        popup.cell=cell; if(selected) [popup selectItem:selected];
+    }
     if (itemToSelect) [popup selectItem:itemToSelect];
-    NSString* title = popup.titleOfSelectedItem ?: @"";
-    NSFont* font = popup.font ?: [NSFont systemFontOfSize:13.0 weight:NSFontWeightLight];
-    // 49 is the chrome either side of the label plus the chevrons; it does not
-    // vary with the title. The floor keeps a one-character title from collapsing.
-    // A FIXED width, not one that follows the title: a box that grows from
-    // "800%" to "1600%" shifts every control right of it while you are zooming,
-    // which reads as the toolbar twitching. It is sized for the widest title
-    // the menu can show -- "Fit Height", 106pt -- so nothing is ever clipped.
-    (void)title;
-    CGFloat width = ceil([@"Fit Height" sizeWithAttributes:@{NSFontAttributeName : font}].width) + 49.0;
+    NSFont* font = popup.font ?: [NSFont systemFontOfSize:12];
+    popup.alignment = NSTextAlignmentCenter;
+    CGFloat longest = 0;
+    for (NSMenuItem* item in popup.itemArray)
+        longest = MAX(longest, [item.title sizeWithAttributes:@{NSFontAttributeName:font}].width);
+    // Equal breathing room around the longest label, plus the native chevrons.
+    CGFloat width = ceil(longest) + 24;
     for (NSLayoutConstraint* constraint in popup.constraints)
         if (constraint.firstAttribute == NSLayoutAttributeWidth && constraint.secondItem == nil) {
             constraint.constant = width;

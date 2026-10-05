@@ -302,6 +302,15 @@ static void CheckIconReadability(NSControl* control) {
             Check(_zoomSegments.segmentStyle==NSSegmentStyleRounded && _markdownFontSizeSegments.segmentStyle==_zoomSegments.segmentStyle,
                 @"zoom and text size share the compact flat toolbar style");
         }
+        CGFloat longest=0;
+        for (NSMenuItem* item in _fitModePopup.itemArray)
+            longest=MAX(longest,[item.title sizeWithAttributes:@{NSFontAttributeName:_fitModePopup.font}].width);
+        Check(fabs(NSWidth([_fitModePopup alignmentRectForFrame:_fitModePopup.frame])-(ceil(longest)+24))<1 &&
+            [_fitModePopup.cell isKindOfClass:NSClassFromString(@"SPDFCenteredZoomCell")],
+            @"zoom selector is centered and sized to its longest menu item");
+        Check(_pageField.superview==_pageCountLabel.superview &&
+            [(NSStackView*)_pageField.superview alignment]==NSLayoutAttributeFirstBaseline &&
+            [_pageField.font isEqual:_pageCountLabel.font],@"page counter shares one font and baseline");
         CGFloat titleWidth=[_fitModePopup.titleOfSelectedItem sizeWithAttributes:@{NSFontAttributeName:_fitModePopup.font}].width;
         Check(NSWidth(_fitModePopup.frame)>=ceil(titleWidth)+18,@"zoom selection keeps its full readable title");
         NSMutableArray<NSControl*>* controls=[NSMutableArray array]; VisibleControls(_toolbar,controls);
