@@ -112,6 +112,11 @@ static void CheckDocumentMoveIntegration(void) {
         Check([restoredMove.group.identifier isEqual:destination.identifier] &&
             [restoredMove.path isEqual:moved.path] && restoredMove.pageIndex==7 && restoredMove.scrollOrigin.y==132,
             @"YAML retains transferred group, tab position and document reading position");
+        NSData* reorder=[NSJSONSerialization dataWithJSONObject:@{@"source":destination.identifier,@"path":moved.path,@"before":first.path} options:0 error:nil];
+        [reader performSidebarGroupAction:@"move-document" identifier:destination.identifier
+            value:[[NSString alloc] initWithData:reorder encoding:NSUTF8StringEncoding]];
+        Check([reader.tabs indexOfObjectIdenticalTo:moved]+1==[reader.tabs indexOfObjectIdenticalTo:first],
+            @"production same-group drop inserts before the requested document");
     }
 }
 static void CheckTabScrollPersistence(void) {

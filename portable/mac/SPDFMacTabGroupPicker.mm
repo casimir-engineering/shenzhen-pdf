@@ -81,7 +81,7 @@ static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
 }
 
 static void StylePickerCollapse(NSButton* button,SPDFTabGroup* group) {
-    button.image=[NSImage imageWithSystemSymbolName:group.collapsed ? @"chevron.right" : @"chevron.down" accessibilityDescription:nil];
+    button.image=[NSImage imageWithSystemSymbolName:group.collapsed ? @"arrow.left.and.right" : @"arrow.right.and.line.vertical.and.arrow.left" accessibilityDescription:nil];
     [button.image setTemplate:YES]; button.contentTintColor=NSColor.labelColor;
     button.toolTip=[NSString stringWithFormat:@"%@ group in tab bar",group.collapsed ? @"Expand" : @"Collapse"];
     button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.collapsed ? @"Expand" : @"Collapse",group.displayName];

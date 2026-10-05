@@ -196,3 +196,13 @@ Added explicit tab-bar collapse/expand buttons beside the visibility eyes in the
 ![All Groups with collapse and visibility controls](images/reader-refinements-2026-10-05/group-picker-collapse.png)
 
 Validation: picker tests assert unchanged title width, one toggle for each group, and immediate double-click roundtrips. Sidebar tests verify a distinct collapse action without navigation. The full native workspace probe and file-size checks pass. The app is rebuilt in dist without restarting the user's running reader.
+
+### Group Management pointer, menu and drag repair
+
+The drag path rebuilt the entire table into a temporary collapsed presentation and disabled normal state publishing until drag completion. A missing completion callback could leave disclosure visually inert. Dragging now keeps the table, search and expanded groups intact; stale drag state no longer controls row visibility or persistence. Disclosure publishes its state before rebuilding to prevent reentrant refresh from restoring older expansion.
+
+The table selects immediately on mouse-down, retains native drag tracking, and commits document navigation on release only if the press did not become a drag. Document icons use macOS file-type imagery instead of switching between generic outline/filled icons. A pending document identity keeps incidental refreshes from selecting the old document during activation. Removed the redundant group-save/table-refresh before document opening. The existing inactive preloader prepares every inactive document, including main-thread source checks; invoking it on pointer-down would add work and potential permission handling to the press. No new speculative document loader was added.
+
+Document context menus now come directly from the tab strip, including copy/reveal/editor/Collection and group actions. Added **Close Document** to that shared menu. Tab-bar expand/collapse uses outward/inward arrows distinct from the panel's list-disclosure chevrons.
+
+Drops between document rows carry a before-document anchor, including within the same group; dropping on a heading appends to that group. Native table autoscroll is retained. Regression tests cover both scroll edges, unchanged expanded rows during drag, cancellation, stale-token/foreign-source rejection, same-group and cross-group insertion, duplicate-path identity, YAML positions, and document-menu delegation. Sidebar, group, API and full native workspace probes pass. The running app remains untouched.

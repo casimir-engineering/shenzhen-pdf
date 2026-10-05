@@ -87,6 +87,11 @@
     [self.reader copyTabTitleToPasteboardAtIndex:indexNumber.integerValue];
 }
 
+- (void)tabContextCloseDocument:(NSMenuItem*)sender {
+    if([sender.representedObject isKindOfClass:NSNumber.class])
+        [self.reader closeTabAtIndex:[sender.representedObject integerValue]];
+}
+
 - (NSMenu*)contextMenuForTabAtIndex:(NSInteger)tabIndex {
     if (tabIndex < 0 || tabIndex >= (NSInteger)self.tabs.count) return nil;
     NSNumber* indexNumber = @(tabIndex);
@@ -118,6 +123,9 @@
     copyPath.target = self; copyPath.representedObject = indexNumber;
     if ([self.reader respondsToSelector:@selector(addCollectionItemsToTabMenu:path:)])
         [(id<SPDFTabCollectionMenuProviding>)self.reader addCollectionItemsToTabMenu:menu path:tabPath];
+    [menu addItem:NSMenuItem.separatorItem];
+    NSMenuItem* close=[menu addItemWithTitle:@"Close Document" action:@selector(tabContextCloseDocument:) keyEquivalent:@""];
+    close.target=self; close.representedObject=indexNumber;
     spdf_set_menu_item_system_symbol(showInFolder, @"folder");
     spdf_set_menu_item_system_symbol(copy, @"doc.on.doc");
     spdf_set_menu_item_system_symbol(copyTitle, @"character.cursor.ibeam");

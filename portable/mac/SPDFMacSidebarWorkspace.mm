@@ -11,6 +11,9 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)savePersistentState;
 @end
+@interface SPDFTabStripView (SidebarDocumentMenu)
+- (NSMenu*)contextMenuForTabAtIndex:(NSInteger)index;
+@end
 @implementation ShenzhenMacDelegate (SPDFMacSidebarWorkspace)
 - (NSMutableDictionary*)sidebarWorkspaceState {
     NSMutableDictionary* state = objc_getAssociatedObject(self,&stateKey);
@@ -113,12 +116,14 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
             if ([_tabs[i].path isEqual:source[@"path"]] && [_tabs[i].group.identifier isEqual:source[@"source"]]) index = i;
             if ([_tabs[i].group.identifier isEqual:identifier]) destination = i+1;
         }
-        if (index == NSNotFound || [_tabs[index].group.identifier isEqual:identifier]) return;
+        if (index == NSNotFound) return;
+        if ([source[@"before"] length]) for(NSUInteger i=0;i<_tabs.count;i++)
+            if([_tabs[i].group.identifier isEqual:identifier] && [_tabs[i].path isEqual:source[@"before"]]) { destination=i; break; }
         group.hidden = NO;
         [self moveTabAtIndex:index toGroup:group atIndex:destination];
     }
     else if ([action isEqual:@"document"]) {
-        [self setTabGroup:group hidden:NO];
+        if(group.hidden) group.hidden=NO;
         for (NSUInteger i=0;i<_tabs.count;i++) if ([_tabs[i].path isEqual:value] && [_tabs[i].group.identifier isEqual:identifier]) { [self selectTabAtIndex:i]; break; }
     } else [self jumpTabGroup:group];
     // Management remains open while its explicit group/document navigation runs.
@@ -161,6 +166,13 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
             controller = [SPDFGroupManagementController new]; __weak ShenzhenMacDelegate* weakSelf = self;
             controller.actionHandler = ^(NSString* action,NSString* identifier,NSString* value) {
                 [weakSelf performSidebarGroupAction:action identifier:identifier value:value];
+            };
+            controller.documentMenuProvider = ^NSMenu*(NSString* path,NSString* groupID) {
+                ShenzhenMacDelegate* owner=weakSelf; if(!owner) return nil;
+                for(NSUInteger i=0;i<owner->_tabs.count;i++)
+                    if([owner->_tabs[i].path isEqual:path] && [owner->_tabs[i].group.identifier isEqual:groupID])
+                        return [owner->_tabStrip contextMenuForTabAtIndex:i];
+                return nil;
             };
             controller.stateHandler = ^(NSDictionary* state) {
                 ShenzhenMacDelegate* owner = weakSelf; if (!owner) return;
