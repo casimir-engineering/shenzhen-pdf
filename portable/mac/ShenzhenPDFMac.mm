@@ -2970,7 +2970,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _statusLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
 
     _tabStripHeightConstraint = [_tabStrip.heightAnchor constraintEqualToConstant:kTabStripHeight];
-    _toolbarHeightConstraint = [_toolbar.heightAnchor constraintEqualToConstant:44.0];
+    _toolbarHeightConstraint = [_toolbar.heightAnchor constraintEqualToConstant:36.0];
     [NSLayoutConstraint activateConstraints:@[
         [_tabStrip.topAnchor constraintEqualToAnchor:content.topAnchor],
         [_tabStrip.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
@@ -12576,7 +12576,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     _tabStrip.hidden = presentation;
     _toolbar.hidden = presentation;
     _tabStripHeightConstraint.constant = presentation ? 0.0 : kTabStripHeight;
-    _toolbarHeightConstraint.constant = presentation ? 0.0 : 44.0;
+    _toolbarHeightConstraint.constant = presentation ? 0.0 : 36.0;
     [self syncWorkspaceChrome];
     _pageView.presentationMode = presentation;
     if ([self isMarkdownActive]) [self.activeMarkdownSession setPresentationMode:presentation];
