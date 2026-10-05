@@ -236,3 +236,9 @@ Replaced the Group Management document icons with compact extension badges, usin
 ![Extension badges in light theme](images/reader-refinements-2026-10-05/extension-badges-Aqua.png)
 
 Validation: inspected native offscreen badge renders in both appearances. Group Management and sidebar workspace suites pass, as do source-size and whitespace checks. The dist app rebuild and strict signature verification pass. The running reader was not restarted or captured.
+
+### Earlier, accelerating drag scrolling
+
+Group Management now overrides the table's native autoscroll step with a wider activation zone: 64 points, capped at one third of the visible height for short panels. Speed increases quadratically toward the edge, from a gentle step to 28 points per native tracking callback. Beyond the edge it stays capped; the scroll position is clamped to the document bounds. The central area and pointers outside the panel horizontally do not initiate scrolling. Native drag tracking remains responsible for callbacks; this adds no timer or idle work.
+
+Headless native-table regression tests check both directions at 40, 20 and 1 point from the edge, verifying early activation and increasing speed. They also check a quiet center and capped behavior just outside the edge. Group Management and sidebar workspace suites pass.

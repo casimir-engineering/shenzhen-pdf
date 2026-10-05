@@ -64,18 +64,25 @@ static void CheckGroupDragAutoscroll(void) {
     window.contentView=manager.view; [window.contentView layoutSubtreeIfNeeded];
     NSTableView* table=(id)Find(manager.view,NSTableView.class);
     NSScrollView* scroll=table.enclosingScrollView;
-    NSRect visible=table.visibleRect;
-    NSPoint point=[table convertPoint:NSMakePoint(NSMidX(visible),NSMaxY(visible)+8) toView:nil];
-    NSEvent* event=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:point modifierFlags:0 timestamp:0
-        windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];
-    [table autoscroll:event];
-    Check(NSMinY(scroll.contentView.bounds)>0,"document drag at the lower edge scrolls a crowded panel");
-    point=[table convertPoint:NSMakePoint(NSMidX(table.visibleRect),NSMinY(table.visibleRect)-8) toView:nil];
-    CGFloat before=NSMinY(scroll.contentView.bounds);
-    event=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:point modifierFlags:0 timestamp:0
-        windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:1];
-    [table autoscroll:event];
-    Check(NSMinY(scroll.contentView.bounds)<before,"document drag at the upper edge scrolls back");
+    auto dragStep = [&](CGFloat distance, BOOL down) {
+        [scroll.contentView scrollToPoint:NSMakePoint(0,400)];
+        [scroll reflectScrolledClipView:scroll.contentView];
+        NSRect visible=table.visibleRect;
+        NSPoint point=[table convertPoint:NSMakePoint(NSMidX(visible),down ? NSMaxY(visible)-distance : NSMinY(visible)+distance) toView:nil];
+        NSEvent* event=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:point modifierFlags:0 timestamp:0
+            windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];
+        CGFloat before=NSMinY(scroll.contentView.bounds);
+        [table autoscroll:event];
+        return (NSMinY(scroll.contentView.bounds)-before)*(down ? 1 : -1);
+    };
+    for(int direction=0;direction<2;direction++) {
+        BOOL down=direction==1;
+        CGFloat early=dragStep(40,down), middle=dragStep(20,down), edge=dragStep(1,down);
+        Check(early>0,"drag scrolling starts well inside either edge");
+        Check(middle>early && edge>middle,"drag scrolling accelerates toward either edge");
+        Check(dragStep(70,down)==0,"central document area does not autoscroll");
+        Check(dragStep(-8,down)>=edge,"drag just outside the edge retains maximum scrolling speed");
+    }
 }
 
 // Contact sheet of the actual background draw calls, with fixture labels only.

@@ -1,5 +1,27 @@
 #import "SPDFMacGroupManagementTable.h"
 @implementation SPDFGroupManagementTable
+// AppKit keeps calling this during drag tracking, including a stationary pointer.
+- (BOOL)autoscroll:(NSEvent*)event {
+    NSScrollView* scroll=self.enclosingScrollView;
+    if(!scroll || !event) return NO;
+    NSRect visible=self.visibleRect;
+    NSPoint pointer=[self convertPoint:event.locationInWindow fromView:nil];
+    CGFloat zone=MIN(64,NSHeight(visible)/3);
+    if(zone<=0 || pointer.x<NSMinX(visible) || pointer.x>NSMaxX(visible)) return NO;
+    CGFloat top=pointer.y-NSMinY(visible), bottom=NSMaxY(visible)-pointer.y;
+    CGFloat distance=MIN(top,bottom);
+    if(distance>=zone) return NO;
+    CGFloat depth=MIN(1,MAX(0,1-distance/zone));
+    CGFloat step=(2+26*depth*depth)*(top<bottom ? -1 : 1);
+    NSPoint origin=scroll.contentView.bounds.origin;
+    CGFloat maximum=MAX(0,NSHeight(self.bounds)-NSHeight(scroll.contentView.bounds));
+    CGFloat next=MIN(maximum,MAX(0,origin.y+step));
+    if(next==origin.y) return NO;
+    origin.y=next;
+    [scroll.contentView scrollToPoint:origin];
+    [scroll reflectScrolledClipView:scroll.contentView];
+    return YES;
+}
 - (BOOL)acceptsFirstMouse:(NSEvent*)event { (void)event; return YES; }
 - (void)mouseDown:(NSEvent*)event {
     NSInteger row=[self rowAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
