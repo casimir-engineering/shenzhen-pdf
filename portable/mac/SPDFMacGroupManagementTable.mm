@@ -1,18 +1,41 @@
 #import "SPDFMacGroupManagementTable.h"
-@implementation SPDFGroupManagementTable
-// AppKit keeps calling this during drag tracking, including a stationary pointer.
+@implementation SPDFGroupManagementTable {
+    NSTimer* _dragScrollTimer;
+}
+- (NSPoint)documentDragWindowPoint {
+    return [self.window convertPointFromScreen:NSEvent.mouseLocation];
+}
+- (void)beginDocumentDragScrolling {
+    [self endDocumentDragScrolling];
+    __weak SPDFGroupManagementTable* weakSelf=self;
+    _dragScrollTimer=[NSTimer timerWithTimeInterval:1.0/60 repeats:YES block:^(NSTimer* timer) {
+        SPDFGroupManagementTable* table=weakSelf;
+        if(!table || !table.window) { [timer invalidate]; return; }
+        [table scrollDocumentDragAtWindowPoint:table.documentDragWindowPoint];
+    }];
+    [NSRunLoop.mainRunLoop addTimer:_dragScrollTimer forMode:NSRunLoopCommonModes];
+    [NSRunLoop.mainRunLoop addTimer:_dragScrollTimer forMode:NSEventTrackingRunLoopMode];
+}
+- (void)endDocumentDragScrolling { [_dragScrollTimer invalidate]; _dragScrollTimer=nil; }
+- (void)dealloc { [_dragScrollTimer invalidate]; }
+// NSTableView does not reliably request NSView autoscroll during a drag session.
+// The source's explicit drag lifecycle drives a tracking-mode timer instead.
 - (BOOL)autoscroll:(NSEvent*)event {
+    if(_dragScrollTimer || !event) return NO;
+    return [self scrollDocumentDragAtWindowPoint:event.locationInWindow];
+}
+- (BOOL)scrollDocumentDragAtWindowPoint:(NSPoint)point {
     NSScrollView* scroll=self.enclosingScrollView;
-    if(!scroll || !event) return NO;
+    if(!scroll) return NO;
     NSRect visible=self.visibleRect;
-    NSPoint pointer=[self convertPoint:event.locationInWindow fromView:nil];
+    NSPoint pointer=[self convertPoint:point fromView:nil];
     CGFloat zone=MIN(64,NSHeight(visible)/3);
     if(zone<=0 || pointer.x<NSMinX(visible) || pointer.x>NSMaxX(visible)) return NO;
     CGFloat top=pointer.y-NSMinY(visible), bottom=NSMaxY(visible)-pointer.y;
     CGFloat distance=MIN(top,bottom);
     if(distance>=zone) return NO;
     CGFloat depth=MIN(1,MAX(0,1-distance/zone));
-    CGFloat step=(2+26*depth*depth)*(top<bottom ? -1 : 1);
+    CGFloat step=(1+13*depth*depth)*(top<bottom ? -1 : 1);
     NSPoint origin=scroll.contentView.bounds.origin;
     CGFloat maximum=MAX(0,NSHeight(self.bounds)-NSHeight(scroll.contentView.bounds));
     CGFloat next=MIN(maximum,MAX(0,origin.y+step));
