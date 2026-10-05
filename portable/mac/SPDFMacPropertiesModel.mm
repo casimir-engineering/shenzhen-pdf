@@ -99,7 +99,7 @@ NSArray<NSDictionary*>* SPDFPropertiesSections(spdf_document* doc, NSString* sou
     if (sourcePath.length) {
         NSMutableDictionary* pathRow = spdf_properties_row(@"Location", sourcePath);
         pathRow[@"tooltip"] = sourcePath;
-        pathRow[@"middleTruncate"] = @YES;
+        pathRow[@"fullPath"] = @YES;
         [fileRows addObject:pathRow];
     }
     unsigned long long fileSize = [fileAttributes[NSFileSize] unsignedLongLongValue];

@@ -793,3 +793,13 @@ mac-page-pdf-copy-tests: core/spdf_document_export.h mupdf-libs $(CORE_OBJ) $(CO
 mac-collection-refresh-host-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionRefreshHostTests.mm mac/SPDFMacCollectionCompanionHost.mm mac/SPDFMacCollectionPipe.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionRefreshHostTests"
 	"$(BUILD)/SPDFMacCollectionRefreshHostTests"
+
+.PHONY: mac-image-rotation-tests
+mac-image-rotation-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacImageRotationTests.mm mac/SPDFMacImageRotation.mm mac/SPDFMacImageRotationPixels.mm mac/SPDFMacImageSave.mm $(CORE_OBJ) $(CORE_RECOLOR_OBJ) $(MUPDF_LIBS) -framework Cocoa -framework ImageIO -lm -o "$(BUILD)/SPDFMacImageRotationTests"
+	"$(BUILD)/SPDFMacImageRotationTests"
+
+.PHONY: mac-image-rotation-integration-tests
+mac-image-rotation-integration-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacImageRotationIntegrationTests.mm mac/SPDFMacImageRotationIntegration.mm -framework Cocoa -o "$(BUILD)/SPDFMacImageRotationIntegrationTests"
+	"$(BUILD)/SPDFMacImageRotationIntegrationTests"

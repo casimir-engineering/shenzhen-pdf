@@ -156,7 +156,9 @@ does not re-trigger the macOS access prompt.
   a PDF's own copy-permission flag never blocks it.
 - **Rotate page** clockwise / anticlockwise (<kbd>Cmd+R</kbd> /
   <kbd>Cmd+Shift+R</kbd>). On a Markdown document the same commands turn the
-  *paper* landscape, and the text stays upright.
+  *paper* landscape, and the text stays upright. Writable raster images use the
+  same shortcuts and save their orientation to disk; JPEG uses lossless orientation
+  metadata. Collection copies remain read-only; save a copy to rotate them.
 - **Presentation mode** (<kbd>F5</kbd> or <kbd>Cmd+Shift+F</kbd>) — chrome-free
   full screen, pure black surround, optional sleep prevention.
 - **File → Properties** (<kbd>Opt+I</kbd> on Mac) — available for every open file,
@@ -167,7 +169,8 @@ does not re-trigger the macOS access prompt.
   vector artwork shows page dimensions without invented pixel resolution. PDFs
   retain author, producer, dates, permissions, page and annotation statistics.
   File size and location remain available for other formats. Metadata is read
-  only when Properties is opened.
+  only when Properties is opened. The complete file path wraps without truncation
+  and can be selected in full or in part for copying.
 - **Auto-reload** — a document edited on disk refreshes in place, keeping your
   place. For Markdown the new render is prepared off-screen and swapped in
   complete, so nothing blanks or flashes.

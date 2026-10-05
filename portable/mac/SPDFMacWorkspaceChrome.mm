@@ -1,4 +1,6 @@
 #import "SPDFMacChromeColors.h"
+#import "SPDFMacPastedImageState.h"
+#import "SPDFMacHeaderDragView.h"
 #import "SPDFMacWorkspaceChrome.h"
 #import "SPDFMacFindInteraction.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -24,11 +26,10 @@ static char chromeKey;
 @property NSButton* next;
 @property NSLayoutConstraint* toolbarRight;
 @property NSLayoutConstraint* headerWidth;
-@property NSView* footer;
+@property NSView* sourcePill;
 @property NSTextField* sourceStatus;
 @property NSTextField* outlineSummary;
 @property NSLayoutConstraint* sidebarBottom;
-@property NSLayoutConstraint* splitBottom;
 @property NSStackView* primaryRow;
 @property NSStackView* headerRow;
 @property NSStackView* toolsRow;
@@ -87,6 +88,13 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     SPDFSidebarNavigationControl* navigation = (id)_sidebarModeControl;
     [navigation setCollapseTarget:self action:@selector(toggleSidebar:)];
     _window.backgroundColor = SPDFCollectionColor(@"titlebar");
+    NSView* sidebarHeader = [SPDFHeaderDragView new]; sidebarHeader.translatesAutoresizingMaskIntoConstraints = NO;
+    [_sidebarContainer addSubview:sidebarHeader positioned:NSWindowBelow relativeTo:_sidebarModeControl];
+    [NSLayoutConstraint activateConstraints:@[
+        [sidebarHeader.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],
+        [sidebarHeader.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor],
+        [sidebarHeader.topAnchor constraintEqualToAnchor:_sidebarContainer.topAnchor],
+        [sidebarHeader.bottomAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor]]];
     for (NSView* host in @[_sidebarContainer,_toolbar]) {
         NSView* surface = SPDFCollectionSurface(@"window"); surface.translatesAutoresizingMaskIntoConstraints = NO;
         [host addSubview:surface positioned:NSWindowBelow relativeTo:nil];
@@ -154,7 +162,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     [state.primaryRow setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     [state.toolsRow setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    state.mapHeader = SPDFCollectionSurface(@"pane"); state.mapHeader.translatesAutoresizingMaskIntoConstraints = NO;
+    state.mapHeader = [SPDFHeaderDragView new]; state.mapHeader.translatesAutoresizingMaskIntoConstraints = NO;
     [_documentContainer addSubview:state.mapHeader];
     [NSLayoutConstraint activateConstraints:@[
         [state.mapHeader.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
@@ -203,38 +211,47 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [options.leadingAnchor constraintEqualToAnchor:state.searchControls.leadingAnchor],
         [options.trailingAnchor constraintLessThanOrEqualToAnchor:state.searchControls.trailingAnchor]]];
     _sidebarScrollBelowModeConstraint.constant = 82;
-    state.footer = SPDFCollectionSurface(@"pane"); state.footer.translatesAutoresizingMaskIntoConstraints = NO;
-    [_window.contentView addSubview:state.footer];
-    _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _statusLabel.font = [NSFont systemFontOfSize:11]; _statusLabel.textColor = NSColor.secondaryLabelColor;
-    [state.footer addSubview:_statusLabel];
+    // Status updates keep their existing model for jobs and errors, but the
+    // redundant page/zoom footer no longer consumes reader height.
+    state.sourcePill = SPDFCollectionSurface(@"control");
+    state.sourcePill.identifier = @"WorkspaceSourcePill";
+    state.sourcePill.translatesAutoresizingMaskIntoConstraints = NO;
+    state.sourcePill.wantsLayer = YES; state.sourcePill.layer.cornerRadius = 7;
+    [_sidebarContainer addSubview:state.sourcePill];
     state.sourceStatus = SPDFCollectionText(@"",11,NSFontWeightRegular,YES);
     state.sourceStatus.translatesAutoresizingMaskIntoConstraints = NO;
-    [state.footer addSubview:state.sourceStatus];
-    for (NSLayoutConstraint* c in _window.contentView.constraints)
-        if (c.firstItem == _splitView && c.firstAttribute == NSLayoutAttributeBottom) state.splitBottom = c;
+    [state.sourcePill addSubview:state.sourceStatus];
     [NSLayoutConstraint activateConstraints:@[
-        [state.footer.leadingAnchor constraintEqualToAnchor:_window.contentView.leadingAnchor],
-        [state.footer.trailingAnchor constraintEqualToAnchor:_window.contentView.trailingAnchor],
-        [state.footer.bottomAnchor constraintEqualToAnchor:_window.contentView.bottomAnchor],
-        [state.footer.heightAnchor constraintEqualToConstant:28],
-        [state.sourceStatus.leadingAnchor constraintEqualToAnchor:state.footer.leadingAnchor constant:16],
-        [state.sourceStatus.centerYAnchor constraintEqualToAnchor:state.footer.centerYAnchor],
-        [state.sourceStatus.trailingAnchor constraintLessThanOrEqualToAnchor:_statusLabel.leadingAnchor constant:-16],
-        [_statusLabel.trailingAnchor constraintEqualToAnchor:state.footer.trailingAnchor constant:-16],
-        [_statusLabel.centerYAnchor constraintEqualToAnchor:state.footer.centerYAnchor]]];
+        [state.sourcePill.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:12],
+        [state.sourcePill.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-12],
+        [state.sourcePill.bottomAnchor constraintEqualToAnchor:_sidebarContainer.bottomAnchor constant:-8],
+        [state.sourcePill.heightAnchor constraintEqualToConstant:26],
+        [state.sourceStatus.leadingAnchor constraintEqualToAnchor:state.sourcePill.leadingAnchor constant:8],
+        [state.sourceStatus.trailingAnchor constraintEqualToAnchor:state.sourcePill.trailingAnchor constant:-8],
+        [state.sourceStatus.centerYAnchor constraintEqualToAnchor:state.sourcePill.centerYAnchor]]];
     [self syncWorkspaceChrome];
 }
 - (void)syncWorkspaceChrome {
     SPDFWorkspaceChromeState* state = objc_getAssociatedObject(self,&chromeKey); if (!state) return;
     ((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle = [self selectedTab].path.lastPathComponent ?: _path.lastPathComponent ?: @"No document";
     BOOL chapters = _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters;
-    state.outlineSummary.hidden = !chapters;
+    SPDFDocumentTab* tab = [self selectedTab];
+    BOOL saved = [self collectionTabIsSavedVersion:tab];
+    BOOL copy = saved || tab.readOnly || SPDFPathIsUnsavedPastedImage(tab.path);
+    state.sourcePill.hidden = !copy || _presentationMode;
+    state.sourceStatus.stringValue = saved ? @"Collection copy · Read-only" :
+        tab.readOnly ? @"Working copy · Read-only" : @"Unsaved image";
+    state.sourceStatus.toolTip = state.sourceStatus.stringValue;
+    state.outlineSummary.hidden = !chapters || copy;
     state.outlineSummary.stringValue = chapters ? [self sidebarOutlineSummary] : @"";
-    state.sidebarBottom.constant = chapters ? -36 : 0;
-    // Source identity and the existing live status each appear once. Errors,
-    // search progress and zoom continue through the original status label.
-    state.sourceStatus.stringValue = [self collectionTabIsSavedVersion:[self selectedTab]] ? @"Saved version · Read-only" : (_path.length ? @"Original file" : @"No document");
+    state.sidebarBottom.constant = (chapters || copy) ? -42 : 0;
+    // History and Groups use their own hosts. Reserve the same bottom slot in
+    // every mode so their final row/actions never sit beneath the source pill.
+    for(NSLayoutConstraint* constraint in _sidebarContainer.constraints)
+        if(constraint.firstAttribute==NSLayoutAttributeBottom &&
+           [constraint.firstItem isKindOfClass:NSView.class] &&
+           [((NSView*)constraint.firstItem).identifier isEqual:@"WorkspaceSidebarBody"])
+            constraint.constant = copy ? -42 : 0;
     state.searchControls.hidden = _sidebarModeControl.spdf_selectedSidebarMode != SPDFSidebarModeSearch;
     state.mapHeader.hidden = !_minimapVisible || _presentationMode;
     state.command.hidden = _presentationMode;
@@ -250,7 +267,6 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     for (NSView* view in _toolbar.arrangedSubviews)
         if ([view.identifier isEqualToString:@"CollectionVersionIndicator"] && !view.hidden) revision = YES;
     _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 76 : 44) + (revision ? 28 : 0);
-    state.footer.hidden = _presentationMode; state.splitBottom.constant = _presentationMode ? 0 : -28;
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _presentationMode;
     _toolbarOverflowButton.hidden = YES;

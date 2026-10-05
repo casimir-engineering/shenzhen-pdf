@@ -8,4 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Rotate writable images with **⌘R / ⇧⌘R**; the saved orientation survives reopening. JPEG rotation preserves its compressed pixels.
+- **Properties** shows the full file path, wrapping onto multiple lines and allowing partial or complete copying.
+- Drag the window from empty space in the Chapters/tools header or the map header.
+- Removed the bottom status bar. Collection/working-copy status appears only when relevant, as a pill at the bottom of the left panel.
+- Fixed the extra space after **Fit Width → Fit Page** on images; the first Fit Page now settles the scrollers before measuring.

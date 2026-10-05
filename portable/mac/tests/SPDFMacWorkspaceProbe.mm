@@ -372,6 +372,7 @@ static void CheckIconReadability(NSControl* control) {
     }
 }
 @end
+#import "SPDFMacWorkspaceBatchChecks.h"
 static BOOL updaterInvoked;
 static void UpdaterSpy(id object,SEL action,BOOL userInitiated) {
     (void)object; (void)action; updaterInvoked=userInitiated;
@@ -423,6 +424,7 @@ static NSURL* Fixture(NSString* root) {
     PDF.outlineRoot=outline; Check([PDF writeToURL:URL],@"PDF fixture written"); return URL;
 }
 int main(int argc,const char* argv[]) {
+    setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
         NSString* root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
@@ -436,13 +438,15 @@ int main(int argc,const char* argv[]) {
         [SPDFReadmeMarkdown() writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
+            if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
             CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader);
-            [reader checkResponsivePanels]; [reader checkRepeatedMapClicks];
+            [reader checkResponsivePanels]; [reader checkRepeatedMapClicks]; [reader checkBatchChanges];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
                 [reader capture:output.length ? [output stringByAppendingPathComponent:name] : nil width:width.doubleValue sidebar:YES map:YES];
             }
             [reader setProbeHistory:YES]; Check([reader probeHistoryMouseClicks]==0,@"actual History responds across its full button height");
+            [reader checkCopyPanelInsets];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-history.png" : @"reader-light-history.png"] : nil
                 width:1280 sidebar:YES map:YES];
             [reader setProbeHistory:NO];
