@@ -44,3 +44,18 @@ Collection copy: source identity appears at the bottom of the left panel.
 A separate pre-existing renderer issue surfaced while constructing the unequal-DPI fixture: `mupdf/source/fitz/load-png.c` assigns the PNG X resolution to both axes in its image-info reader. This batch verifies preservation/swapping of the file metadata itself and does not modify the vendored renderer.
 
 No release was published for this batch.
+
+## Follow-up: continuous panel separator
+
+The six-point exclusion added above also shortened the divider drawing, leaving a visible discontinuity at the bottom of the left panel. The divider now paints to the bottom edge. Only hit testing and resize-cursor coverage exclude the native six-point window-resize zone. The same correction applies to the map divider.
+
+The production workspace probe now checks that the painted divider reaches the bottom and that the native bottom-edge zone remains passive, alongside its repeated click and divider-drag checks. The app is rebuilt in `dist`; the user's running instance is unchanged.
+
+Magnified offscreen-render detail, before and after:
+
+![Bottom separator before](reader-refinements-2026-10-05/divider-before.png)
+![Bottom separator after](reader-refinements-2026-10-05/divider-after.png)
+
+Pixel inspection confirms that all ten bottom separator pixels now have the same color; the prior render had six black pixels at its end.
+
+The continuity assertion fails against the prior coordinator (38 failures across the probe layouts) and passes with the fix. Build, signature verification and source-size checks pass.
