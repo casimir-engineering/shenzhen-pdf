@@ -127,6 +127,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     for (NSView* view in _toolbar.arrangedSubviews.copy) { [_toolbar removeArrangedSubview:view]; [view removeFromSuperview]; }
     _pageField.bordered = NO; _pageField.drawsBackground = NO;
     _pageField.font = [NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
+    _pageCountLabel.font = _pageField.font;
     for (NSLayoutConstraint* c in _pageField.constraints) if (c.firstAttribute == NSLayoutAttributeWidth) c.constant = 30;
     _fitModePopup.bordered = NO; _fitModePopup.font = [NSFont systemFontOfSize:12];
     StyleIcon(_ocrButton); StyleIcon(_translateButton);
@@ -144,7 +145,10 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.next = Icon(@"chevron.right",@"Next page",self,@selector(nextPage:));
     state.collection = Icon(@"books.vertical",@"Collection",self,@selector(showCollectionManager:));
     state.print = Icon(@"printer",@"Print document",self,@selector(printDocument:));
-    state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,_pageField,_pageCountLabel,state.next,_fitModePopup,_zoomSegments,_markdownFontSizeSegments,_toolbarSpacer]];
+    NSStackView* counter = [NSStackView stackViewWithViews:@[_pageField,_pageCountLabel]];
+    counter.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    counter.alignment = NSLayoutAttributeFirstBaseline; counter.spacing = 2;
+    state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,counter,state.next,_fitModePopup,_zoomSegments,_markdownFontSizeSegments,_toolbarSpacer]];
     state.tools = @[state.collection,_readingThemeButton,_ocrButton,_translateButton,state.print];
     state.toolsRow = [NSStackView stackViewWithViews:state.tools];
     for (NSStackView* row in @[state.primaryRow,state.toolsRow]) {
@@ -271,6 +275,9 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _presentationMode;
     _toolbarOverflowButton.hidden = YES;
+    CGFloat pageWidth = ceil([_pageField.stringValue sizeWithAttributes:@{NSFontAttributeName:_pageField.font}].width)+4;
+    for (NSLayoutConstraint* c in _pageField.constraints)
+        if (c.firstAttribute==NSLayoutAttributeWidth && !c.secondItem) c.constant=MAX(12,pageWidth);
     state.previous.enabled = [_pageSegments isEnabledForSegment:0];
     state.next.enabled = [_pageSegments isEnabledForSegment:1];
     state.print.enabled = [self hasActiveDocument];

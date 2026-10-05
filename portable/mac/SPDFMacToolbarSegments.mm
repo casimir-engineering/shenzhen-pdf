@@ -41,20 +41,19 @@
     (void)dirty; if (!self.segmentCount) return;
     NSRect bounds = NSInsetRect(self.bounds,1,2);
     if (self.segmentCount > 1 || self.cell.highlighted) {
-        [[NSColor.labelColor colorWithAlphaComponent:.06] setFill];
+        [[NSColor.labelColor colorWithAlphaComponent:.025] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5] fill];
     }
     NSBezierPath* outline=[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5];
-    if (self.segmentCount>1) { [NSColor.separatorColor setStroke]; outline.lineWidth=.5; [outline stroke]; }
     for (NSInteger segment=0; segment<self.segmentCount; segment++) {
         NSRect frame=[self frameForSegment:segment];
         if (self.pressedSegment==segment) {
             [NSGraphicsContext saveGraphicsState]; [outline addClip];
-            [[NSColor.labelColor colorWithAlphaComponent:.13] setFill]; NSRectFillUsingOperation(frame,NSCompositingOperationSourceOver);
+            [[NSColor.labelColor colorWithAlphaComponent:.08] setFill]; NSRectFillUsingOperation(frame,NSCompositingOperationSourceOver);
             [NSGraphicsContext restoreGraphicsState];
         }
-        if (segment>0) { [NSColor.separatorColor setFill];
-            NSRectFill(NSMakeRect(NSMinX(frame),NSMinY(bounds)+5,.5,NSHeight(bounds)-10)); }
+        if (segment>0) { [[NSColor.labelColor colorWithAlphaComponent:.09] setFill];
+            NSRectFillUsingOperation(NSMakeRect(NSMinX(frame),NSMinY(bounds)+5,.5,NSHeight(bounds)-10),NSCompositingOperationSourceOver); }
 
         NSColor* color = SPDFChromeIconColor(self.enabled && [self isEnabledForSegment:segment]);
         NSImage* image = [self imageForSegment:segment];
