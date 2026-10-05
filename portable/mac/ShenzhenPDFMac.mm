@@ -2113,6 +2113,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                                                      keyEquivalent:@""];
     nearestSearchItem.target = self;
     [settingsMenu addItem:[NSMenuItem separatorItem]];
+    [settingsMenu addItemWithTitle:@"Keep Image Colors in Dark Theme by Default" action:@selector(toggleDefaultImageColors:) keyEquivalent:@""].target=self;
     SPDFMacInstallFileExplorerSettingsMenu(settingsMenu);
     SPDFMacInstallMarkdownEditorSettingsMenu(settingsMenu);
     [self installCollectionSettingsMenu:settingsMenu];
@@ -8513,7 +8514,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self savePersistentState];
 }
 
-
 - (SPDFDocumentTab*)newTabForPath:(NSString*)path {
     SPDFDocumentTab* tab = [[SPDFDocumentTab alloc] init];
     tab.path = [path copy];
@@ -8748,7 +8748,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self updateTabStrip];
     [self savePersistentState];
 }
-
 
 - (void)newTabRequested:(id)sender {
     [self openDocument:sender];
@@ -14024,7 +14023,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         [NSString stringWithFormat:@"All text removed. Backup saved as %@.", backupPath.lastPathComponent];
 }
 
-
 - (void)runOCRTaskWithTool:(NSString*)tool
                  tesseract:(NSString*)tesseract
                   language:(NSString*)language
@@ -15023,11 +15021,13 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         menuItem.state = _defaultMinimapVisibleForNewDocuments ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
+    if (action == @selector(toggleDefaultImageColors:)) {
+        menuItem.state = _darkThemePreservesImagesDefault ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
     if (action == @selector(toggleDarkThemePreservesImages:)) {
-        menuItem.state = _darkThemePreservesImages ? NSControlStateValueOn : NSControlStateValueOff;
-        // Only meaningful while the dark theme is on; greyed out rather than
-        // hidden so the setting is discoverable either way.
-        return _darkReadingTheme;
+        menuItem.state = !_darkThemePreservesImages ? NSControlStateValueOn : NSControlStateValueOff;
+        return [self hasActiveDocument];
     }
     if (action == @selector(toggleReadingTheme:)) {
         menuItem.title = self.readingThemeToggleTitle;

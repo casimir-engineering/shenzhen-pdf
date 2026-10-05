@@ -206,3 +206,9 @@ The table selects immediately on mouse-down, retains native drag tracking, and c
 Document context menus now come directly from the tab strip, including copy/reveal/editor/Collection and group actions. Added **Close Document** to that shared menu. Tab-bar expand/collapse uses outward/inward arrows distinct from the panel's list-disclosure chevrons.
 
 Drops between document rows carry a before-document anchor, including within the same group; dropping on a heading appends to that group. Native table autoscroll is retained. Regression tests cover both scroll edges, unchanged expanded rows during drag, cancellation, stale-token/foreign-source rejection, same-group and cross-group insertion, duplicate-path identity, YAML positions, and document-menu delegation. Sidebar, group, API and full native workspace probes pass. The running app remains untouched.
+
+### Per-document image colors and a separate default
+
+Added an image-color button immediately beside night mode. It and Cmd+Shift+I change the selected document's image-preservation choice; the View menu now describes the positive action as **Invert Image Colors in Dark Theme**. A separate **Keep Image Colors in Dark Theme by Default** Settings item has no shortcut and changes only the seed for new documents. The icon switches between outline and filled photo states, with an explicit action tooltip.
+
+Session YAML already stored each open tab's choice, but closing and reopening a file seeded the global default again. Explicit toggles now also merge into document memory, and new tabs restore that file-specific value before falling back to the default. This adds no file reads or rendering work to launch. Existing documents are unaffected by changing the default. The native workspace probe verifies independent choices, session roundtrip, file reopening, new-document defaults and toolbar layout at narrow/wide widths.

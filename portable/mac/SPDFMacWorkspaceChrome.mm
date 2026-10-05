@@ -22,6 +22,7 @@ static char chromeKey;
 @property NSButton* command;
 @property NSButton* collection;
 @property NSButton* print;
+@property NSButton* imageColors;
 @property NSButton* previous;
 @property NSButton* next;
 @property NSLayoutConstraint* toolbarRight;
@@ -149,7 +150,8 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     counter.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     counter.alignment = NSLayoutAttributeFirstBaseline; counter.spacing = 2;
     state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,counter,state.next,_fitModePopup,_zoomSegments,_markdownFontSizeSegments,_toolbarSpacer]];
-    state.tools = @[state.collection,_readingThemeButton,_ocrButton,_translateButton,state.print];
+    state.imageColors=Icon(@"photo",@"Invert image colors · ⇧⌘I",self,@selector(toggleDarkThemePreservesImages:));
+    state.tools = @[state.collection,_readingThemeButton,state.imageColors,_ocrButton,_translateButton,state.print];
     state.toolsRow = [NSStackView stackViewWithViews:state.tools];
     for (NSStackView* row in @[state.primaryRow,state.toolsRow]) {
         row.orientation = NSUserInterfaceLayoutOrientationHorizontal; row.alignment = NSLayoutAttributeCenterY;
@@ -262,7 +264,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.command.hidden = _presentationMode;
     _markdownFontSizeSegments.hidden = ![self isMarkdownActive];
     state.headerWidth.constant = _minimapVisible ? -16 : -48;
-    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds)-(_minimapVisible ? 0 : 32) < ([self isMarkdownActive] ? 600 : 532);
+    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds)-(_minimapVisible ? 0 : 32) < ([self isMarkdownActive] ? 632 : 564);
     if (state.wrapped != wrapped) {
         state.wrapped = wrapped;
         state.headerRow.orientation = wrapped ? NSUserInterfaceLayoutOrientationVertical : NSUserInterfaceLayoutOrientationHorizontal;
@@ -281,6 +283,10 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.previous.enabled = [_pageSegments isEnabledForSegment:0];
     state.next.enabled = [_pageSegments isEnabledForSegment:1];
     state.print.enabled = [self hasActiveDocument];
+    state.imageColors.enabled=[self hasActiveDocument];
+    state.imageColors.image=[NSImage imageWithSystemSymbolName:_darkThemePreservesImages ? @"photo" : @"photo.fill" accessibilityDescription:nil];
+    state.imageColors.toolTip=_darkThemePreservesImages ? @"Invert image colors in dark theme · ⇧⌘I" : @"Preserve image colors in dark theme · ⇧⌘I";
+    state.imageColors.accessibilityLabel=state.imageColors.toolTip;
     _findCountLabel.hidden = !_searchField.stringValue.length;
     _findSegments.hidden = !_searchField.stringValue.length;
 }

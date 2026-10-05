@@ -5,7 +5,8 @@
 // Cmd+Shift+I decides whether the pictures on it invert with it.
 //
 // The second row lived in Settings, which read as a preference; it is a
-// per-document view choice, remembered per file, so it belongs beside the
+// per-document view choice, remembered per file; Settings has a separate default.
+// The document command belongs beside the
 // inversion it modifies. Windows already had it on its View menu.
 //
 // Both equivalents are the letter I, and the shifted one is spelled with a

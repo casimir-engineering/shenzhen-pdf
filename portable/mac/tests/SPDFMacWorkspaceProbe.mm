@@ -1,8 +1,7 @@
 #import "SPDFMacSidebarHitProbe.h"
 #import "SPDFMacReadmeFixtures.h"
 // Offscreen integration fixture: actual reader window, controls, constraints,
-// PDF canvas and minimap. This does not call the application's entry point or
-// launch delegate. It never reads the user's configuration or opens a window.
+// PDF canvas and minimap; no app launch, user configuration or visible window.
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacTabGroups.h"
@@ -432,6 +431,7 @@ static NSURL* Fixture(NSString* root) {
         [outline insertChild:entry atIndex:i]; }
     PDF.outlineRoot=outline; Check([PDF writeToURL:URL],@"PDF fixture written"); return URL;
 }
+#import "SPDFMacImageColorChoiceChecks.h"
 int main(int argc,const char* argv[]) {
     setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
@@ -448,7 +448,7 @@ int main(int argc,const char* argv[]) {
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
-            CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader);
+            CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader);
             [reader checkResponsivePanels]; [reader checkRepeatedMapClicks]; [reader checkBatchChanges];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
