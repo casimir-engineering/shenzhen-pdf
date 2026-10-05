@@ -119,9 +119,9 @@ static void Fill(NSView* child, NSView* parent) {
     // Existing command availability remains shared by the accessible contextual menu.
     self.details = Label(@"Select a document or version.",12,NSFontWeightRegular);
     self.selectionButtons = [NSMutableArray array];
-    NSArray* titles = @[@"Open Original",@"Open Collection Copy",@"History",@"Compare with Latest",@"Compare with Previous",
+    NSArray* titles = @[@"Open Original",@"Open Collection Copy",@"History",@"Compare with Previous",
         @"Locate Original…",@"Save a Copy…",@"Keep forever",@"Delete all previous backups…"];
-    NSArray* actions = @[@"openOriginal:",@"preview:",@"history:",@"compareCurrent:",@"comparePrevious:",@"locate:",
+    NSArray* actions = @[@"openOriginal:",@"preview:",@"history:",@"comparePrevious:",@"locate:",
         @"exportCopy:",@"keep:",@"deleteSelected:"];
     for (NSUInteger i=0;i<titles.count;i++) [self.selectionButtons addObject:SPDFCollectionButton(titles[i],self,NSSelectorFromString(actions[i]),@"normal")];
     [self buildSettingsPane];

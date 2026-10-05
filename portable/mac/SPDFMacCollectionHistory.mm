@@ -287,9 +287,10 @@
         });
     });
 }
-- (void)compare:(BOOL)previous {
-    NSDictionary* selected = [self selectedVersion]; if (!selected) return;
-    NSInteger row = _table.selectedRow;
+- (void)compareVersion:(NSDictionary*)selected previous:(BOOL)previous {
+    if (!selected) return;
+    NSInteger row = [_versions indexOfObject:selected];
+    if (row == NSNotFound) return;
     if (previous && row+1 >= (NSInteger)_versions.count) return;
     NSDictionary* oldVersion = previous ? _versions[row+1] : selected;
     NSString* title = _document[@"title"] ?: @"Document";
@@ -310,8 +311,8 @@
         });
     });
 }
-- (void)compareCurrent:(id)sender { (void)sender; [self compare:NO]; }
-- (void)comparePrevious:(id)sender { (void)sender; [self compare:YES]; }
+- (void)compareCurrent:(id)sender { (void)sender; [self compareVersion:[self selectedVersion] previous:NO]; }
+- (void)comparePrevious:(id)sender { (void)sender; [self compareVersion:[self selectedVersion] previous:YES]; }
 - (void)saveCopy:(id)sender {
     (void)sender; NSDictionary* version = [self selectedVersion]; if (!version) return;
     [self saveVersion:version restoreLink:NO];
@@ -371,13 +372,24 @@
     NSMenuItem* reveal = [[NSMenuItem alloc] initWithTitle:@"Show in Explorer" action:@selector(showVersionInExplorer:) keyEquivalent:@""];
     reveal.target = self; reveal.representedObject = _versions[row]; [menu addItem:reveal];
     NSDictionary* version=_versions[row];
-    BOOL original=SPDFCollectionVersionIsLatest(_document,version) && SPDFCollectionOriginalAvailable(_document);
+    BOOL latest=SPDFCollectionVersionIsLatest(_document,version);
+    BOOL original=latest && SPDFCollectionOriginalAvailable(_document);
+    if (!latest) {
+        NSMenuItem* compare=[[NSMenuItem alloc] initWithTitle:@"Compare with Latest"
+            action:@selector(compareHistoryVersionWithLatest:) keyEquivalent:@""];
+        compare.target=self; compare.representedObject=version;
+        compare.enabled=![version[@"encrypted"] boolValue]; [menu addItem:compare];
+    }
     [menu addItem:NSMenuItem.separatorItem];
     NSMenuItem* remove=[[NSMenuItem alloc] initWithTitle:original ? @"Delete all previous backups…" : @"Delete version…"
         action:@selector(deleteHistoryItem:) keyEquivalent:@""];
     remove.target=self; remove.representedObject=@{@"version":version,@"previousBackups":@(original)};
     remove.enabled=!_deletionPending && (!original || _versions.count>1);
     menu.autoenablesItems=NO; [menu addItem:remove];
+}
+- (void)compareHistoryVersionWithLatest:(NSMenuItem*)sender {
+    // Menu identity owns the action; the row selected behind the menu may differ.
+    [self compareVersion:sender.representedObject previous:NO];
 }
 - (void)confirmDeletionOfVersion:(NSDictionary*)version previousBackups:(BOOL)previous
                      completion:(void (^)(BOOL))completion {

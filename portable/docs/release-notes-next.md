@@ -20,3 +20,5 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Standalone images retain their colors in dark mode while **Keep Image Colors in Dark Theme** is enabled; turning it off applies the dark theme. This also works for image copies with a generic filename extension.
 
 - Right-click a saved History version to **Delete version…**. On the linked original, **Delete all previous backups…** removes older snapshots while retaining the original and latest saved copy. Collection’s former “Delete Selected Copies” action now uses that name and scope.
+
+- Removed self-comparison from Collection. **Compare with Latest** is available on older History versions’ context menus and uses the clicked snapshot.

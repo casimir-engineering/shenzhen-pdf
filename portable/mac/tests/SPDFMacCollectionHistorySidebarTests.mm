@@ -99,8 +99,13 @@ static NSView* Identified(NSView* view, NSString* identifier) {
 @property(copy) void (^pendingDeletion)(BOOL);
 @property NSString* deletionVersion;
 @property BOOL deletionPrevious;
+@property NSString* comparedVersion;
+@property BOOL comparedPrevious;
 @end
 @implementation HistoryProbe
+- (void)compareVersion:(NSDictionary*)version previous:(BOOL)previous {
+    self.comparedVersion=version[@"id"]; self.comparedPrevious=previous;
+}
 - (void)confirmDeletionOfVersion:(NSDictionary*)version previousBackups:(BOOL)previous completion:(void (^)(BOOL))completion {
     self.deletionVersion=version[@"id"]; self.deletionPrevious=previous; self.pendingDeletion=completion;
 }
@@ -319,6 +324,16 @@ int main(void) {
         Expect(Await(^BOOL { return keep.hidden; }) && store.kept,"unlimited storage hides retention without clearing existing marks");
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
         [history menuNeedsUpdate:table.menu];
+        NSMenuItem* compare=[table.menu itemWithTitle:@"Compare with Latest"];
+        Expect(compare.enabled && [compare.representedObject[@"id"] isEqual:@"old"],
+            "older history row offers Compare with Latest for its own snapshot");
+        if(compare) {
+            [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+            [NSApp sendAction:compare.action to:compare.target from:compare];
+            Expect([history.comparedVersion isEqual:@"old"] && !history.comparedPrevious,
+                "history context comparison follows the clicked version, regardless of current selection");
+            [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
+        }
         NSMenuItem* remove=[table.menu itemWithTitle:@"Delete version…"];
         Expect(remove.enabled && [remove.representedObject[@"version"][@"id"] isEqual:@"old"],
             "older version has scoped deletion in its context menu");
@@ -337,6 +352,7 @@ int main(void) {
         }
         [history menuNeedsUpdate:table.menu];
         NSMenuItem* clear=[table.menu itemWithTitle:@"Delete all previous backups…"];
+        Expect(![table.menu itemWithTitle:@"Compare with Latest"],"latest history row has no self-comparison action");
         Expect(clear.enabled && ![table.menu itemWithTitle:@"Delete version…"],
             "linked original offers previous-backup cleanup instead of deleting itself");
         if(clear) {

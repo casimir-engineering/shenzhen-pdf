@@ -199,7 +199,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         }
         BOOL bulk = [@[@"keep:",@"deleteSelected:"] containsObject:action];
         button.enabled = doc && (single || bulk) && !_mutationPending;
-        if ([@[@"preview:",@"exportCopy:",@"keep:",@"compareCurrent:",@"comparePrevious:"] containsObject:action])
+        if ([@[@"preview:",@"exportCopy:",@"keep:",@"comparePrevious:"] containsObject:action])
             button.enabled &= archived;
         if ([action isEqual:@"openOriginal:"]) button.enabled &= sourceAvailable;
         if ([action isEqual:@"comparePrevious:"]) button.enabled &= previous;
