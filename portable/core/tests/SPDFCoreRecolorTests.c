@@ -119,10 +119,9 @@ int main(void) {
         check(memcmp(whole, rows, sizeof(whole)) == 0, "row-at-a-time recolor matches the whole-buffer form");
     }
 
-    /* Comic archives and bare images are pictures, not documents: never
-     * recolored, the way SumatraPDF skips its own override for image
-     * collections. Anything unrecognized is a document, so a text format we
-     * have not heard of still gets the theme. */
+    /* Comic archives and bare images are pictures. Rendering uses this
+     * classification to honor the preserve-images setting. Unknown suffixes
+     * are resolved lazily by the renderer when preservation needs it. */
     check(spdf_recolor_path_is_picture("/books/Volume 1.cbz"), "a comic archive is a picture");
     check(spdf_recolor_path_is_picture("/photos/IMG_0042.JPEG"), "an image is a picture, case insensitively");
     check(!spdf_recolor_path_is_picture("/docs/datasheet.pdf"), "a PDF is a document");

@@ -67,7 +67,7 @@ struct spdf_document {
     /* Image rectangles per page, for SPDF_RENDER_PRESERVE_IMAGES. Pure cache:
      * the dark reading theme itself is a per-render flag, not document state. */
     spdf_recolor_page_cache recolor_pages;
-    int picture_document; /* a comic archive or a bare image: never recolored */
+    int picture_document; /* -1 unknown; 0 document; 1 picture (honors preserve-images) */
 };
 
 #endif /* SPDF_CORE_DOCUMENT_H */

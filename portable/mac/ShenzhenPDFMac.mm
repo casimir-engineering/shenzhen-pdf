@@ -3032,31 +3032,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     return size;
 }
 
-- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode pageIndex:(NSInteger)pageIndex {
-    if (!_doc) return _zoom;
-    if (fitMode == SPDFFitModeCustom)
-        return MAX(kMinZoom, MIN(kMaxZoom, _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom));
-    if (fitMode == SPDFFitModeActual) return 1.0;
-
-    char err[1024];
-    float pageWidth = 0;
-    float pageHeight = 0;
-    if (!spdf_page_size(_doc, (int)pageIndex, &pageWidth, &pageHeight, err, sizeof(err)) || pageWidth <= 0 ||
-        pageHeight <= 0)
-        return _zoom;
-
-    if (fitMode == SPDFFitModePage) {
-        // Fit Width can leave a legacy horizontal scroller consuming height.
-        _pageScrollView.hasHorizontalScroller = NO;
-        _pageScrollView.hasVerticalScroller = !_presentationMode && spdf_page_count(_doc) > 1;
-        [_pageScrollView tile];
-    }
-    return [self zoomForFitMode:fitMode
-                       pageSize:NSMakeSize(pageWidth, pageHeight)
-                       clipSize:[self documentClipSizeForLayout]
-                   fallbackZoom:_zoom];
-}
-
 - (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode
                  pageSize:(NSSize)pageSize
                  clipSize:(NSSize)clipSize

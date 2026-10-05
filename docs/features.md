@@ -408,7 +408,8 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
   untouched, **per document**, defaulting to on and remembered per file. Scanned
   pages (one big image) are darkened anyway, so the setting can never quietly
   switch dark mode off.
-- **Comic archives and image files are never recolored.**
+- **Standalone images and comic archives** retain their original colors when
+  Keep Image Colors is enabled; disabling it applies the dark reading theme.
 - **Page separation that works in the dark** — a white sheet with a drop shadow
   in light, a crisp hairline border in dark, in the page view and the minimap
   alike.

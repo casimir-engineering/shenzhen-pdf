@@ -1,4 +1,5 @@
 // Included by the production reader probe; never orders a reader window onscreen.
+#import <objc/message.h>
 #import "SPDFMacHeaderDragView.h"
 #import "SPDFMacWindowChrome.h"
 static NSView* BatchFind(NSView* host,NSString* identifier) {
@@ -14,6 +15,7 @@ static void BatchDragSpy(id object,SEL action,NSEvent* event) { (void)object; (v
 - (void)checkCopyPanelInsets;
 - (void)fitWidth:(id)sender;
 - (void)fitPage:(id)sender;
+- (void)fitHeight:(id)sender;
 - (void)resizeDocumentView;
 @end
 @implementation WorkspaceReaderProbe (BatchChecks)
@@ -56,34 +58,70 @@ static void BatchDragSpy(id object,SEL action,NSEvent* event) { (void)object; (v
     [self checkSingleImageFit];
 }
 - (void)checkSingleImageFit {
-    // Exercise the actual Cmd+2 / Cmd+1 action path on a tall, single-page image.
-    NSBitmapImageRep* bitmap=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:400 pixelsHigh:900
-        bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace
-        bytesPerRow:0 bitsPerPixel:0];
-    NSString* path=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"png"]];
-    [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES];
-    char error[1024]={}; spdf_document* image=spdf_open(path.fileSystemRepresentation,error,sizeof(error));
-    Check(image!=NULL,@"image fit regression fixture loads"); if(!image) return;
-    spdf_document* previous=_doc; _doc=image;
-    NSString* previousPath=_path; _path=path;
-    NSMutableArray* pages=_renderedPages;
+    spdf_document* previous=_doc;
+    NSString* previousPath=_path; NSMutableArray* pages=_renderedPages;
     CGFloat zoom=_zoom; SPDFFitMode mode=_fitMode;
-    _pageScrollView.scrollerStyle=NSScrollerStyleLegacy;
-    SPDFRenderedPage* page=[SPDFRenderedPage new]; page.pageWidth=400; page.pageHeight=900;
-    _renderedPages=[NSMutableArray arrayWithObject:page]; _pageView.pages=_renderedPages;
-    [self fitWidth:nil];
-    Check(_pageScrollView.hasVerticalScroller,@"Fit Width requires scrolling the tall image");
-    [self fitPage:nil]; CGFloat first=_zoom; NSRect firstFrame=_pageView.frame;
-    [self fitPage:nil];
-    Check(fabs(first-_zoom)<.0001 && NSEqualRects(firstFrame,_pageView.frame),
-        @"first Fit Page after Fit Width is identical to second Fit Page");
-    Check(!_pageScrollView.hasVerticalScroller && !_pageScrollView.hasHorizontalScroller,
-        @"single image Fit Page has no leftover scrollbars or bottom strip");
+    for(NSValue* dimensions in @[[NSValue valueWithSize:NSMakeSize(400,900)],
+                                 [NSValue valueWithSize:NSMakeSize(900,400)],
+                                 [NSValue valueWithSize:NSMakeSize(940,692)]]) {
+        NSSize size=dimensions.sizeValue;
+        NSBitmapImageRep* bitmap=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+            pixelsWide:size.width pixelsHigh:size.height bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES
+            isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+        memset(bitmap.bitmapData,255,bitmap.bytesPerRow*bitmap.pixelsHigh);
+        // Distinct top/bottom bands make clipping visible in native evidence.
+        for(NSInteger y=0;y<bitmap.pixelsHigh;y++) for(NSInteger x=0;x<bitmap.pixelsWide;x++) {
+            unsigned char* pixel=bitmap.bitmapData+y*bitmap.bytesPerRow+x*4;
+            if(y<12 || y>=bitmap.pixelsHigh-12) { pixel[0]=y<12 ? 90 : 210; pixel[1]=110; pixel[2]=y<12 ? 210 : 90; }
+        }
+        NSString* path=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingPathExtension:@"png"]];
+        [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES];
+        char error[1024]={}; spdf_document* image=spdf_open(path.fileSystemRepresentation,error,sizeof(error));
+        Check(image!=NULL,@"image fit regression fixture loads"); if(!image) continue;
+        _doc=image; _path=path;
+        SPDFRenderedPage* page=[SPDFRenderedPage new]; page.pageWidth=size.width; page.pageHeight=size.height;
+        _renderedPages=[NSMutableArray arrayWithObject:page]; _pageView.pages=_renderedPages;
+        for(NSNumber* style in @[@(NSScrollerStyleLegacy),@(NSScrollerStyleOverlay)]) {
+            _pageScrollView.scrollerStyle=(NSScrollerStyle)style.integerValue;
+            for(NSNumber* action in @[@2,@1,@3,@2,@3,@1]) {
+                SEL selector=action.intValue==1 ? @selector(fitPage:) : action.intValue==2 ? @selector(fitWidth:) : @selector(fitHeight:);
+                ((void(*)(id,SEL,id))objc_msgSend)(self,selector,nil);
+                CGFloat first=_zoom; NSRect frame=_pageView.frame;
+                if(action.intValue!=2)
+                    Check([_pageView rectForPageAtIndex:0].size.height<=_pageScrollView.contentView.bounds.size.height+.5,
+                        @"first Fit Page/Height already fits the settled viewport");
+                ((void(*)(id,SEL,id))objc_msgSend)(self,selector,nil);
+                NSString* label=[NSString stringWithFormat:@"Cmd+%@ %.0fx%.0f %@",action,size.width,size.height,style.intValue==0 ? @"legacy" : @"overlay"];
+                Check(fabs(first-_zoom)<.0001 && NSEqualRects(frame,_pageView.frame),
+                    [label stringByAppendingString:@" first and repeated fit have identical geometry"]);
+                for(NSView* divider in @[_sidebarDividerView,_minimapDividerView])
+                    Check(fabs(NSMinY([divider convertRect:divider.bounds toView:_window.contentView]))<.01,
+                        [label stringByAppendingString:@" panel separator reaches bottom"]);
+                if(style.integerValue==NSScrollerStyleLegacy && size.width!=940) {
+                    NSString* output=NSProcessInfo.processInfo.arguments.lastObject;
+                    if([output hasPrefix:@"/"]) {
+                        NSView* content=_window.contentView; [content layoutSubtreeIfNeeded];
+                        NSBitmapImageRep* shot=[content bitmapImageRepForCachingDisplayInRect:content.bounds];
+                        [content cacheDisplayInRect:content.bounds toBitmapImageRep:shot];
+                        NSString* name=[NSString stringWithFormat:@"image-%.0fx%.0f-cmd%@.png",size.width,size.height,action];
+                        [[shot representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+                            writeToFile:[output stringByAppendingPathComponent:name] atomically:YES];
+                    }
+                }
+                if(action.intValue!=2) {
+                    NSRect pageRect=[_pageView rectForPageAtIndex:0];
+                    Check(pageRect.size.height<=_pageScrollView.contentView.bounds.size.height+.5,
+                        [label stringByAppendingString:@" page bottom fits in the settled viewport"]);
+                    Check(!_pageScrollView.hasVerticalScroller,[label stringByAppendingString:@" has no stale vertical scroller"]);
+                }
+            }
+        }
+        _doc=previous; spdf_close(image);
+        [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+    }
     _doc=previous; _path=previousPath; _renderedPages=pages; _pageView.pages=pages;
     _zoom=zoom; _fitMode=mode; _pageView.zoom=zoom;
-    _pageScrollView.scrollerStyle=NSScrollerStyleOverlay;
-    [self resizeDocumentView]; spdf_close(image);
-    [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+    _pageScrollView.scrollerStyle=NSScrollerStyleOverlay; [self resizeDocumentView];
 }
 - (void)checkCopyPanelInsets {
     NSInteger mode=_sidebarModeControl.spdf_selectedSidebarMode;

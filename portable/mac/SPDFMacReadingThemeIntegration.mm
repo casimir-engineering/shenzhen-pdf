@@ -38,8 +38,8 @@
 // re-rendered like any other stale page.
 - (unsigned)readingThemeRenderFlags {
     if (!_darkReadingTheme) return 0;
-    // Comic archives and bare images are skipped by the core itself, per
-    // document, so nothing here has to know the format.
+    // Core rendering applies the same preservation setting to standalone
+    // pictures and embedded figures; format handling stays in the core.
     return SPDF_RENDER_DARK_THEME | (_darkThemePreservesImages ? SPDF_RENDER_PRESERVE_IMAGES : 0u);
 }
 

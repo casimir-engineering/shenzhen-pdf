@@ -15,3 +15,6 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Fixed the extra space after **Fit Width → Fit Page** on images; the first Fit Page now settles the scrollers before measuring.
 
 - Fixed the broken separator line at the bottom of the left panel; its drawing now reaches the edge while mouse handling preserves the native window-resize zone.
+
+- Fixed first-press fitting in **Fit Height** and **Fit Width** too: scrollbar changes no longer clip the image bottom or change the fit on the next press.
+- Standalone images retain their colors in dark mode while **Keep Image Colors in Dark Theme** is enabled; turning it off applies the dark theme. This also works for image copies with a generic filename extension.
