@@ -1,4 +1,5 @@
 #import "SPDFMacDocumentView.h"
+#import "SPDFMacEmptyDocumentView.h"
 #import "SPDFMacCursorOverlay.h"
 #import "SPDFMacDelayedLinkActivation.h"
 #import "SPDFMacFitGeometry.h"
@@ -109,6 +110,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     [_pendingLinkActivation cancel];
     _linkUndoAvailable = NO;
     _pages = [pages copy];
+    if (_pages.count) SPDFHideEmptyDocumentView(self);
     [self invalidateLayoutCache];
     [self setNeedsDisplay:YES];
 }
@@ -315,7 +317,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
         MAX(clipSize.width, widestPage + spdf_mac_horizontal_canvas_margin(widestPage, clipSize.width, pageMargin));
     CGFloat height = pageMargin;
 
-    if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 600), MAX(clipSize.height, 500));
+    if (self.pages.count == 0) return NSMakeSize(MAX(clipSize.width, 1), MAX(clipSize.height, 1));
 
     // Presentation mode shows exactly one page (the current one) fit to and
     // centered in the viewport, with no scrolling — the document view is a
@@ -514,19 +516,7 @@ static void spdf_launch_log_first_document_paint(NSUInteger pageCount, double st
     NSRectFill(dirtyRect);
 
     if (self.pages.count == 0) {
-        NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
-        style.alignment = NSTextAlignmentCenter;
-        NSDictionary* attrs = @{
-            NSForegroundColorAttributeName : [NSColor secondaryLabelColor],
-            NSFontAttributeName : [NSFont systemFontOfSize:16 weight:NSFontWeightMedium],
-            NSParagraphStyleAttributeName : style
-        };
-        NSString* message = self.emptyMessage.length ? self.emptyMessage : @"Open a document";
-        NSRect textRect =
-            NSMakeRect(32.0, MAX(72.0, NSMidY(self.bounds) - 18.0), MAX(1.0, NSWidth(self.bounds) - 64.0), 44.0);
-        [message drawWithRect:textRect
-                      options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine
-                   attributes:attrs];
+        SPDFShowEmptyDocumentView(self,self.emptyMessage,self.reader);
         return;
     }
 

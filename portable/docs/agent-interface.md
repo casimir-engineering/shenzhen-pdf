@@ -206,7 +206,12 @@ request instead of highlighting an unrelated document.
 
 ## Tab groups and persisted sessions
 
-Group commands act on tabs already open in the receiving reader window. They
+Group commands work whether the app is running or closed. With the app closed,
+they edit the saved session under its normal file lock, without opening documents,
+creating windows, or launching the reader. The most recently focused saved window
+is used by default; pass `windowSessionID` to target another saved window. Reading
+positions, unrelated settings, and other windows are preserved. An initial saved
+session must already exist. With the app running, commands use its live window. They
 use the same group operations and session serializer as the tab strip. No
 separate agent configuration is created. Names, colors, membership, positions
 and collapsed states therefore survive ordinary app restarts.

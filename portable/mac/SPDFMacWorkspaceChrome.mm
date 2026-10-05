@@ -131,7 +131,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     _fitModePopup.bordered = NO; _fitModePopup.font = [NSFont systemFontOfSize:12];
     StyleIcon(_ocrButton); StyleIcon(_translateButton);
     for (NSSegmentedControl* control in @[_zoomSegments,_markdownFontSizeSegments]) {
-        control.segmentStyle = NSSegmentStyleSeparated;
+        control.segmentStyle = NSSegmentStyleRounded;
         [(NSCell*)control.cell setBordered:NO];
         for (NSInteger segment=0; segment<control.segmentCount; segment++) [control setWidth:28 forSegment:segment];
         [control.heightAnchor constraintEqualToConstant:28].active = YES;
@@ -152,6 +152,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         row.spacing = 4; row.translatesAutoresizingMaskIntoConstraints = NO;
 
     }
+    [state.primaryRow setCustomSpacing:12 afterView:_zoomSegments];
     state.headerRow = [NSStackView stackViewWithViews:@[state.primaryRow,state.toolsRow]];
     state.headerRow.spacing = 4; state.headerRow.alignment = NSLayoutAttributeCenterY;
     state.headerRow.translatesAutoresizingMaskIntoConstraints = NO;
