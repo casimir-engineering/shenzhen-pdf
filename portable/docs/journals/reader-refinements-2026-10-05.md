@@ -59,3 +59,23 @@ Magnified offscreen-render detail, before and after:
 Pixel inspection confirms that all ten bottom separator pixels now have the same color; the prior render had six black pixels at its end.
 
 The continuity assertion fails against the prior coordinator (38 failures across the probe layouts) and passes with the fix. Build, signature verification and source-size checks pass.
+
+
+## Follow-up: fit-mode transitions and standalone-image colors
+
+The Cmd+3 report exposed another viewport-measurement issue: Fit Height on a wide image needs a horizontal scrollbar. With legacy scrollbars, adding that scrollbar reduces the available height after the fit was calculated. Fit Width has the corresponding vertical-scrollbar problem on tall images. The extracted fit preparation now establishes scrollbar ownership before measuring either axis. Near an aspect-ratio boundary, where adding a scrollbar makes itself unnecessary, a single-page fit settles within both axes instead of oscillating between presses.
+
+Native offscreen evidence uses blue and red image-edge bands to make clipping visible. Fit Page shows the complete image; Fit Height keeps both bands visible while allowing horizontal scrolling. Both panel separator lines reach the bottom in each mode.
+
+![Landscape image, Cmd+1](reader-refinements-2026-10-05/image-fit-cmd1.png)
+![Landscape image, Cmd+3](reader-refinements-2026-10-05/image-fit-cmd3.png)
+
+The user clarified that color inversion affects standalone image tabs. These now honor **Keep Image Colors in Dark Theme**: enabled preserves the original pixels, disabled applies the dark reading theme. Byte-identical copies with generic suffixes are classified by MuPDF's actual format only on the first dark render that needs preservation. Opening and light rendering perform no new metadata lookup; the tests assert this deferred classification. The existing scanned-PDF exception remains unchanged.
+
+Validation:
+
+- Real Fit Page/Width/Height actions, transitions and repeated commands, with tall, wide and boundary-aspect images under legacy and overlay scrollbars. First-fit bounds, repeated zoom/frame equality and full-height panel separators pass. The previous reader fails eleven repeated-fit assertions across the same cases.
+- Full production reader probe passes across four widths, both themes, PDF/Markdown/text, Find/History, hidden panels, presentation, click/drag routing and native updater-menu routing. The edge-band evidence comes from a separate offscreen fixture, never the user's app.
+- Core theme and recolor tests pass, including enabled/disabled preservation, cropped renders, generic-suffix copies, lazy classification, unchanged scanned PDFs and unchanged print output. The previous core fails five new color/classification assertions.
+- Reading-theme chrome, window chrome, page wheel, launch-work policy and all 32 updater tests pass. Source-size and whitespace checks pass. Existing oversized files shrank through extraction; no cap was raised.
+- Rebuilt and signature-verified `dist/ShenzhenPDF.app` with its Collection helper. No running user app was restarted and no release was published.

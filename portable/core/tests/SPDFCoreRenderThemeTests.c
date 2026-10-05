@@ -9,7 +9,7 @@
  *   - the print path (plain spdf_render_page_rgba, exactly what
  *     SPDFMacPrintView calls) keeps the document's own colors even on a
  *     document that has just rendered dark for the screen;
- *   - "leave images alone" protects a figure but never a scan.
+ *   - "leave images alone" protects figures and standalone pictures.
  */
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
@@ -17,6 +17,7 @@
 #include "shenzhen_pdf_core.h"
 #include "spdf_win_compat.h"
 #include "spdf_recolor.h"
+#include "spdf_core_document.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -274,13 +275,30 @@ static void test_picture_document(fz_context* ctx, const char* path) {
     doc = spdf_open(path, err, sizeof(err));
     EXPECT(doc != NULL, "image document opens: %s", err);
     if (!doc) return;
+    int unknown=doc->picture_document<0;
+    EXPECT(!strstr(path,".bin") || unknown,"generic image is not inspected during open");
     if (render(doc, SPDF_RENDER_DEFAULT, &plain)) {
+        EXPECT(!unknown || doc->picture_document==-1,"light render does not resolve picture metadata");
         if (render(doc, SPDF_RENDER_DARK_THEME, &dark)) {
-            EXPECT(bitmap_bytes(&dark) == bitmap_bytes(&plain) &&
-                       memcmp(dark.rgba, plain.rgba, bitmap_bytes(&plain)) == 0,
-                   "an image document is never recolored");
+            EXPECT(memcmp(dark.rgba,plain.rgba,bitmap_bytes(&plain))!=0,
+                "standalone picture darkens only when preservation is disabled");
+            EXPECT(!unknown || doc->picture_document==-1,"disabled preservation needs no picture metadata");
             spdf_free_bitmap(&dark);
         }
+        if (render(doc, SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES, &dark)) {
+            EXPECT(bitmap_bytes(&dark)==bitmap_bytes(&plain) &&
+                memcmp(dark.rgba,plain.rgba,bitmap_bytes(&plain))==0,
+                "standalone picture colors survive dark theme with preservation enabled");
+            EXPECT(doc->picture_document==1,"generic-suffix image is identified by its renderer format lazily");
+            spdf_free_bitmap(&dark);
+        }
+        spdf_rect crop={4,4,20,20}; spdf_bitmap normal_crop={0},dark_crop={0};
+        if(spdf_render_page_region_rgba_opts(doc,0,1,crop,0,NULL,&normal_crop,err,sizeof(err)) &&
+           spdf_render_page_region_rgba_opts(doc,0,1,crop,SPDF_RENDER_DARK_THEME | SPDF_RENDER_PRESERVE_IMAGES,NULL,&dark_crop,err,sizeof(err)))
+            EXPECT(bitmap_bytes(&normal_crop)==bitmap_bytes(&dark_crop) &&
+                memcmp(normal_crop.rgba,dark_crop.rgba,bitmap_bytes(&normal_crop))==0,"cropped picture also preserves colors");
+        else EXPECT(0,"picture crop renders: %s",err);
+        spdf_free_bitmap(&normal_crop); spdf_free_bitmap(&dark_crop);
         spdf_free_bitmap(&plain);
     }
     spdf_close(doc);
@@ -291,6 +309,7 @@ int main(void) {
     char figure_path[SPDF_COMPAT_PATH_MAX];
     char scan_path[SPDF_COMPAT_PATH_MAX];
     char picture_path[SPDF_COMPAT_PATH_MAX];
+    char generic_path[SPDF_COMPAT_PATH_MAX];
     fz_context* ctx;
 
     if (!spdf_compat_make_temp_dir(dir, sizeof(dir), "spdf-core-render-theme-tests.")) {
@@ -300,6 +319,8 @@ int main(void) {
     snprintf(figure_path, sizeof(figure_path), "%s" SPDF_PATH_SEP_STR "figure.pdf", dir);
     snprintf(scan_path, sizeof(scan_path), "%s" SPDF_PATH_SEP_STR "scan.pdf", dir);
     snprintf(picture_path, sizeof(picture_path), "%s" SPDF_PATH_SEP_STR "picture.png", dir);
+
+    snprintf(generic_path,sizeof(generic_path),"%s" SPDF_PATH_SEP_STR "copy.bin",dir);
 
     ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
     if (!ctx) {
@@ -312,6 +333,7 @@ int main(void) {
         test_figure_page(figure_path);
         test_scanned_page(scan_path);
         test_picture_document(ctx, picture_path);
+        test_picture_document(ctx, generic_path);
     } else {
         ++g_failures;
     }
@@ -320,6 +342,7 @@ int main(void) {
     spdf_compat_unlink(figure_path);
     spdf_compat_unlink(scan_path);
     spdf_compat_unlink(picture_path);
+    spdf_compat_unlink(generic_path);
     spdf_compat_rmdir(dir);
 
     if (g_failures) {

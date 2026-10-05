@@ -138,7 +138,7 @@ mupdf-libs:
 $(BUILD):
 	mkdir -p "$(BUILD)"
 
-$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h Makefile | $(BUILD)
+$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h core/spdf_render_bitmap.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
 
 $(CORE_IMAGE_PROPERTIES_OBJ): core/spdf_image_properties.c core/spdf_image_properties.h Makefile | $(BUILD)
