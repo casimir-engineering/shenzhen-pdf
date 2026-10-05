@@ -285,6 +285,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     if (!_draggedDocument) return;
     _dragScroll = _savedScroll; _draggingDocuments = YES; _dropGroup = nil;
     ((SPDFGroupManagementTable*)_table).draggedDuringPress=YES;
+    [(SPDFGroupManagementTable*)_table beginDocumentDragScrolling];
 }
 - (BOOL)acceptsGroupDrag:(id<NSDraggingInfo>)info row:(NSInteger)row {
     return _draggingDocuments && info.draggingSource == _table && row >= 0 && row <= (NSInteger)_rows.count &&
@@ -314,6 +315,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (void)tableView:(NSTableView*)table draggingSession:(NSDraggingSession*)session
     endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation {
     (void)table; (void)session; (void)point;
+    [(SPDFGroupManagementTable*)_table endDocumentDragScrolling];
     _draggingDocuments = NO; _draggedDocument = nil; _dragToken = nil;
     if (operation == NSDragOperationMove && _dropGroup) [_expanded addObject:_dropGroup];
     _pendingScrollRestore = NO;

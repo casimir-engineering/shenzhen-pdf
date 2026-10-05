@@ -1,3 +1,32 @@
+#import "SPDFMacGroupManagementTable.h"
+@interface SPDFDragScrollTimerProbe : SPDFGroupManagementTable
+@property(nonatomic) NSPoint pointer;
+@end
+@implementation SPDFDragScrollTimerProbe
+- (NSPoint)documentDragWindowPoint { return self.pointer; }
+@end
+static void CheckDragTrackingTimer(void) {
+    NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,280,240) styleMask:0 backing:NSBackingStoreBuffered defer:NO];
+    NSScrollView* scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,280,240)];
+    SPDFDragScrollTimerProbe* table=[[SPDFDragScrollTimerProbe alloc] initWithFrame:NSMakeRect(0,0,280,2000)];
+    window.contentView=scroll; scroll.documentView=table;
+    [table setFrameSize:NSMakeSize(280,2000)];
+    auto wait = [] {
+        NSDate* until=[NSDate dateWithTimeIntervalSinceNow:.1];
+        while(until.timeIntervalSinceNow>0)
+            [NSRunLoop.mainRunLoop runMode:NSEventTrackingRunLoopMode beforeDate:until];
+    };
+    for(int direction=0;direction<2;direction++) {
+        [scroll.contentView scrollToPoint:NSMakePoint(0,400)];
+        NSRect visible=table.visibleRect;
+        table.pointer=[table convertPoint:NSMakePoint(NSMidX(visible),direction ? NSMaxY(visible)-35 : NSMinY(visible)+35) toView:nil];
+        [table beginDocumentDragScrolling]; wait(); [table endDocumentDragScrolling];
+        CGFloat after=scroll.contentView.bounds.origin.y;
+        Check(direction ? after>400 : after<400,"stationary drag scrolls in the actual tracking run-loop mode");
+        wait();
+        Check(scroll.contentView.bounds.origin.y==after,"ending a drag stops scrolling immediately");
+    }
+}
 @interface SPDFGroupDragInfoProbe : NSObject
 @property(nonatomic, strong) id draggingSource;
 @property(nonatomic, strong) NSPasteboard* draggingPasteboard;
@@ -13,11 +42,13 @@ static SPDFGroupDragInfoProbe* BeginGroupDocumentDrag(SPDFGroupManagementControl
     [info.draggingPasteboard writeObjects:@[writer]];
     [manager tableView:table draggingSession:(id)[NSObject new] willBeginAtPoint:NSZeroPoint
         forRowIndexes:[NSIndexSet indexSetWithIndex:row]];
+    Check([table valueForKey:@"dragScrollTimer"]!=nil,"source drag begin starts scrolling driver");
     return info;
 }
 static void CheckGroupDragAutoscroll(void);
 static void CheckGroupDocumentDragging(void) {
     CheckGroupDragAutoscroll();
+    CheckDragTrackingTimer();
     SPDFGroupManagementController* manager=[SPDFGroupManagementController new];
     NSDictionary* state=@{@"expandedGroups":@[@"general",@"group-1"],@"groupScroll":@0};
     [manager updateGroups:Groups() state:state]; NSTableView* table=(id)Find(manager.view,NSTableView.class);
@@ -43,6 +74,7 @@ static void CheckGroupDocumentDragging(void) {
     [manager tableView:table draggingSession:(id)[NSObject new] endedAtPoint:NSZeroPoint operation:NSDragOperationNone];
     Check(![manager tableView:table acceptDrop:(id)info row:4 dropOperation:NSTableViewDropAbove],"cancelled drag tokens cannot be replayed");
     Check(table.numberOfRows==count,"cancel preserves disclosure state");
+    Check([table valueForKey:@"dragScrollTimer"]==nil,"source drag end removes scrolling driver");
     [info.draggingPasteboard releaseGlobally];
     // A document context menu is supplied by the tab strip, not group actions.
     manager.documentMenuProvider=^NSMenu*(NSString* path,NSString* group) {
