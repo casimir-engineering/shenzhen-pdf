@@ -1,3 +1,4 @@
+#import "SPDFMacImageProperties.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
 // The app-level half of "rotate a Markdown document": the two rotate commands
@@ -20,7 +21,7 @@
     // Markdown first: _path can name a .md while _doc is NULL, and the PDF
     // clause below is the pre-existing test, unchanged.
     if ([self isMarkdownActive]) return self.activeMarkdownSession.state == SPDFMacMarkdownSessionReady;
-    return _doc != NULL && [_path.pathExtension.lowercaseString isEqualToString:@"pdf"];
+    return _doc != NULL && ([_path.pathExtension.lowercaseString isEqualToString:@"pdf"] || SPDFPathIsRasterImage(_path));
 }
 
 - (BOOL)rotateMarkdownPaperByDegrees:(int)degrees {

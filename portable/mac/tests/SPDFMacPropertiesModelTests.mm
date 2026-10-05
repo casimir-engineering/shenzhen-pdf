@@ -7,6 +7,7 @@
 - (void)buildPanelWithSourcePath:(NSString*)path parentWindow:(NSWindow*)parent;
 - (void)startWordCountForText:(NSString*)text;
 - (void)close;
+- (NSTextField*)valueFieldForRow:(NSDictionary*)row;
 @end
 static void Check(BOOL value, NSString* label) { if (!value) { NSLog(@"FAIL %@",label); exit(1); } }
 static NSMutableDictionary* Row(NSArray* sections, NSString* label) {
@@ -70,6 +71,12 @@ int main(int argc,const char** argv) {
         Check([Row(sections,@"Pages")[@"value"] isEqual:@"2"] && Row(sections,@"Language"),@"text reader has relevant live page/language stats");
         Check(!Row(sections,@"Security") && !Row(sections,@"Annotations"),@"text does not inherit PDF metadata");
         RenderPanel(sections,textPath,@"text",text[@"text"]);
+        NSString* longPath=[@"/" stringByAppendingString:[@"Long directory name/" stringByPaddingToLength:600 withString:@"Long directory name/" startingAtIndex:0]];
+        NSDictionary* pathRow=Row(SPDFPropertiesSections(NULL,longPath,longPath,0,0,0,nil),@"Location");
+        NSTextField* pathField=[[SPDFPropertiesPanelController new] valueFieldForRow:pathRow];
+        Check([pathField.stringValue isEqual:longPath] && pathField.selectable && !pathField.editable &&
+            pathField.maximumNumberOfLines==0 && !pathField.cell.truncatesLastVisibleLine &&
+            pathField.lineBreakMode==NSLineBreakByCharWrapping,@"full path wraps without truncation and supports selection/copy");
         NSString* missing=[root stringByAppendingPathComponent:@"missing.pdf"];
         sections=SPDFPropertiesSections(NULL,missing,missing,0,0,0,nil);
         Check(Row(sections,@"Location") && Row(sections,@"Availability"),@"missing and unloaded tabs retain Properties");

@@ -190,7 +190,7 @@ static NSString* Symbol(NSInteger mode) {
     if (self.hidden || !NSPointInRect(local,self.bounds)) return nil;
     if (_collapse && NSPointInRect(local,_collapse.frame)) return _collapse;
     for (NSView* row in _rows) if (NSPointInRect(local,row.frame)) return row;
-    return self;
+    return nil; // Empty header space belongs to the dedicated drag surface below.
 }
 - (void)chooseRow:(NSButton*)row {
     if (!row.enabled) return;

@@ -122,8 +122,9 @@ static NSString* spdf_properties_grouped(NSUInteger value) {
     } else {
         field = [NSTextField wrappingLabelWithString:value];
         field.preferredMaxLayoutWidth = kPropertiesValueMaxWidth;
-        field.maximumNumberOfLines = 6;
-        field.cell.truncatesLastVisibleLine = YES;
+        field.maximumNumberOfLines = [row[@"fullPath"] boolValue] ? 0 : 6;
+        field.cell.truncatesLastVisibleLine = ![row[@"fullPath"] boolValue];
+        if ([row[@"fullPath"] boolValue]) field.lineBreakMode = NSLineBreakByCharWrapping;
     }
     field.translatesAutoresizingMaskIntoConstraints = NO;
     field.selectable = YES;

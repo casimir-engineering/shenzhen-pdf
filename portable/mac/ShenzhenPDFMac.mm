@@ -2947,8 +2947,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_pageScrollView.leadingAnchor constraintEqualToAnchor:_documentContainer.leadingAnchor],
         [_pageScrollView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
         _pageScrollToMinimapConstraint,
+        // Keep the native bottom-edge window-resize target separate from pane resizing.
         [_minimapDividerView.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
-        [_minimapDividerView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor],
+        [_minimapDividerView.bottomAnchor constraintEqualToAnchor:_documentContainer.bottomAnchor constant:-6],
         [_minimapDividerView.centerXAnchor constraintEqualToAnchor:_minimapView.leadingAnchor constant:-kMinimapDividerWidth/2],
         _minimapDividerWidthConstraint, [_minimapView.topAnchor constraintEqualToAnchor:_toolbar.bottomAnchor],
         [_minimapView.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor],
@@ -2981,7 +2982,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         [_splitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [_splitView.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
         [_sidebarDividerView.topAnchor constraintEqualToAnchor:_splitView.topAnchor],
-        [_sidebarDividerView.bottomAnchor constraintEqualToAnchor:_splitView.bottomAnchor],
+        [_sidebarDividerView.bottomAnchor constraintEqualToAnchor:_splitView.bottomAnchor constant:-6],
         [_sidebarDividerView.widthAnchor constraintEqualToConstant:kSidebarDividerWidth],
         [_sidebarDividerView.centerXAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor]
     ]];
@@ -3044,6 +3045,12 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         pageHeight <= 0)
         return _zoom;
 
+    if (fitMode == SPDFFitModePage) {
+        // Fit Width can leave a legacy horizontal scroller consuming height.
+        _pageScrollView.hasHorizontalScroller = NO;
+        _pageScrollView.hasVerticalScroller = !_presentationMode && spdf_page_count(_doc) > 1;
+        [_pageScrollView tile];
+    }
     return [self zoomForFitMode:fitMode
                        pageSize:NSMakeSize(pageWidth, pageHeight)
                        clipSize:[self documentClipSizeForLayout]
@@ -13979,58 +13986,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     NSInteger counterPageIndex = _pageField.stringValue.integerValue - 1;
     if (counterPageIndex >= 0 && counterPageIndex < pageCount) pageIndex = counterPageIndex;
     return pageIndex;
-}
-
-- (void)rotateCurrentPageByDegrees:(int)degrees {
-    if (!_doc || !_path.length || ![_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) {
-        if (![self rotateMarkdownPaperByDegrees:degrees]) NSBeep();
-        return;
-    }
-    if (![self ensureActivePDFCanBeModifiedForOperation:@"rotating the page"]) return;
-
-    [self cancelDocumentTransientInteraction];
-    NSInteger pageIndex = [self currentPageIndexFromCounterForMutation];
-    _pageIndex = pageIndex;
-    _pageView.currentPageIndex = pageIndex;
-    [self clearPageFieldFocus];
-    char err[1024];
-    BOOL ok = spdf_rotate_page(_doc, (int)pageIndex, degrees, err, sizeof(err));
-    if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
-    if (ok) [self collectionDidSavePath:_path];
-    if (!ok) {
-        [self discardCachedRuntimeForTab:[self selectedTab]];
-        [self loadSelectedTab];
-        [self showError:@"Could not rotate page" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-        return;
-    }
-
-    [_renderQueue cancelAllOperations];
-    [self cancelCacheRenderOperations];
-    [_minimapQueue cancelAllOperations];
-    [_queuedRenderPages removeAllObjects];
-    [_queuedRenderOperations removeAllObjects];
-    [_queuedMinimapThumbnailPages removeAllObjects];
-    _renderGeneration++;
-    if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count) {
-        SPDFDocumentTab* tab = _tabs[(NSUInteger)_selectedTabIndex];
-        tab.pageIndex = pageIndex;
-        tab.scrollOrigin = NSZeroPoint;
-        tab.hasScrollOrigin = NO;
-        [self discardCachedRuntimeForTab:tab];
-    }
-    _pageIndex = pageIndex;
-    [self loadSelectedTab];
-    _statusLabel.stringValue = degrees > 0 ? @"Page rotated clockwise." : @"Page rotated anticlockwise.";
-}
-
-- (void)rotateClockwise:(id)sender {
-    (void)sender;
-    [self rotateCurrentPageByDegrees:90];
-}
-
-- (void)rotateAnticlockwise:(id)sender {
-    (void)sender;
-    [self rotateCurrentPageByDegrees:-90];
 }
 
 // Strip the entire text layer (e.g. a wrong OCR layer) so the document can be

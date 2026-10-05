@@ -114,6 +114,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
         [controller updateGroups:[self sidebarGroupSnapshots] state:[self sidebarWorkspaceState]];
 }
 - (void)attachSidebarWorkspaceView:(NSView*)view {
+    view.identifier = @"WorkspaceSidebarBody";
     view.translatesAutoresizingMaskIntoConstraints = NO; [_sidebarContainer addSubview:view];
     [NSLayoutConstraint activateConstraints:@[
         [view.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],

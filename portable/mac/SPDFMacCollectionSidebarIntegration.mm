@@ -97,6 +97,7 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey, history
         };
         wrapper = controller.view; wrapper.translatesAutoresizingMaskIntoConstraints = NO;
         [_sidebarContainer addSubview:wrapper];
+        wrapper.identifier = @"WorkspaceSidebarBody";
         [NSLayoutConstraint activateConstraints:@[
             [wrapper.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor],
             [wrapper.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor],
