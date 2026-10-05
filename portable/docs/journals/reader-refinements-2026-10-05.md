@@ -226,3 +226,13 @@ Regression coverage includes a synthetic full-page image with invisible OCR text
 The delayed PDF tab-restore stage called `startFindForCurrentQueryResetSavedIndex:NO revealMatch:NO`, which correctly avoided moving the viewport but still unconditionally opened the Search panel. That could override Group Management after document activation had already restored it. Search restoration now refreshes results without requesting a panel change. Explicit searches (resetting the query or revealing a match) retain their normal Search-panel behavior. Applied the same rule to the corresponding Markdown/text entry point.
 
 The native reader regression probe starts a saved query while Groups is selected, waits for actual search results, and checks that Groups remains selected both immediately and after completion. It also verifies that an explicit search still opens Search, for PDF and Markdown fixtures. No user document or saved query is altered by this fix.
+
+### Monochrome document extension badges
+
+Replaced the Group Management document icons with compact extension badges, using theme-aware text and a subtle rounded background. The badge shows the actual lowercase extension separately from the document title; the matching extension is removed from the displayed title to avoid duplication. The full path remains available on hover. Badge creation only measures the extension string and does not consult the filesystem or system icon service.
+
+![Extension badges in dark theme](images/reader-refinements-2026-10-05/extension-badges-DarkAqua.png)
+
+![Extension badges in light theme](images/reader-refinements-2026-10-05/extension-badges-Aqua.png)
+
+Validation: inspected native offscreen badge renders in both appearances. Group Management and sidebar workspace suites pass, as do source-size and whitespace checks. The dist app rebuild and strict signature verification pass. The running reader was not restarted or captured.

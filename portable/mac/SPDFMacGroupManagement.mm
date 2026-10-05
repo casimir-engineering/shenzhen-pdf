@@ -326,11 +326,13 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     NSView* container = [NSView new];
     NSStackView* contents;
     if (document) {
-        NSImageView* icon = [NSImageView imageViewWithImage:SPDFGroupDocumentIcon(document[@"path"])];
-        [icon.widthAnchor constraintEqualToConstant:12].active = YES;
-        NSTextField* label = Label(document[@"title"],12,NO); label.toolTip = document[@"path"];
-        // The row highlight owns selection; file icons remain stable while loading.
-        contents = [NSStackView stackViewWithViews:@[icon,label]]; contents.spacing = 5;
+        NSView* badge=SPDFGroupDocumentBadge(document[@"path"]);
+        NSString* title=document[@"title"] ?: [document[@"path"] lastPathComponent];
+        if(title.pathExtension.length && [title.pathExtension.lowercaseString isEqual:[document[@"path"] pathExtension].lowercaseString])
+            title=title.stringByDeletingPathExtension;
+        NSTextField* label=Label(title,12,NO); label.toolTip=document[@"path"];
+        [label setContentCompressionResistancePriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+        contents=[NSStackView stackViewWithViews:@[badge,label]]; contents.spacing=7;
     } else {
         BOOL searching = [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length > 0;
         BOOL expanded = searching || [_expanded containsObject:group[@"id"]];
