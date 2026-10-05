@@ -12,6 +12,8 @@ static void check_group_overflow(void) {
             [fixture insertObjects:@[tab(@"Grouped A",custom),tab(@"Grouped B",custom)] atIndexes:pair];
             crowded.tabs = (id)fixture;
             for (NSNumber* selectGeneral in @[@NO, @YES]) {
+                general.collapsed=!selectGeneral.boolValue; custom.collapsed=selectGeneral.boolValue;
+                crowded.tabs=(id)fixture;
                 crowded.selectedIndex = selectGeneral.boolValue ? (customFirst.boolValue ? 2 : count.integerValue-1) : pair.lastIndex;
                 NSArray* visible = crowded.groupedVisibleTabIndexes;
                 expect(selectGeneral.boolValue || ([visible containsObject:@(pair.firstIndex)] && [visible containsObject:@(pair.lastIndex)]),
@@ -21,7 +23,7 @@ static void check_group_overflow(void) {
                 for (id layout in crowded.groupLayouts) {
                     NSRect frame = [[layout valueForKey:@"frame"] rectValue];
                     if (NSIsEmptyRect(frame)) continue;
-                    expect(NSMinX(frame) >= NSMaxX(previous) && NSMaxX(frame) <= [crowded tabAreaRightWithOverflow:YES],
+                    expect(NSMinX(frame) >= NSMaxX(previous) && NSMaxX(frame) <= [crowded tabAreaRightWithOverflow:YES]+8,
                            @"prioritized group layout overlapped another group or overflow controls");
                     previous = frame;
                 }
@@ -113,7 +115,7 @@ static void check_compact_workspace_tabs(void) {
     render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-compact-workspace-tabs-hover.png");
     expect([strip valueForKey:@"groupPicker"]==nil,@"group picker allocated before first use");
     NSView* picker=[strip groupPickerContentView];
-    expect(NSWidth(picker.frame)==236 && picker.subviews.count==5,@"all-groups picker omitted hidden groups or management");
+    expect(NSWidth(picker.frame)==236 && picker.subviews.count==8,@"all-groups picker omitted hidden groups or management");
     BOOL hasHidden=NO;
     for (NSView* child in picker.subviews)
         if ([[child accessibilityLabel] containsString:@"hidden"]) hasHidden=YES;

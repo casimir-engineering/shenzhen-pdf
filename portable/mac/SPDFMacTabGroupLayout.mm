@@ -33,113 +33,108 @@
             current.firstIndex = i;
             current.tabRects = [NSMutableDictionary dictionary];
             current.members = [NSMutableArray array];
-            CGFloat labelWidth = MIN(tab.group.collectionBackups ? 172.0 : 100.0, ceil([tab.group.displayName sizeWithAttributes:
-                @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + (tab.group.collectionBackups ? 34 : 14));
+            CGFloat labelWidth = MIN(tab.group.collectionBackups ? 196.0 : 160.0, ceil([tab.group.displayName sizeWithAttributes:
+                @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + (tab.group.collectionBackups ? 74 : 54));
             current.header = NSMakeRect(0, floor((NSHeight(self.bounds)-20)/2), labelWidth, 20);
             [groups addObject:current];
         }
         if (!tab.group.collapsed) [current.members addObject:@(i)];
     }
-    CGFloat available = MAX(0, [self tabAreaRightWithOverflow:YES] - [self leftInset]);
-    // Admit the expanded group's documents first. Other labels may use spare
-    // room, but may never displace one more readable document tab.
-    NSMutableArray<SPDFTabGroupLayout*>* priority = [NSMutableArray array];
-    for (SPDFTabGroupLayout* layout in groups)
-        if ([layout.members containsObject:@(self.selectedIndex)]) [priority addObject:layout];
-    for (SPDFTabGroupLayout* layout in groups)
-        if (!layout.group.collapsed && ![priority containsObject:layout]) [priority addObject:layout];
-    for (SPDFTabGroupLayout* layout in groups) if (layout.group.collapsed) [priority addObject:layout];
-    CGFloat remaining = available;
-    for (SPDFTabGroupLayout* layout in priority) {
-        CGFloat labelCost = NSWidth(layout.header) + (remaining < available ? 8 : 0);
-        if (remaining < labelCost) continue;
-        layout.visible = YES;
-        remaining -= labelCost;
-        NSMutableArray<NSNumber*>* candidates = [layout.members mutableCopy];
-        NSNumber* selected = @(self.selectedIndex);
-        if ([candidates containsObject:selected]) [candidates sortUsingComparator:^NSComparisonResult(NSNumber* a, NSNumber* b) {
-            NSInteger left = labs(a.integerValue-self.selectedIndex), right = labs(b.integerValue-self.selectedIndex);
-            return left < right ? NSOrderedAscending : left > right ? NSOrderedDescending : [a compare:b];
-        }];
-        CGFloat desired = candidates.count ? 12 + (candidates.count-1)*kTabGap : 0;
-        for (NSNumber* index in candidates) desired += [self preferredWidthForTabAtIndex:index.integerValue];
-        BOOL needsOverflow = candidates.count && desired > remaining;
-        if (needsOverflow && remaining >= 28) { remaining -= 28; layout.overflowFrame = NSMakeRect(0,0,28,24); }
-        CGFloat leadingGap = 12;
-        for (NSNumber* index in candidates) {
-            CGFloat width = [self preferredWidthForTabAtIndex:index.integerValue];
-            if (remaining < width + leadingGap) continue;
-            layout.tabRects[index] = [NSValue valueWithRect:NSMakeRect(0,0,width,24)];
-            remaining -= width + leadingGap;
-            leadingGap = kTabGap;
-            ++layout.capacity;
-        }
-    }
-    // Admission remains compact and prioritizes the active group's documents.
-    // Once no further document/label fits, use the residual width inside a
-    // dense group instead of stranding a large gap before the trailing controls.
-    SPDFTabGroupLayout* stretch = nil;
-    for (SPDFTabGroupLayout* layout in priority)
-        if (layout.capacity && layout.capacity < (NSInteger)layout.members.count) { stretch=layout; break; }
-    if (!stretch && remaining < kTabMinVisibleWidth+kTabGap)
-        for (SPDFTabGroupLayout* layout in priority)
-            if (layout.capacity >= 3) { stretch=layout; break; }
-    if (stretch && remaining > 0) {
-        NSArray<NSNumber*>* admitted = [stretch.tabRects.allKeys sortedArrayUsingSelector:@selector(compare:)];
-        CGFloat increment = floor(remaining/admitted.count);
-        for (NSUInteger i=0; i<admitted.count; ++i) {
-            NSRect rect = stretch.tabRects[admitted[i]].rectValue;
-            CGFloat extra = i+1 == admitted.count ? remaining : increment;
-            rect.size.width += extra; remaining -= extra;
-            stretch.tabRects[admitted[i]] = [NSValue valueWithRect:rect];
-        }
-    }
+    // Keep every non-hidden group in document order. Clipping belongs to the
+    // viewport, not admission: scrolling must never silently remove a group.
     CGFloat x = [self leftInset];
     for (SPDFTabGroupLayout* layout in groups) {
-        if (!layout.visible) { layout.header = NSZeroRect; continue; }
         CGFloat start = x;
-        layout.header = NSMakeRect(x, floor((NSHeight(self.bounds)-20)/2), NSWidth(layout.header), 20);
+        layout.visible = YES;
+        layout.header = NSOffsetRect(layout.header,x,0);
         x += NSWidth(layout.header);
         BOOL first = YES;
         for (NSNumber* index in layout.members) {
-            NSValue* admitted = layout.tabRects[index];
-            if (!admitted) continue;
-            x += first ? 12 : kTabGap;
-            first = NO;
-            CGFloat width = admitted.rectValue.size.width;
-            layout.tabRects[index] = [NSValue valueWithRect:NSMakeRect(x, floor((NSHeight(self.bounds)-24)/2), width,24)];
+            x += first ? 12 : kTabGap; first = NO;
+            CGFloat width = [self preferredWidthForTabAtIndex:index.integerValue];
+            layout.tabRects[index] = [NSValue valueWithRect:NSMakeRect(x,
+                floor((NSHeight(self.bounds)-24)/2),width,24)];
             x += width;
+            ++layout.capacity;
         }
-        if (!NSIsEmptyRect(layout.overflowFrame)) {
-            layout.overflowFrame = NSMakeRect(x+4,floor((NSHeight(self.bounds)-24)/2),24,24);
-            x += 28;
-        }
-        layout.frame = NSMakeRect(start, 4, x-start, NSHeight(self.bounds)-8);
+        layout.frame = NSMakeRect(start,4,x-start,NSHeight(self.bounds)-8);
         x += 8;
     }
+    CGFloat available = MAX(0,[self tabAreaRightWithOverflow:YES]-[self leftInset]);
+    CGFloat collapsedWidth = 0; NSInteger expandedCount=0; SPDFTabGroupLayout* expanded = nil;
+    for (SPDFTabGroupLayout* layout in groups) {
+        if (layout.group.collapsed) collapsedWidth += NSWidth(layout.frame)+8;
+        else { expanded = layout; ++expandedCount; }
+    }
+    _tabPinnedViewport = NSZeroRect;
+    BOOL pinned = expandedCount==1 && expanded && available-collapsedWidth-NSWidth(expanded.header)>=180
+        && x-[self leftInset]-8>available;
+    if (pinned) {
+        // Other groups remain discoverable even beside hundreds of documents.
+        // Only the expanded group's document lane scrolls; headers keep order.
+        CGFloat lane = available-collapsedWidth;
+        CGFloat position = [self leftInset];
+        for (SPDFTabGroupLayout* layout in groups) {
+            CGFloat shift = position-NSMinX(layout.frame);
+            layout.header = NSOffsetRect(layout.header,shift,0);
+            layout.frame = NSOffsetRect(layout.frame,shift,0);
+            for (NSNumber* index in layout.tabRects.allKeys)
+                layout.tabRects[index] = [NSValue valueWithRect:NSOffsetRect(layout.tabRects[index].rectValue,shift,0)];
+            if (layout==expanded) {
+                _tabContentWidth = MAX(0,NSMaxX(layout.frame)-NSMaxX(layout.header)-12);
+                NSRect frame=layout.frame; frame.size.width=lane; layout.frame=frame;
+                _tabPinnedViewport=NSMakeRect(NSMaxX(layout.header)+12,0,
+                    MAX(0,NSMaxX(layout.frame)-NSMaxX(layout.header)-12),NSHeight(self.bounds));
+                position += lane+8;
+            } else position += NSWidth(layout.frame)+8;
+        }
+    } else _tabContentWidth = MAX(0,x-[self leftInset]-8);
+    NSRect viewport = [self tabViewportRect];
+    CGFloat contentStart = pinned ? NSMinX(_tabPinnedViewport) : [self leftInset];
+    CGFloat previousOffset=_tabScrollOffset;
+    _tabScrollOffset = MIN(MAX(0,_tabScrollOffset),MAX(0,_tabContentWidth-NSWidth(viewport)));
+    if (_revealSelectedTab) {
+        for (SPDFTabGroupLayout* layout in groups) {
+            NSValue* selected = layout.tabRects[@(self.selectedIndex)];
+            if (!selected) continue;
+            NSRect rect = selected.rectValue;
+            CGFloat start = NSMinX(rect)-contentStart, end = NSMaxX(rect)-contentStart;
+            if (start < _tabScrollOffset) _tabScrollOffset = start;
+            if (end > _tabScrollOffset+NSWidth(viewport)) _tabScrollOffset = end-NSWidth(viewport);
+        }
+        _revealSelectedTab = NO;
+    }
+    CGFloat translation = NSMinX(viewport)-contentStart-_tabScrollOffset;
+    for (SPDFTabGroupLayout* layout in groups) {
+        if (!pinned) {
+            layout.header = NSOffsetRect(layout.header,translation,0);
+            layout.frame = NSOffsetRect(layout.frame,translation,0);
+        }
+        for (NSNumber* index in layout.tabRects.allKeys)
+            layout.tabRects[index] = [NSValue valueWithRect:NSOffsetRect(layout.tabRects[index].rectValue,translation,0)];
+    }
     _groupLayout = groups;
+    if (fabs(previousOffset-_tabScrollOffset)>.01 && self.tabScrollDidChange)
+        self.tabScrollDidChange(_tabScrollOffset);
     return groups;
 }
 - (NSRect)groupedRectForTabAtIndex:(NSInteger)index {
     for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
         NSValue* value = layout.tabRects[@(index)];
-        if (value) return value.rectValue;
+        if (value && NSIntersectsRect(value.rectValue,[self tabViewportRect])) return value.rectValue;
     }
     return NSZeroRect;
 }
 - (NSArray<NSNumber*>*)groupedVisibleTabIndexes {
     NSMutableArray* result = [NSMutableArray array];
     for (SPDFTabGroupLayout* layout in [self groupLayouts])
-        [result addObjectsFromArray:[[layout.tabRects allKeys] sortedArrayUsingSelector:@selector(compare:)]];
+        for (NSNumber* index in [[layout.tabRects allKeys] sortedArrayUsingSelector:@selector(compare:)])
+            if (NSIntersectsRect(layout.tabRects[index].rectValue,[self tabViewportRect])) [result addObject:index];
     return result;
 }
 - (BOOL)groupedHasOverflow {
-    for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
-        if (NSIsEmptyRect(layout.frame)) return YES;
-        if (!layout.group.collapsed && layout.tabRects.count < layout.members.count)
-            return YES;
-    }
-    return NO;
+    [self groupLayouts];
+    return _tabContentWidth > NSWidth([self tabViewportRect])+.5;
 }
 - (NSInteger)groupInsertionIndexForPoint:(NSPoint)point {
     for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
@@ -157,6 +152,7 @@
     return last;
 }
 - (SPDFTabGroup*)groupAtPoint:(NSPoint)point headerOnly:(BOOL)headerOnly {
+    if (point.x<[self leftInset] || point.x>[self tabAreaRightWithOverflow:YES]) return nil;
     for (SPDFTabGroupLayout* layout in [self groupLayouts])
         if (NSPointInRect(point, headerOnly ? layout.header : layout.frame)) return layout.group;
     return nil;
@@ -189,7 +185,23 @@
         }
         CGFloat height = [layout.group.displayName sizeWithAttributes:attributes].height;
         [layout.group.displayName drawInRect:NSMakeRect(NSMinX(layout.header)+7+iconSpace,
-            NSMidY(layout.header)-height/2, NSWidth(layout.header)-14-iconSpace, height) withAttributes:attributes];
+            NSMidY(layout.header)-height/2, NSWidth(layout.header)-54-iconSpace, height) withAttributes:attributes];
+        if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header)) {
+            for (NSNumber* hide in @[@NO,@YES]) {
+                NSRect action = [self groupActionRect:layout.header hide:hide.boolValue];
+                [NSColor.windowBackgroundColor setFill]; NSRectFill(action);
+                [[accent colorWithAlphaComponent:.16] setFill]; NSRectFill(action);
+                if (NSPointInRect(_lastHoverPoint,action)) {
+                    [[NSColor.labelColor colorWithAlphaComponent:.12] setFill];
+                    [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(action,1,1) xRadius:3 yRadius:3] fill];
+                }
+                NSImage* actionIcon = [NSImage imageWithSystemSymbolName:hide.boolValue ? @"eye.slash" : @"pencil"
+                    accessibilityDescription:hide.boolValue ? @"Hide group" : @"Rename group"];
+                actionIcon = [actionIcon imageWithSymbolConfiguration:[NSImageSymbolConfiguration
+                    configurationWithPaletteColors:@[NSColor.labelColor]]];
+                [actionIcon drawInRect:NSInsetRect(action,4,4)];
+            }
+        }
     }
 }
 - (void)drawGroupDropPreview {

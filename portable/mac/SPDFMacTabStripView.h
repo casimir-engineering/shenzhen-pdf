@@ -8,6 +8,8 @@
 @property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
 @property(nonatomic) NSInteger selectedIndex;
 @property(nonatomic) CGFloat reservedLeadingInset;
+@property(nonatomic) CGFloat tabScrollOffset;
+@property(nonatomic, copy) void (^tabScrollDidChange)(CGFloat);
 - (BOOL)containsTabOrControlAtPoint:(NSPoint)point;
 // Tab-activation focus claim, shared by the reader's selection chokepoint:
 // moves keyboard focus to documentKeyView so typing right after a tab

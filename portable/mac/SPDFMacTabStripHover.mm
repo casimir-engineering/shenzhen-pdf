@@ -18,6 +18,14 @@
 // interferes with drag tracking. Rebuilt on any layout change.
 - (void)rebuildReadOnlyTooltips {
     [self removeAllToolTips];
+    for (id layout in [self groupLayouts]) {
+        NSRect header=[[layout valueForKey:@"header"] rectValue];
+        if (header.origin.x<[self leftInset] || NSMaxX(header)>[self tabAreaRightWithOverflow:YES]) continue;
+        [self addToolTipRect:[self groupActionRect:header hide:NO] owner:self userData:(void*)1];
+        [self addToolTipRect:[self groupActionRect:header hide:YES] owner:self userData:(void*)2];
+    }
+    for (NSNumber* left in @[@YES,@NO]) if ([self tabScrollHiddenCountOnLeft:left.boolValue]>0)
+        [self addToolTipRect:[self tabScrollIndicatorRectOnLeft:left.boolValue] owner:self userData:(void*)(uintptr_t)(left.boolValue ? 3 : 4)];
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         SPDFDocumentTab* tab = self.tabs[(NSUInteger)i];
         if ((!tab.readOnly && !tab.unsavedPastedImage) || tab.missingFile) continue;
@@ -34,7 +42,9 @@
 - (NSString*)view:(NSView*)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point userData:(void*)userData {
     (void)view;
     (void)tag;
-    (void)userData;
+    if (userData==(void*)1) return @"Rename group";
+    if (userData==(void*)2) return @"Hide group from tab bar. Show it again in All Groups.";
+    if (userData==(void*)3 || userData==(void*)4) return @"Scroll tabs. You can also use a mouse wheel or two-finger swipe.";
     NSInteger index = [self tabIndexAtPoint:point];
     if (index >= 0 && index < (NSInteger)self.tabs.count && self.tabs[(NSUInteger)index].unsavedPastedImage)
         return @"Unsaved pasted image. Use Save As to choose an image or PDF file. This tab is kept between launches.";
@@ -66,6 +76,9 @@
             hovered = i;
             break;
         }
+    }
+    if ([self groupAtPoint:point headerOnly:YES]) {
+        [_hoverPanel orderOut:nil]; _hoverTabIndex = -1; [self setNeedsDisplay:YES]; return;
     }
     if (hovered == _hoverTabIndex) {
         if (hovered >= 0 && wasOnClose != NSPointInRect(point,previousClose))

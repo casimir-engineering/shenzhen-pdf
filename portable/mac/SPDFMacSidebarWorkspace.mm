@@ -6,7 +6,7 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import <objc/runtime.h>
 
-static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
+static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, tabScrollSaveGenerationKey;
 @interface ShenzhenMacDelegate (SidebarWorkspaceHost)
 - (void)selectTabAtIndex:(NSInteger)index;
 - (void)savePersistentState;
@@ -20,6 +20,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
 - (NSDictionary*)sidebarWorkspaceSnapshot {
     NSMutableDictionary* state = [[self sidebarWorkspaceState] mutableCopy];
     if (_sidebarModeControl) state[@"mode"] = @(_sidebarModeControl.spdf_selectedSidebarMode);
+    if (_tabStrip && _tabStrip.tabScrollDidChange) state[@"tabStripScroll"] = @(_tabStrip.tabScrollOffset);
     state[@"width"] = @(_sidebarWidth); state[@"visible"] = @(_sidebarPreferredVisible);
     return state;
 }
@@ -28,6 +29,9 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
     if ([value isKindOfClass:NSDictionary.class]) {
         for (NSString* key in @[@"mode",@"groupScroll",@"width",@"visible",@"newDocumentsInGeneral"])
             if ([value[key] isKindOfClass:NSNumber.class]) state[key] = value[key];
+        id tabScroll=value[@"tabStripScroll"];
+        if ([tabScroll isKindOfClass:NSNumber.class] && isfinite([tabScroll doubleValue]) && [tabScroll doubleValue]>=0)
+            state[@"tabStripScroll"]=tabScroll;
         if ([value[@"groupQuery"] isKindOfClass:NSString.class]) state[@"groupQuery"] = value[@"groupQuery"];
         if ([@[@"sidebar",@"map"] containsObject:value[@"compactPanel"] ?: @""]) state[@"compactPanel"] = value[@"compactPanel"];
         NSMutableArray* expanded = [NSMutableArray array];
@@ -43,6 +47,21 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey;
 - (void)applySidebarWorkspaceState {
     NSDictionary* state = [self sidebarWorkspaceState];
     if (state[@"mode"]) _sidebarModeControl.spdf_selectedSidebarMode = [state[@"mode"] integerValue];
+    if (_tabStrip && !_tabStrip.tabScrollDidChange) {
+        if (state[@"tabStripScroll"]) _tabStrip.tabScrollOffset=[state[@"tabStripScroll"] doubleValue];
+        __weak ShenzhenMacDelegate* weakSelf=self;
+        _tabStrip.tabScrollDidChange=^(CGFloat offset) {
+            ShenzhenMacDelegate* owner=weakSelf; if(!owner) return;
+            [owner sidebarWorkspaceState][@"tabStripScroll"]=@(offset);
+            // Save once after the gesture settles, never once per wheel event.
+            NSUInteger generation=[objc_getAssociatedObject(owner,&tabScrollSaveGenerationKey) unsignedIntegerValue]+1;
+            objc_setAssociatedObject(owner,&tabScrollSaveGenerationKey,@(generation),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,200*NSEC_PER_MSEC),dispatch_get_main_queue(), ^{
+                if ([objc_getAssociatedObject(owner,&tabScrollSaveGenerationKey) unsignedIntegerValue]==generation)
+                    [owner savePersistentState];
+            });
+        };
+    }
 }
 - (void)rememberSidebarWorkspaceMode {
     NSMutableDictionary* state = [self sidebarWorkspaceState];

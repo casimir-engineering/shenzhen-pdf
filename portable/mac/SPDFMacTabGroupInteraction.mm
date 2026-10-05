@@ -86,6 +86,10 @@
 - (void)groupColorMenu:(NSMenuItem*)sender {
     [self.groupReader recolorTabGroup:sender.representedObject color:sender.title];
 }
+- (void)groupHideMenu:(NSMenuItem*)sender {
+    SPDFTabGroup* group=sender.representedObject;
+    [self.groupReader setTabGroup:group hidden:!group.hidden];
+}
 - (void)groupToggleMenu:(NSMenuItem*)sender { [self.groupReader toggleTabGroup:sender.representedObject]; }
 - (void)groupUngroupMenu:(NSMenuItem*)sender { [self.groupReader ungroupTabs:sender.representedObject]; }
 - (void)groupCloseMenu:(NSMenuItem*)sender { [self.groupReader closeTabGroup:sender.representedObject]; }
@@ -97,6 +101,10 @@
         rename.target = self;
         rename.representedObject = group;
     }
+    NSMenuItem* hide=[menu addItemWithTitle:group.hidden ? @"Show Group" : @"Hide Group"
+        action:@selector(groupHideMenu:) keyEquivalent:@""];
+    hide.target=self; hide.representedObject=group;
+    hide.image=[NSImage imageWithSystemSymbolName:group.hidden ? @"eye" : @"eye.slash" accessibilityDescription:nil];
     if (!group.general && !group.collectionBackups) {
         // Colors sit directly below Rename, as requested. Text and checkmarks
         // make the palette usable without relying on color discrimination.
@@ -150,6 +158,16 @@
     SPDFTabGroup* group = [self groupAtPoint:point headerOnly:YES];
     _pressedGroup = group;
     if (!group) return NO;
+    _pressedGroupAction=nil; _pressedGroupActionKind=0;
+    for (id layout in [self groupLayouts]) if ([layout valueForKey:@"group"]==group) {
+        NSRect header=[[layout valueForKey:@"header"] rectValue];
+        // Hover-only controls never steal the first click on an unseen name.
+        if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,header)) {
+            for (NSNumber* hide in @[@NO,@YES]) if (NSPointInRect(point,[self groupActionRect:header hide:hide.boolValue])) {
+                _pressedGroupAction=group; _pressedGroupActionKind=hide.boolValue ? 2 : 1;
+            }
+        }
+    }
     [self suppressWindowMovementForTabGesture];
     _dragStartPoint = point;
     [self dismissHoverPanel];
@@ -158,6 +176,7 @@
 - (BOOL)handleGroupMouseDragged:(NSEvent*)event {
     if (!_pressedGroup) return NO;
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+    if (_pressedGroupAction) return YES;
     if (hypot(point.x - _dragStartPoint.x, point.y - _dragStartPoint.y) >= 4 && !_dragSessionGroup)
         [self startGroupDragSessionWithEvent:event];
     return YES;
@@ -169,6 +188,16 @@
     [self restoreWindowMovementForTabGesture];
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     if ([self groupAtPoint:point headerOnly:YES] != group) return YES;
+    if (_pressedGroupAction==group) {
+        NSInteger action=_pressedGroupActionKind; _pressedGroupAction=nil; _pressedGroupActionKind=0;
+        for (id layout in [self groupLayouts]) if ([layout valueForKey:@"group"]==group) {
+            NSRect header=[[layout valueForKey:@"header"] rectValue];
+            if (NSPointInRect(point,[self groupActionRect:header hide:action==2])) {
+                if (action==2) [self.groupReader setTabGroup:group hidden:YES]; else [self renameGroup:group];
+            }
+        }
+        return YES;
+    }
     // The name and disclosure share one activation target. Rename is an
     // explicit context-menu action, never a side effect of opening a group.
     [self.groupReader toggleTabGroup:group];
