@@ -5,6 +5,7 @@
 
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacEmptyDocumentView.h"
 #import "SPDFMacTranslationPolicy.h"
 #import "markdown/SPDFMarkdownDecorations.h"
 
@@ -63,9 +64,51 @@ static NSColor* SampleAt(NSBitmapImageRep* rep, NSView* view, CGFloat x, CGFloat
     return [rep colorAtX:column y:row];
 }
 
+@interface WelcomeCanvas : NSView
+@end
+@implementation WelcomeCanvas
+- (void)drawRect:(NSRect)rect { [NSColor.windowBackgroundColor setFill]; NSRectFill(rect); }
+@end
+@interface ClickProbe : NSObject
+@property NSInteger calls;
+@property NSInteger segment;
+@end
+@implementation ClickProbe
+- (void)clicked:(NSSegmentedControl*)sender { self.calls++; self.segment=sender.selectedSegment; }
+- (void)newTabRequested:(id)sender { (void)sender; self.calls++; }
+@end
+
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
+
+        ClickProbe* clicks=[ClickProbe new];
+        NSWindow* host=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,500) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+        NSSegmentedControl* pair=spdf_paired_toolbar_segments(clicks,@selector(clicked:),[NSImage imageWithSystemSymbolName:@"minus" accessibilityDescription:nil],[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:nil]);
+        pair.frame=NSMakeRect(10,10,56,28); [host.contentView addSubview:pair];
+        for (NSInteger repeat=0;repeat<3;repeat++) for (NSInteger segment=0;segment<2;segment++)
+            for (NSNumber* x in @[@2,@25]) for (NSNumber* y in @[@2,@25]) {
+                NSPoint point=[pair convertPoint:NSMakePoint(segment*28+x.doubleValue,y.doubleValue) toView:nil];
+                NSEvent* event=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:0 windowNumber:host.windowNumber context:nil eventNumber:1 clickCount:repeat+1 pressure:1];
+                NSInteger before=clicks.calls; [pair mouseDown:event];
+                if(clicks.calls!=before+1 || clicks.segment!=segment) fprintf(stderr,"click %ld actual %ld calls %ld before %ld frame %s\n",(long)segment,(long)clicks.segment,(long)clicks.calls,(long)before,NSStringFromRect(pair.frame).UTF8String);
+                Expect("each repeated edge click dispatches exactly once",clicks.calls==before+1 && clicks.segment==segment);
+                Expect("momentary segments do not retain selection",pair.selectedSegment==-1);
+            }
+        NSView* empty=[[WelcomeCanvas alloc] initWithFrame:NSMakeRect(0,0,700,500)];
+        [host.contentView addSubview:empty];
+        SPDFHideEmptyDocumentView(empty); Expect("nonempty documents allocate no welcome view",empty.subviews.count==0);
+        SPDFShowEmptyDocumentView(empty,@"Open a document",clicks);
+        NSView* welcome=empty.subviews.firstObject; NSButton* open=nil;
+        for(NSView* child in welcome.subviews) if([child isKindOfClass:NSButton.class]) open=(NSButton*)child;
+        Expect("welcome action is centered",open && fabs(NSMidX(open.frame)-350)<1);
+        NSInteger before=clicks.calls; [open performClick:nil]; Expect("welcome opens a document",clicks.calls==before+1);
+        for (NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
+            empty.appearance=[NSAppearance appearanceNamed:appearance];
+            NSBitmapImageRep* preview=RasterizeView(empty);
+            [[preview representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[@"/tmp/sz-welcome-" stringByAppendingFormat:@"%@.png",appearance] atomically:YES];
+        }
+        SPDFHideEmptyDocumentView(empty); Expect("welcome hides after document opens",welcome.hidden);
 
         // --- The gutter role, per variant --------------------------------
         SPDFMarkdownTheme* light = [SPDFMarkdownTheme themeForVariant:SPDFMarkdownThemeVariantLight];

@@ -2,6 +2,8 @@
 #import "SPDFMacAgentCommand.h"
 #import "SPDFMacTabGroupIntegration.h"
 #include <assert.h>
+#import "SPDFMacAgentSavedSession.h"
+#import "spdf_yaml.h"
 
 NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"; }
 #pragma clang diagnostic push
@@ -122,6 +124,31 @@ int main(void) {
         Check([Group(state,@"general")[@"paths"] isEqual:@[@"/outside.md"]]);
         NSDictionary* last=[state[@"tabs"] lastObject];
         Check([last[@"path"] isEqual:paths.lastObject] && [last[@"selected"] boolValue]);
+        // Offline operations must not instantiate NSApplication or read documents.
+        NSString* dir=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString* session=[dir stringByAppendingPathComponent:@"session.yaml"];
+        NSDictionary* untouched=@{@"id":@"other",@"focusedAt":@1,@"tabs":@[]};
+        NSDictionary* original=@{@"custom":@"preserved",@"windows":@[untouched,@{@"id":@"offline",@"focusedAt":@2,@"selectedTab":@0,@"tabs":@[@{@"path":@"/not-readable/a.pdf",@"page":@7,@"custom":@42},@{@"path":@"/not-readable/b.md"}]}]};
+        NSData* seed=[NSJSONSerialization dataWithJSONObject:original options:0 error:nil];
+        char* encoded=spdf_yaml_from_json([[NSString alloc] initWithData:seed encoding:NSUTF8StringEncoding].UTF8String,"test");
+        [[NSString stringWithUTF8String:encoded] writeToFile:session atomically:YES encoding:NSUTF8StringEncoding error:nil]; free(encoded);
+        NSData* before=[NSData dataWithContentsOfFile:session]; NSError* offlineError=nil;
+        NSDictionary* offline=SPDFMacAgentSavedSession(@{@"action":@"list-groups"},dir,&offlineError);
+        Check(!offlineError && [offline[@"windowSessionID"] isEqual:@"offline"] && !NSApp);
+        Check([before isEqual:[NSData dataWithContentsOfFile:session]]);
+        offline=SPDFMacAgentSavedSession(@{@"action":@"create-group",@"paths":@[@"/not-readable/b.md",@"/not-readable/a.pdf"],@"name":@"Offline",@"color":@"Blue"},dir,&offlineError);
+        Check(!offlineError && !offline[@"error"] && !NSApp);
+        NSDictionary* reopenedOffline=SPDFMacAgentSavedSession(@{@"action":@"list-groups"},dir,&offlineError);
+        Check([offline[@"groups"] isEqual:reopenedOffline[@"groups"]]);
+        char* decoded=spdf_json_from_yaml([NSString stringWithContentsOfFile:session encoding:NSUTF8StringEncoding error:nil].UTF8String);
+        NSDictionary* saved=[NSJSONSerialization JSONObjectWithData:[[NSString stringWithUTF8String:decoded] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil]; free(decoded);
+        Check([saved[@"custom"] isEqual:@"preserved"] && [saved[@"windows"][0] isEqual:untouched]);
+        Check([saved[@"windows"][1][@"tabs"][1][@"page"] intValue]==7 && [saved[@"windows"][1][@"tabs"][1][@"custom"] intValue]==42);
+        before=[NSData dataWithContentsOfFile:session];
+        offline=SPDFMacAgentSavedSession(@{@"action":@"move-tab",@"path":@"/missing",@"groupID":@"bad"},dir,&offlineError);
+        Check(offline[@"error"] && [before isEqual:[NSData dataWithContentsOfFile:session]]);
+        [NSFileManager.defaultManager removeItemAtPath:dir error:nil];
         puts("SPDFMacAgentGroupTests passed");
     }
 }

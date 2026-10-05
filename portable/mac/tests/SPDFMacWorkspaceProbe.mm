@@ -297,9 +297,9 @@ static void CheckIconReadability(NSControl* control) {
         if ([self isMarkdownActive]) {
             NSRect zoom=[_toolbar convertRect:[_zoomSegments alignmentRectForFrame:_zoomSegments.frame] fromView:_zoomSegments.superview];
             NSRect text=[_toolbar convertRect:[_markdownFontSizeSegments alignmentRectForFrame:_markdownFontSizeSegments.frame] fromView:_markdownFontSizeSegments.superview];
-            Check(NSMinX(text)>=NSMaxX(zoom) && NSMinX(text)-NSMaxX(zoom)<=8 && fabs(NSMidY(text)-NSMidY(zoom))<1,
+            Check(NSMinX(text)>=NSMaxX(zoom) && NSMinX(text)-NSMaxX(zoom)<=16 && fabs(NSMidY(text)-NSMidY(zoom))<1,
                 @"text size is immediately to the right of zoom on the same row");
-            Check(_zoomSegments.segmentStyle==NSSegmentStyleSeparated && _markdownFontSizeSegments.segmentStyle==_zoomSegments.segmentStyle,
+            Check(_zoomSegments.segmentStyle==NSSegmentStyleRounded && _markdownFontSizeSegments.segmentStyle==_zoomSegments.segmentStyle,
                 @"zoom and text size share the compact flat toolbar style");
         }
         CGFloat titleWidth=[_fitModePopup.titleOfSelectedItem sizeWithAttributes:@{NSFontAttributeName:_fitModePopup.font}].width;

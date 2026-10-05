@@ -1,4 +1,6 @@
 #import "SPDFMacAgentCommand.h"
+#import "SPDFMacAgentSavedSession.h"
+#import "SPDFMacStateDirectory.h"
 #import "SPDFMacAgentPDFInspection.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "markdown/SPDFMarkdownAuthoring.h"
@@ -77,6 +79,8 @@ static NSDictionary* inspect(NSDictionary* command, NSError** error) {
 }
 
 static NSDictionary* navigate(NSDictionary* command, NSError** error) {
+    if (![command[@"action"] isEqual:@"open"] && !SPDFMacAgentReaderIsRunning())
+        return SPDFMacAgentSavedSession(command,SPDFMacStateDirectoryPath(),error);
     NSString* directory = SPDFMacAgentRequestDirectory();
     NSFileManager* fm = NSFileManager.defaultManager;
     if (![fm createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;

@@ -170,3 +170,17 @@ At the user's request, the live app API organized 76 existing tabs into seven co
 The test exposed slow bulk group creation: each member was being selected/rendered and each intermediate arrangement saved. A 29-document command exceeded the 30-second response timeout, although its mutation completed. Group state was re-listed before continuing to avoid creating duplicates. Bulk API creation now validates first, changes membership as one batch, selects only its final member, and saves once. A 256-member headless test asserts one selection/one save, exact membership order, and retention of outside tabs.
 
 The release sweep also caught an older format test expecting unconditional picture-color preservation. It now explicitly passes Preserve Images when testing the enabled preference, then separately checks that disabling the preference recolors the same images. All 31 actual format fixtures pass, including image formats, e-books and Office examples.
+
+## Empty reader, dependable toolbar pairs, and offline grouping
+
+The empty document canvas kept a minimum page size, so its message was not necessarily centered in the visible viewport. It now uses the available viewport and lazily adds a centered welcome view: a document illustration, supported-format guide, drop hint, and a real accessible **+ Open document** button. Loaded documents allocate no welcome view.
+
+![Empty reader, dark theme](images/reader-refinements-2026-10-05/welcome-dark.png)
+
+The toolbar previously combined custom segment drawing with native segment tracking geometry. Pointer dispatch now uses the exact drawn rectangles, with explicit momentary selection during the action. Tests caught and fixed AppKit returning `-1` for programmatically selected momentary segments. Zoom and text-size pairs have separate rounded containers and a 12-point gap; pressed feedback is clipped to the clicked half. Native keyboard and accessibility handling remain in place.
+
+![Separate zoom and text-size pairs](images/reader-refinements-2026-10-05/toolbar-pairs-dark.png)
+
+Group API commands now operate on saved session YAML when the reader is closed. The same group operations and tab decoder run in a headless host; the transaction locks and atomically saves the session while preserving original tab dictionaries, unrelated windows, and settings. It reads no document contents and launches no reader window. Live API routing remains available when the reader is running.
+
+Validation: temporary offline session tests pass without an NSApplication instance, including group roundtrip, inaccessible document paths, unchanged bytes for listing/rejected actions, and preservation of other windows and reading fields. Toolbar tests dispatch repeated clicks across the edges of both segments. Welcome tests check centered placement, the open action, lazy allocation and removal. The native full-workspace probe passes across reader sizes and themes. Agent/MCP tests, 32 updater cases, and the source-size ratchet pass. Images above are headless fixture renders; the user's running application was not restarted or captured.
