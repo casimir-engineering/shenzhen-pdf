@@ -40,8 +40,40 @@ static void check_scrollable_group_strip(void) {
     NSRect indicator=[strip tabScrollIndicatorRectOnLeft:YES];
     NSPoint click=NSMakePoint(NSMidX(indicator),NSMidY(indicator)); CGFloat end=strip.tabScrollOffset;
     [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,click)];
-    expect(strip.tabScrollOffset<end,@"left + count must scroll back through the hidden documents");
+    expect(strip.tabScrollOffset==end && strip.hiddenListRequests==1 && strip.hiddenListLeft,
+        @"left + count must open a list without moving the carousel");
+    NSRect viewport=[strip tabViewportRect];
+    NSRect expandedFrame=[[layout_for_group(strip,active) valueForKey:@"frame"] rectValue];
+    NSRect expandedHeader=[[layout_for_group(strip,active) valueForKey:@"header"] rectValue];
+    expect(fabs(NSMinX(viewport)-(NSMaxX(expandedHeader)+12))<.01 &&
+        fabs(NSMaxX(viewport)-NSMaxX(expandedFrame))<.01,
+        @"overflow indicators reserve blank lane width");
+    expect(NSContainsRect(viewport,[strip tabScrollIndicatorRectOnLeft:YES]),@"left indicator is outside the tab lane");
+    expect(strip.hiddenMenuBuilds==0,@"layout or scrolling eagerly builds overflow menus");
+    NSMenu* list=[strip hiddenTabsMenuOnLeft:YES];
+    NSMutableArray<NSNumber*>* listed=[NSMutableArray array];
+    for (NSMenuItem* item in list.itemArray) if ([item.representedObject isKindOfClass:NSNumber.class]) {
+        [listed addObject:item.representedObject];
+    }
+    expect((NSInteger)listed.count==[strip tabScrollHiddenCountOnLeft:YES],@"hidden tab list and count disagree");
+    expect([listed containsObject:@1] && ![listed containsObject:@60],@"left list includes visible/opposite-side tabs");
+    NSMenuItem* first=list.itemArray[1];
+    [NSApp sendAction:first.action to:first.target from:first];
+    expect(reader.selectedTab==1,@"hidden tab list does not open its chosen document");
+    reader.selectedTab=0;
     strip.tabScrollOffset=0; [strip groupLayouts];
+    NSRect rightIndicator=[strip tabScrollIndicatorRectOnLeft:NO];
+    click=NSMakePoint(NSMidX(rightIndicator),NSMidY(rightIndicator));
+    [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,click)];
+    expect(strip.tabScrollOffset==0 && strip.hiddenListRequests==2 && !strip.hiddenListLeft,
+        @"right + count must open a list without scrolling");
+    expect(NSContainsRect([strip tabViewportRect],rightIndicator),@"right indicator is outside the tab lane");
+    expect([strip tabIndexAtPoint:click]==-1 && [strip groupAtPoint:click headerOnly:YES]==nil,
+        @"hidden-tabs overlay exposes an underlying hit target");
+    [strip updateHoverForPoint:click];
+    expect([[strip valueForKey:@"hoverTabIndex"] integerValue]==-1,@"overlay hover exposes an underlying title");
+    NSMenu* rightList=[strip hiddenTabsMenuOnLeft:NO];
+    expect([rightList.itemArray.lastObject.representedObject isEqual:@60],@"right list omits the final hidden document");
     NSRect header=[[layout_for_group(strip,before) valueForKey:@"header"] rectValue];
     CGFloat expected=MAX(48.0,ceil([before.displayName sizeWithAttributes:
         @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width)+14);
@@ -82,8 +114,16 @@ static void check_scrollable_group_strip(void) {
         @"offscreen group header overlaps traffic-light/window drag territory");
     BOOL scrollAccessible=NO;
     for (NSAccessibilityElement* child in strip.accessibilityChildren)
-        if ([child.accessibilityLabel hasPrefix:@"Scroll tabs left"]) scrollAccessible=YES;
-    expect(scrollAccessible,@"left scroll indicator lacks a VoiceOver action");
+        if ([child.accessibilityLabel hasPrefix:@"Show tabs to the left"]) {
+            NSInteger requests=strip.hiddenListRequests; CGFloat offset=strip.tabScrollOffset;
+            expect([child accessibilityPerformPress] && strip.hiddenListRequests==requests+1 &&
+                strip.tabScrollOffset==offset,@"VoiceOver overflow action scrolls instead of opening a list");
+            scrollAccessible=YES;
+        }
+    expect(scrollAccessible,@"left hidden-tabs list lacks a VoiceOver action");
+    render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-overlay-collapsed-groups.png");
+    NSMenu* collapsedList=[strip hiddenTabsMenuOnLeft:YES];
+    expect(collapsedList.numberOfItems>0,@"offscreen collapsed group has no document list");
 }
 
 static void benchmark_strip_scrolling(void) {

@@ -143,3 +143,14 @@ Removed the rename icon and its hover hit target. Only the hide eye now overlays
 ![Single hover eye on a compact group pill](reader-refinements-2026-10-05/group-hide-only.png)
 
 Headless interaction checks cover the recovered name-click area, retained context rename, stable pill geometry and hide action. Source-size checks pass.
+
+## Correction: overflow lists over the lane
+
+Removed the permanent 30-point reserve at each end of the scrolling lane. The viewport now uses its full available width. When needed, a compact `+N` control overlays the edge with the document-tab height and corner radius. The underlying tabs fade into that control through a transparency layer; no space is reserved when the control disappears. Number widths are measured so large counts remain readable.
+
+Clicking either count opens a native, group-labelled list of the documents offscreen on that side. It leaves the scroll position and selected document unchanged until a document is chosen. Offscreen collapsed groups contribute their member documents to the list. Mouse and trackpad gestures remain the scrolling mechanism. VoiceOver uses the same list action, and overlay hit testing prevents clicks/hover from falling through to covered tabs or groups. Menus are built only on request; ordinary layout and launch allocate none.
+
+![Right overflow over the document lane](reader-refinements-2026-10-05/overlay-tab-count.png)
+![Bilateral overflow over collapsed groups](reader-refinements-2026-10-05/overlay-group-counts.png)
+
+Headless interaction tests cover full-width viewport geometry, bilateral lists with no scrolling, accurate document membership, selecting from a list, collapsed-group fallback, overlay hit/hover isolation and VoiceOver. Existing tab geometry/style tests and the full native reader workspace probe pass. Repeated scroll/layout work remains about 0.05 ms at 60 tabs and 0.56 ms at 1,000. Source-size and whitespace checks pass. Native images come from offscreen fixtures; the running user's app is untouched.

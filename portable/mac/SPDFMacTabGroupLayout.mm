@@ -154,6 +154,7 @@
     return last;
 }
 - (SPDFTabGroup*)groupAtPoint:(NSPoint)point headerOnly:(BOOL)headerOnly {
+    if ([self isPointOnHiddenTabsIndicator:point]) return nil;
     if (point.x<[self leftInset] || point.x>[self tabAreaRightWithOverflow:YES]) return nil;
     for (SPDFTabGroupLayout* layout in [self groupLayouts])
         if (NSPointInRect(point, headerOnly ? layout.header : layout.frame)) return layout.group;

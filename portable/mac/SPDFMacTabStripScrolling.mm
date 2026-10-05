@@ -4,13 +4,14 @@
 - (NSRect)tabViewportRect {
     CGFloat left = NSIsEmptyRect(_tabPinnedViewport) ? [self leftInset] : NSMinX(_tabPinnedViewport);
     CGFloat right = NSIsEmptyRect(_tabPinnedViewport) ? [self tabAreaRightWithOverflow:YES] : NSMaxX(_tabPinnedViewport);
-    BOOL overflow = [self hasTabGroups] && _tabContentWidth > right-left+.5;
-    return NSMakeRect(left+(overflow ? 30 : 0),0,MAX(0,right-left-(overflow ? 60 : 0)),NSHeight(self.bounds));
+    return NSMakeRect(left,0,MAX(0,right-left),NSHeight(self.bounds));
 }
 - (NSRect)tabScrollIndicatorRectOnLeft:(BOOL)left {
     NSRect viewport = [self tabViewportRect];
-    CGFloat x = left ? NSMinX(viewport)-30 : NSMaxX(viewport)+2;
-    return NSMakeRect(x,floor((NSHeight(self.bounds)-28)/2),28,28);
+    NSString* label=[NSString stringWithFormat:@"+%ld",(long)[self tabScrollHiddenCountOnLeft:left]];
+    CGFloat width=MAX(36,ceil([label sizeWithAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12]}].width)+12);
+    return NSMakeRect(left ? NSMinX(viewport) : NSMaxX(viewport)-width,
+        floor((NSHeight(self.bounds)-24)/2),width,24);
 }
 - (NSInteger)tabScrollHiddenCountOnLeft:(BOOL)left {
     if (![self hasTabGroups]) return 0;
@@ -44,16 +45,73 @@
         ? event.scrollingDeltaX : event.scrollingDeltaY;
     [self scrollTabStripBy:-delta*(event.hasPreciseScrollingDeltas ? 1 : 20)];
 }
+- (BOOL)isPointOnHiddenTabsIndicator:(NSPoint)point {
+    for (NSNumber* left in @[@YES,@NO])
+        if ([self tabScrollHiddenCountOnLeft:left.boolValue]>0 &&
+            NSPointInRect(point,[self tabScrollIndicatorRectOnLeft:left.boolValue])) return YES;
+    return NO;
+}
 - (BOOL)handleTabScrollMouseDown:(NSEvent*)event {
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     for (NSNumber* left in @[@YES,@NO]) {
         if ([self tabScrollHiddenCountOnLeft:left.boolValue] > 0 &&
             NSPointInRect(point,[self tabScrollIndicatorRectOnLeft:left.boolValue])) {
-            [self scrollTabStripBy:(left.boolValue ? -1 : 1)*MAX(96,NSWidth([self tabViewportRect])*.7)];
+            [self showHiddenTabsOnLeft:left.boolValue];
             return YES;
         }
     }
     return NO;
+}
+- (NSMenu*)hiddenTabsMenuOnLeft:(BOOL)left {
+    NSMenu* menu=[[NSMenu alloc] initWithTitle:left ? @"Tabs to the left" : @"Tabs to the right"];
+    NSRect viewport=[self tabViewportRect];
+    for (id layout in [self groupLayouts]) {
+        SPDFTabGroup* group=[layout valueForKey:@"group"];
+        NSRect header=[[layout valueForKey:@"header"] rectValue];
+        BOOL hiddenGroup=NSIsEmptyRect(_tabPinnedViewport) && group.collapsed &&
+            (left ? NSMinX(header)<NSMinX(viewport)-.5 : NSMaxX(header)>NSMaxX(viewport)+.5);
+        NSDictionary* rects=[layout valueForKey:@"tabRects"];
+        BOOL headingAdded=NO;
+        for (NSUInteger index=0;index<self.tabs.count;index++) {
+            if (self.tabs[index].group!=group) continue;
+            NSValue* value=rects[@(index)]; NSRect rect=value.rectValue;
+            if (!hiddenGroup && (!value || !(left ? NSMinX(rect)<NSMinX(viewport)-.5 : NSMaxX(rect)>NSMaxX(viewport)+.5))) continue;
+            if (!headingAdded) {
+                if (menu.numberOfItems) [menu addItem:NSMenuItem.separatorItem];
+                NSMenuItem* heading=[menu addItemWithTitle:group.displayName action:nil keyEquivalent:@""];
+                heading.image=spdf_tab_group_swatch_image(group.colorName); headingAdded=YES;
+            }
+            NSMenuItem* item=[menu addItemWithTitle:[self fullTitleForTabAtIndex:index]
+                action:@selector(overflowTabMenuItemSelected:) keyEquivalent:@""];
+            item.target=self; item.representedObject=@(index); item.indentationLevel=1;
+            item.state=index==(NSUInteger)self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+    }
+    return menu;
+}
+- (void)showHiddenTabsOnLeft:(BOOL)left {
+    NSMenu* menu=[self hiddenTabsMenuOnLeft:left];
+    if (!menu.numberOfItems) return;
+    [self dismissHoverPanel];
+    NSRect rect=[self tabScrollIndicatorRectOnLeft:left];
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(NSMinX(rect),NSMaxY(rect)) inView:self];
+}
+- (void)fadeTabScrollEdges {
+    CGContextRef graphics=NSGraphicsContext.currentContext.CGContext;
+    [NSGraphicsContext saveGraphicsState]; NSRectClip([self tabViewportRect]);
+    CGContextSetBlendMode(graphics,kCGBlendModeDestinationOut);
+    CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+    CGFloat colors[]={0,0,0,1,0,0,0,0}, stops[]={0,1};
+    CGGradientRef fade=CGGradientCreateWithColorComponents(space,colors,stops,2);
+    for (NSNumber* left in @[@YES,@NO]) if ([self tabScrollHiddenCountOnLeft:left.boolValue]>0) {
+        NSRect rect=[self tabScrollIndicatorRectOnLeft:left.boolValue];
+        CGFloat edge=left.boolValue ? NSMaxX(rect) : NSMinX(rect), direction=left.boolValue ? 1 : -1;
+        CGContextSetRGBFillColor(graphics,0,0,0,1);
+        CGContextFillRect(graphics,CGRectMake(NSMinX(rect),0,NSWidth(rect),NSHeight(self.bounds)));
+        CGContextDrawLinearGradient(graphics,fade,CGPointMake(edge,NSMidY(rect)),
+            CGPointMake(edge+direction*12,NSMidY(rect)),0);
+    }
+    CGGradientRelease(fade); CGColorSpaceRelease(space); [NSGraphicsContext restoreGraphicsState];
 }
 - (NSRect)groupHideRect:(NSRect)header {
     return NSMakeRect(NSMaxX(header)-20,NSMidY(header)-10,20,20);

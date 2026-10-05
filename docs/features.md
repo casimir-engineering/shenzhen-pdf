@@ -111,13 +111,15 @@ does not re-trigger the macOS access prompt.
 
 - **Compact tab strip** — every tab outlined, same-named files disambiguated by
   their folder. Grouped tabs scroll horizontally with mouse-wheel or two-finger
-  trackpad input, with left/right `+` counts for offscreen items. Collapsed group
+  trackpad input. Left/right `+N` tabs overlay fading edges and open lists of
+  offscreen documents without moving the strip. Collapsed group
   names stay visible beside the expanded document lane when space permits;
   overflowing group names remain reachable by scrolling. Long titles keep their beginning and
   ending visible with a middle ellipsis; hovering reveals the close button without moving the title.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
   **reattach**. A detached tab keeps its page, zoom, scroll and search.
-- **Group controls** — hover a group name for rename and hide icons. The All Groups
+- **Group controls** — hover a group name for the hide eye; right-click **Rename Group…**
+  opens the name popup anchored to the group. The All Groups
   picker has an eye toggle for showing or hiding each group without closing documents.
   Manual tab-strip scroll position is restored per window from session YAML.
 - **Read-only dot** — a tab opened from a read-only source is marked.
