@@ -177,6 +177,10 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (NSInteger)tabScrollHiddenCountOnLeft:(BOOL)left;
 - (void)scrollTabStripBy:(CGFloat)delta;
 - (BOOL)handleTabScrollMouseDown:(NSEvent*)event;
+- (BOOL)isPointOnHiddenTabsIndicator:(NSPoint)point;
+- (NSMenu*)hiddenTabsMenuOnLeft:(BOOL)left;
+- (void)showHiddenTabsOnLeft:(BOOL)left;
+- (void)fadeTabScrollEdges;
 - (NSRect)groupHideRect:(NSRect)header;
 - (BOOL)hasTabGroups;
 - (NSArray*)groupLayouts;

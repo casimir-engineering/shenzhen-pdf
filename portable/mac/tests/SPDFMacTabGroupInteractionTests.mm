@@ -65,14 +65,7 @@
 - (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event { (void)event; return NO; }
 @end
 
-@interface SPDFGroupTestStrip : SPDFTabStripView
-@property(nonatomic) NSInteger renameRequests;
-@property(nonatomic) NSInteger groupDragRequests;
-@end
-@implementation SPDFGroupTestStrip
-- (void)renameGroup:(SPDFTabGroup*)group { if (group) self.renameRequests++; }
-- (void)startGroupDragSessionWithEvent:(NSEvent*)event { (void)event; self.groupDragRequests++; }
-@end
+#include "SPDFMacTabGroupStripFixture.h"
 
 NSString* spdf_display_label_without_extension(NSString* label) { return label ?: @""; }
 NSString* spdf_display_name_for_path(NSString* path) { return path.lastPathComponent ?: @""; }

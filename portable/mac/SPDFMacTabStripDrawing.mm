@@ -124,6 +124,9 @@
     [NSGraphicsContext saveGraphicsState];
     if ([self hasTabGroups]) NSRectClip(NSMakeRect([self leftInset],0,
         [self tabAreaRightWithOverflow:YES]-[self leftInset],NSHeight(self.bounds)));
+    BOOL fadeEdges=[self hasTabGroups] && [self groupedHasOverflow];
+    CGContextRef graphics=NSGraphicsContext.currentContext.CGContext;
+    if (fadeEdges) CGContextBeginTransparencyLayer(graphics,NULL);
     [self drawTabGroups];
     NSInteger draggedIndex = [self isVisuallyReorderingTabs] ? _dragSourceTabIndex : -1;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
@@ -140,16 +143,17 @@
                dimAttributes:dimAttrs];
     }
 
+    if (fadeEdges) { [self fadeTabScrollEdges]; CGContextEndTransparencyLayer(graphics); }
     [NSGraphicsContext restoreGraphicsState];
     for (NSNumber* left in @[@YES,@NO]) {
         NSInteger count = [self tabScrollHiddenCountOnLeft:left.boolValue];
         if (count <= 0) continue;
         NSRect indicator = [self tabScrollIndicatorRectOnLeft:left.boolValue];
         [[NSColor.labelColor colorWithAlphaComponent:.07] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:indicator xRadius:4 yRadius:4] fill];
+        [[NSBezierPath bezierPathWithRoundedRect:indicator xRadius:6 yRadius:6] fill];
         NSString* label = [NSString stringWithFormat:@"+%ld",(long)count];
-        [label drawInRect:NSInsetRect(indicator,1,6) withAttributes:@{
-            NSFontAttributeName:[NSFont systemFontOfSize:10],NSForegroundColorAttributeName:NSColor.labelColor,
+        [label drawInRect:NSInsetRect(indicator,1,4) withAttributes:@{
+            NSFontAttributeName:[NSFont systemFontOfSize:12],NSForegroundColorAttributeName:NSColor.labelColor,
             NSParagraphStyleAttributeName:SPDFTabTitleParagraphStyle()}];
     }
     NSRect overflowRect = [self overflowRect];

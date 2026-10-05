@@ -121,6 +121,7 @@
 }
 
 - (NSInteger)tabIndexAtPoint:(NSPoint)point {
+    if ([self isPointOnHiddenTabsIndicator:point]) return -1;
     if ([self hasTabGroups] && !NSPointInRect(point,[self tabViewportRect])) return -1;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         NSRect tabRect = [self rectForTabAtIndex:i];

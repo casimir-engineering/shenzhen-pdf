@@ -42,8 +42,7 @@ typedef NS_ENUM(NSInteger, SPDFTabAccessibilityKind) {
             return YES;
         case SPDFTabAccessibilityKindScrollLeft:
         case SPDFTabAccessibilityKindScrollRight:
-            [strip scrollTabStripBy:(self.kind==SPDFTabAccessibilityKindScrollLeft ? -1 : 1)
-                *MAX(96,NSWidth([strip tabViewportRect])*.7)];
+            [strip showHiddenTabsOnLeft:self.kind==SPDFTabAccessibilityKindScrollLeft];
             return YES;
         case SPDFTabAccessibilityKindNewTab:
             [strip.reader newTabRequested:strip];
@@ -125,8 +124,8 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
         NSInteger count=[strip tabScrollHiddenCountOnLeft:left.boolValue];
         if (count<=0) continue;
         SPDFMacTabAccessibilityElement* button=Element(strip,left.boolValue ? SPDFTabAccessibilityKindScrollLeft
-            : SPDFTabAccessibilityKindScrollRight,NSAccessibilityButtonRole,
-            [NSString stringWithFormat:@"Scroll tabs %@, %ld more",left.boolValue ? @"left" : @"right",(long)count],
+            : SPDFTabAccessibilityKindScrollRight,NSAccessibilityPopUpButtonRole,
+            [NSString stringWithFormat:@"Show tabs to the %@, %ld more",left.boolValue ? @"left" : @"right",(long)count],
             [strip tabScrollIndicatorRectOnLeft:left.boolValue]);
         [children addObject:button];
     }

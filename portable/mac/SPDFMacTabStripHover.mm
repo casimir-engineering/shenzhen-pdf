@@ -42,7 +42,7 @@
     (void)view;
     (void)tag;
     if (userData==(void*)2) return @"Hide group from tab bar. Show it again in All Groups.";
-    if (userData==(void*)3 || userData==(void*)4) return @"Scroll tabs. You can also use a mouse wheel or two-finger swipe.";
+    if (userData==(void*)3 || userData==(void*)4) return @"Show hidden tabs on this side. Use a mouse wheel or two-finger swipe to scroll.";
     NSInteger index = [self tabIndexAtPoint:point];
     if (index >= 0 && index < (NSInteger)self.tabs.count && self.tabs[(NSUInteger)index].unsavedPastedImage)
         return @"Unsaved pasted image. Use Save As to choose an image or PDF file. This tab is kept between launches.";
@@ -62,6 +62,7 @@
 }
 
 - (void)updateHoverForPoint:(NSPoint)point {
+    if ([self isPointOnHiddenTabsIndicator:point]) { [self dismissHoverPanel]; return; }
     NSInteger hovered = -1;
     NSRect previousClose = _hoverTabIndex >= 0 ? [self closeCircleRectForTabRect:[self rectForTabAtIndex:_hoverTabIndex]] : NSZeroRect;
     BOOL wasOnClose = _hasLastHoverPoint && NSPointInRect(_lastHoverPoint,previousClose);
