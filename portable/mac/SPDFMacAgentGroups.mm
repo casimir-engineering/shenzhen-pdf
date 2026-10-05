@@ -2,6 +2,11 @@
 #import "SPDFMacTabGroupIntegration.h"
 #import "SPDFMacSidebarWorkspace.h"
 
+@interface ShenzhenMacDelegate (SPDFMacAgentGroupBatch)
+- (void)rememberActiveTabState;
+- (void)finishTabGroupChange;
+@end
+
 static NSDictionary* GroupError(NSString* message) { return @{@"error":message}; }
 @implementation ShenzhenMacDelegate (SPDFMacAgentGroups)
 - (SPDFTabGroup*)agentGroupWithID:(NSString*)identifier {
@@ -64,18 +69,22 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
             for (SPDFDocumentTab* tab in _tabs) if (tab.group==before && ![members containsObject:tab]) survives=YES;
             if (!survives) return GroupError(@"The destination group would be emptied by this creation. Choose another destination.");
         }
-        SPDFDocumentTab* first=members.firstObject;
-        [self createGroupForTabAtIndex:[_tabs indexOfObjectIdenticalTo:first] withTabAtIndex:-1 color:command[@"color"]];
-        group=first.group;
-        for (SPDFDocumentTab* tab in members) {
-            if (tab==first) continue;
-            NSArray* existing=spdf_tab_group_members(_tabs,group);
-            NSInteger destination=[_tabs indexOfObjectIdenticalTo:existing.lastObject]+1;
-            [self moveTabAtIndex:[_tabs indexOfObjectIdenticalTo:tab] toGroup:group atIndex:destination];
-        }
-        if (command[@"name"]) [self renameTabGroup:group name:command[@"name"]];
-        NSInteger position=before ? [_tabs indexOfObjectIdenticalTo:spdf_tab_group_members(_tabs,before).firstObject] : _tabs.count;
-        [self moveTabGroup:group toIndex:position]; affected=group.identifier;
+        // A batch must not open/render every member or serialize the session
+        // once per tab. Keep the normal final-selection behavior, with one commit.
+        [self rememberActiveTabState];
+        SPDFDocumentTab* active=_selectedTabIndex>=0 && _selectedTabIndex<(NSInteger)_tabs.count
+            ? _tabs[(NSUInteger)_selectedTabIndex] : nil;
+        group=[SPDFTabGroup groupWithColor:command[@"color"] ?: spdf_tab_group_unused_color(_tabs)];
+        group.name=name ?: @"";
+        for (SPDFDocumentTab* tab in members) tab.group=group;
+        [_tabs removeObjectsInArray:members];
+        NSUInteger position=before ? [_tabs indexOfObjectIdenticalTo:spdf_tab_group_members(_tabs,before).firstObject] : _tabs.count;
+        [_tabs insertObjects:members atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(position,members.count)]];
+        if (active) _selectedTabIndex=[_tabs indexOfObjectIdenticalTo:active];
+        [self normalizeTabGroups];
+        spdf_tab_groups_activate(_tabs,members.lastObject);
+        [self selectTabAtIndex:[_tabs indexOfObjectIdenticalTo:members.lastObject]];
+        [self finishTabGroupChange]; affected=group.identifier;
     } else if ([action isEqual:@"update-group"]) {
         if (command[@"name"]) [self renameTabGroup:group name:command[@"name"]];
         if (command[@"color"]) [self recolorTabGroup:group color:command[@"color"]];

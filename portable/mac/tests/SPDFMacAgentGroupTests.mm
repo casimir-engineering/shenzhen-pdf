@@ -12,6 +12,7 @@ NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"
 #pragma clang diagnostic pop
 @interface AgentGroupProbe : ShenzhenMacDelegate
 @property(nonatomic) NSUInteger saves;
+@property(nonatomic) NSUInteger selections;
 @property(nonatomic) NSMutableDictionary* workspace;
 @property(nonatomic) NSArray* savedTabs;
 - (void)seed:(NSArray*)tabs;
@@ -29,7 +30,7 @@ NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"
     for (SPDFDocumentTab* tab in _tabs) [encoded addObject:spdf_dictionary_from_tab(tab,0)];
     self.savedTabs=encoded;
 }
-- (void)selectTabAtIndex:(NSInteger)index { _selectedTabIndex=index; [self activateSelectedTabGroup]; }
+- (void)selectTabAtIndex:(NSInteger)index { self.selections++; _selectedTabIndex=index; [self activateSelectedTabGroup]; }
 @end
 static void Check(BOOL value) { assert(value); }
 static SPDFDocumentTab* Tab(NSString* path) {
@@ -108,6 +109,19 @@ int main(void) {
             [Group(state,promoted)[@"name"] isEqual:@"Inbox"] && [state[@"newDocumentsInGeneral"] boolValue]);
         SPDFDocumentTab* fresh=Tab(@"/next.md"); [managed appendNewTabToActiveGroup:fresh];
         Check(fresh.group.general && !fresh.group.hidden && [fresh.group.identifier isEqual:@"general"]);
+        AgentGroupProbe* batch=[AgentGroupProbe new];
+        NSMutableArray* many=[NSMutableArray array]; NSMutableArray* paths=[NSMutableArray array];
+        for (NSUInteger i=0;i<256;i++) {
+            NSString* path=[NSString stringWithFormat:@"/batch-%lu.pdf",(unsigned long)i];
+            [many addObject:Tab(path)]; [paths addObject:path];
+        }
+        [many addObject:Tab(@"/outside.md")]; [batch seed:many];
+        state=Run(batch,@{@"action":@"create-group",@"paths":paths,@"name":@"Batch",@"color":@"Teal"});
+        Check(!state[@"error"] && batch.saves==1 && batch.selections==1);
+        Check([Group(state,state[@"groupID"])[@"paths"] isEqual:paths]);
+        Check([Group(state,@"general")[@"paths"] isEqual:@[@"/outside.md"]]);
+        NSDictionary* last=[state[@"tabs"] lastObject];
+        Check([last[@"path"] isEqual:paths.lastObject] && [last[@"selected"] boolValue]);
         puts("SPDFMacAgentGroupTests passed");
     }
 }

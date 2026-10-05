@@ -162,3 +162,11 @@ Hidden groups again use the barred eye, with the gray tint retained. Visible gro
 ![Hidden group with dimmed barred eye](reader-refinements-2026-10-05/group-picker-barred-eye.png)
 
 Headless group interaction tests pass. The release draft contains a brief updater overview followed by a detailed list covering tabs/groups, images/fit, history management, reader layout, and separate AI/configuration notes.
+
+## Release validation: live API grouping and format contract
+
+At the user's request, the live app API organized 76 existing tabs into seven contextual groups. Project documents and a few ambiguous PDFs were read locally to identify their subject; no document was closed or added. The final API snapshot retained every original path, its assigned order, and the previously selected document. `session.yaml` was independently decoded and its tab order matched the API snapshot. Private document names and paths remain in local test evidence, outside this public journal.
+
+The test exposed slow bulk group creation: each member was being selected/rendered and each intermediate arrangement saved. A 29-document command exceeded the 30-second response timeout, although its mutation completed. Group state was re-listed before continuing to avoid creating duplicates. Bulk API creation now validates first, changes membership as one batch, selects only its final member, and saves once. A 256-member headless test asserts one selection/one save, exact membership order, and retention of outside tabs.
+
+The release sweep also caught an older format test expecting unconditional picture-color preservation. It now explicitly passes Preserve Images when testing the enabled preference, then separately checks that disabling the preference recolors the same images. All 31 actual format fixtures pass, including image formats, e-books and Office examples.

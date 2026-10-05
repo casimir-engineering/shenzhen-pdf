@@ -5,7 +5,7 @@ adapter. Neither starts a listener, daemon, or polling loop when the reader
 launches normally. Inspection is headless and does not open the reader's window.
 Navigation opens the reader and changes its active document and saved position.
 
-This guide describes the controls shipped in **26.10.2-4**. It is the public
+This guide describes the controls shipped in **26.10.5-1**. It is the public
 integration reference; implementation details live in the
 [Markdown engine contract](../mac/markdown/README.md).
 
@@ -284,7 +284,9 @@ reader returns to its ordinary ungrouped tab strip unless General was explicitly
 managed or hidden. General cannot be ungrouped.
 
 Creation and tab moves select the affected tab, following normal reader
-behavior. Group order/name/color changes do not open documents. Expand/collapse
+behavior. A bulk `create-group` validates all requested members first, then
+updates membership and saves once. It selects the last requested tab once; it
+does not open/render every member while arranging the group. Group order/name/color changes do not open documents. Expand/collapse
 uses the reader's normal group behavior. Missing paths or group IDs, invalid
 colors, and destinations outside the requested group fail before mutation.
 Group commands share the live navigation busy/cancellation gate, so an ongoing
