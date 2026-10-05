@@ -61,6 +61,12 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
     NSMutableDictionary<NSNumber*,NSNumber*>* _preferredTabWidths;
     NSArray<NSNumber*>* _ungroupedVisibleIndexes;
     CGFloat _ungroupedLayoutWidth;
+    CGFloat _tabScrollOffset;
+    CGFloat _tabContentWidth;
+    NSRect _tabPinnedViewport;
+    BOOL _revealSelectedTab;
+    SPDFTabGroup* _pressedGroupAction;
+    NSInteger _pressedGroupActionKind;
     id _groupLayout;
     NSRect _groupLayoutBounds;
     CGFloat _groupLayoutInset;
@@ -167,6 +173,12 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (id<SPDFTabGroupReader>)groupReader;
 - (NSMenu*)contextMenuForGroup:(SPDFTabGroup*)group;
 - (BOOL)newGroupGoesBeforeTargetAtIndex:(NSInteger)index;
+- (NSRect)tabViewportRect;
+- (NSRect)tabScrollIndicatorRectOnLeft:(BOOL)left;
+- (NSInteger)tabScrollHiddenCountOnLeft:(BOOL)left;
+- (void)scrollTabStripBy:(CGFloat)delta;
+- (BOOL)handleTabScrollMouseDown:(NSEvent*)event;
+- (NSRect)groupActionRect:(NSRect)header hide:(BOOL)hide;
 - (BOOL)hasTabGroups;
 - (NSArray*)groupLayouts;
 - (NSInteger)groupInsertionIndexForPoint:(NSPoint)point;

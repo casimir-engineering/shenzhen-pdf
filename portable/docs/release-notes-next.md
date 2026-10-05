@@ -22,3 +22,6 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Right-click a saved History version to **Delete version…**. On the linked original, **Delete all previous backups…** removes older snapshots while retaining the original and latest saved copy. Collection’s former “Delete Selected Copies” action now uses that name and scope.
 
 - Removed self-comparison from Collection. **Compare with Latest** is available on older History versions’ context menus and uses the clicked snapshot.
+
+- Scroll crowded tab groups with the mouse wheel or a two-finger trackpad gesture. Other collapsed group names remain visible when they fit; left/right `+` counts navigate offscreen tabs. Scroll position persists per window.
+- Hover a group name for **Rename** and **Hide** controls. The All Groups picker includes eye toggles to show or hide groups without closing documents.

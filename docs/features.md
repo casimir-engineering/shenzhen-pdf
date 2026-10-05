@@ -110,10 +110,16 @@ does not re-trigger the macOS access prompt.
 <p align="center"><img src="images/portable/macos-multi-window.webp" alt="Two windows side by side, each with its own tabs, one showing a Markdown document and one a PDF" width="880"></p>
 
 - **Compact tab strip** — every tab outlined, same-named files disambiguated by
-  their folder, overflow into a "…" menu. Long titles keep their beginning and
+  their folder. Grouped tabs scroll horizontally with mouse-wheel or two-finger
+  trackpad input, with left/right `+` counts for offscreen items. Collapsed group
+  names stay visible beside the expanded document lane when space permits;
+  overflowing group names remain reachable by scrolling. Long titles keep their beginning and
   ending visible with a middle ellipsis; hovering reveals the close button without moving the title.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
   **reattach**. A detached tab keeps its page, zoom, scroll and search.
+- **Group controls** — hover a group name for rename and hide icons. The All Groups
+  picker has an eye toggle for showing or hiding each group without closing documents.
+  Manual tab-strip scroll position is restored per window from session YAML.
 - **Read-only dot** — a tab opened from a read-only source is marked.
 - **Multi-window session restore** — every window comes back with its own tabs,
   selected tab, size and position, on the display it was left on. The window
@@ -131,7 +137,7 @@ does not re-trigger the macOS access prompt.
 - First-use choice to keep local copies and history, with on/off, location, storage cap and management in Settings. Reading continues from original paths.
 - Background capture after opening; reachable recent documents are imported when Collection is enabled. Identical content shares storage, while distinct documents retain separate histories.
 - Immutable original and version copies, pre-edit protection, saved milestones and deliberate deletion of copies. Deleting Collection history never deletes source documents. History’s context menu deletes individual saved versions; the linked original offers **Delete all previous backups…**, retaining the latest saved copy. Collection’s bulk action uses that same scope. Manual deletion includes kept versions after confirmation.
-- Read-only version previews and a history view; Save a Copy creates a separate editable document.
+- Read-only version previews and a history view; Save a Copy creates a separate editable document. Older History rows offer Compare with Latest in their context menu; Collection omits this self-comparison command.
 - PDF and Markdown comparison with old/new panes, red removals, green additions, linked scrolling/zoom, and clickable change markers. Inserted and deleted pages have blank counterparts.
 - Missing-original recovery from protected copies. Locate Original offers manual selection or a cancellable exact-hash search, sorted by modification date from oldest to newest.
 - Manage Collection has Documents and Settings in the left sidebar. Documents uses one list view with small page previews, with no layout selector or thumbnail grid. It shows each document once using its latest saved copy; search stays inside Documents and searches only those copies, with page thumbnails and contextual highlighted matches. History shows real read-only PDF/Markdown previews, comparison and copy export, plus Keep forever when a storage limit is active. Earlier versions are confined to History, where a Latest pill identifies the current saved version independently of selection. Query, selected version/page, expanded matches and browsing positions persist.

@@ -121,11 +121,17 @@
         NSParagraphStyleAttributeName : tabTitleStyle
     };
 
+    [NSGraphicsContext saveGraphicsState];
+    if ([self hasTabGroups]) NSRectClip(NSMakeRect([self leftInset],0,
+        [self tabAreaRightWithOverflow:YES]-[self leftInset],NSHeight(self.bounds)));
     [self drawTabGroups];
     NSInteger draggedIndex = [self isVisuallyReorderingTabs] ? _dragSourceTabIndex : -1;
     for (NSInteger i = 0; i < (NSInteger)self.tabs.count; ++i) {
         if (i == draggedIndex) continue;
+        [NSGraphicsContext saveGraphicsState];
+        if ([self hasTabGroups]) NSRectClip([self tabViewportRect]);
         [self drawTabAtIndex:i inRect:[self visualRectForTabAtIndex:i] attributes:attrs dimAttributes:dimAttrs];
+        [NSGraphicsContext restoreGraphicsState];
     }
     if (draggedIndex >= 0) {
         [self drawTabAtIndex:draggedIndex
@@ -134,6 +140,18 @@
                dimAttributes:dimAttrs];
     }
 
+    [NSGraphicsContext restoreGraphicsState];
+    for (NSNumber* left in @[@YES,@NO]) {
+        NSInteger count = [self tabScrollHiddenCountOnLeft:left.boolValue];
+        if (count <= 0) continue;
+        NSRect indicator = [self tabScrollIndicatorRectOnLeft:left.boolValue];
+        [[NSColor.labelColor colorWithAlphaComponent:.07] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:indicator xRadius:4 yRadius:4] fill];
+        NSString* label = [NSString stringWithFormat:@"+%ld",(long)count];
+        [label drawInRect:NSInsetRect(indicator,1,6) withAttributes:@{
+            NSFontAttributeName:[NSFont systemFontOfSize:10],NSForegroundColorAttributeName:NSColor.labelColor,
+            NSParagraphStyleAttributeName:SPDFTabTitleParagraphStyle()}];
+    }
     NSRect overflowRect = [self overflowRect];
     if (!NSIsEmptyRect(overflowRect)) {
         NSImage* icon = [NSImage imageWithSystemSymbolName:@"square.3.layers.3d" accessibilityDescription:@"All Groups"];

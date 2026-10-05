@@ -78,6 +78,11 @@
     [super setHidden:hidden];
 }
 
+- (CGFloat)tabScrollOffset { return _tabScrollOffset; }
+- (void)setTabScrollOffset:(CGFloat)offset {
+    _tabScrollOffset=isfinite(offset) ? MAX(0,offset) : 0;
+    _groupLayout=nil; _revealSelectedTab=NO; [self setNeedsDisplay:YES];
+}
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _groupLayout = nil;
     _preferredTabWidths = nil;
@@ -94,6 +99,7 @@
 
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
     _groupLayout = nil;
+    _revealSelectedTab = _selectedIndex != selectedIndex || !_tabs.count;
     _selectedIndex = selectedIndex;
     _preferredTabWidths = nil;
     _ungroupedVisibleIndexes = nil;
@@ -288,6 +294,7 @@
 }
 
 - (void)mouseDown:(NSEvent*)event {
+    if ([self handleTabScrollMouseDown:event]) return;
     if ([self handleGroupMouseDown:event]) return;
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     _draggedTabIndex = -1;

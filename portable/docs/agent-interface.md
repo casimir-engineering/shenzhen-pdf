@@ -271,7 +271,10 @@ last-used document. Both work for General. With ordinary ungrouped tabs, use
 `groupID:"general"` in `update-group` or `jump-group` to materialize General
 lazily. Opening a new document while its active group is hidden puts that new
 document in visible General. The manager and API retain access when all groups
-are hidden.
+are hidden. The UI also exposes visibility through eye toggles in the All Groups
+picker and group-header hover controls. Per-window manual tab-strip scroll position
+is persisted as `windows[].sidebar.tabStripScroll` in `session.yaml`; it does not
+change group membership, order, hidden state or the selected document.
 
  Omitting
 `beforePath` appends a tab; omitting `beforeGroupID` appends a group. Moving tabs

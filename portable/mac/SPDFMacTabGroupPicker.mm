@@ -92,7 +92,14 @@
         row.bordered=NO; row.target=self; row.action=@selector(browseGroupPickerRow:);
         row.accessibilityLabel=[NSString stringWithFormat:@"%@, %@ documents%@",group.displayName,counts[group.identifier],group.hidden ? @", hidden" : @""];
         row.toolTip=[NSString stringWithFormat:@"Show %@ tabs without changing the document",group.displayName];
-        [content addSubview:row]; y-=32;
+        row.frame=NSMakeRect(6,y,198,32);
+        NSButton* eye=[[NSButton alloc] initWithFrame:NSMakeRect(204,y+4,26,24)];
+        eye.bordered=NO; eye.image=[NSImage imageWithSystemSymbolName:group.hidden ? @"eye.slash" : @"eye"
+            accessibilityDescription:group.hidden ? @"Show group" : @"Hide group"];
+        eye.target=self; eye.action=@selector(toggleGroupPickerVisibility:); eye.identifier=group.identifier;
+        eye.toolTip=group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
+        eye.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.hidden ? @"Show" : @"Hide",group.displayName];
+        [content addSubview:row]; [content addSubview:eye]; y-=32;
     }
     NSBox* line=[[NSBox alloc] initWithFrame:NSMakeRect(6,40,224,1)]; line.boxType=NSBoxSeparator;
     [content addSubview:line];
@@ -106,6 +113,15 @@
     SPDFTabGroup* group=sender.group;
     if (group.hidden) [self.groupReader setTabGroup:group hidden:NO];
     if (group.collapsed) [self.groupReader toggleTabGroup:group];
+}
+- (void)toggleGroupPickerVisibility:(NSButton*)sender {
+    for (SPDFDocumentTab* tab in self.tabs) if ([tab.group.identifier isEqual:sender.identifier]) {
+        [self.groupReader setTabGroup:tab.group hidden:!tab.group.hidden];
+        sender.image=[NSImage imageWithSystemSymbolName:tab.group.hidden ? @"eye.slash" : @"eye" accessibilityDescription:nil];
+        sender.toolTip=tab.group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
+        sender.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",tab.group.hidden ? @"Show" : @"Hide",tab.group.displayName];
+        return;
+    }
 }
 - (void)manageGroupsFromPicker:(id)sender {
     [_groupPicker close];

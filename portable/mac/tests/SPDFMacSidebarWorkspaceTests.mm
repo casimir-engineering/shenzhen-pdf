@@ -13,17 +13,27 @@
 - (NSArray*)sidebarGroupSnapshots;
 - (void)performSidebarGroupAction:(NSString*)action identifier:(NSString*)identifier value:(NSString*)value;
 @end
+@interface WorkspaceScrollProbe : NSObject
+@property CGFloat tabScrollOffset;
+@property(copy) void (^tabScrollDidChange)(CGFloat);
+@end
+@implementation WorkspaceScrollProbe
+@end
 @interface WorkspaceProbe : ShenzhenMacDelegate
 @property NSInteger saves;
 @property NSInteger collectionPanelChecks;
 @property NSInteger snapshotCount;
 - (void)seed:(NSArray*)tabs;
+- (WorkspaceScrollProbe*)createScrollProbe;
 - (NSArray*)tabs;
 - (NSControl*)navigation;
 - (CGFloat)sidebarWidth;
 - (void)preferSidebarVisible:(BOOL)visible;
 @end
 @implementation WorkspaceProbe
+- (WorkspaceScrollProbe*)createScrollProbe {
+    WorkspaceScrollProbe* probe=[WorkspaceScrollProbe new]; _tabStrip=(id)probe; return probe;
+}
 - (void)seed:(NSArray*)tabs {
     _tabs = tabs.mutableCopy; _selectedTabIndex = tabs.count ? 0 : -1;
     _sidebarWidth = 284; _sidebarPreferredVisible = YES;
@@ -104,6 +114,27 @@ static void CheckDocumentMoveIntegration(void) {
             @"YAML retains transferred group, tab position and document reading position");
     }
 }
+static void CheckTabScrollPersistence(void) {
+    WorkspaceProbe* reader=[WorkspaceProbe new]; [reader seed:@[]];
+    [reader restoreSidebarWorkspaceState:@{@"tabStripScroll":@325}];
+    WorkspaceScrollProbe* strip=[reader createScrollProbe]; [reader applySidebarWorkspaceState];
+    Check(strip.tabScrollOffset==325 && reader.saves==0,@"tab scroll restores in memory without startup saves or store work");
+    if (!strip.tabScrollDidChange) { Check(NO,@"tab scrolling installs its persistence callback"); return; }
+    strip.tabScrollOffset=485; strip.tabScrollDidChange(485);
+    strip.tabScrollOffset=500; strip.tabScrollDidChange(500);
+    [reader applySidebarWorkspaceState];
+    Check(strip.tabScrollOffset==500,@"workspace refresh cannot reset a manual tab scroll");
+    NSDate* end=[NSDate dateWithTimeIntervalSinceNow:.3];
+    while(end.timeIntervalSinceNow>0) [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:end];
+    Check(reader.saves==1,@"wheel bursts coalesce into one deferred state save");
+    NSDictionary* session=YAML(@{@"sidebar":reader.sidebarWorkspaceSnapshot});
+    WorkspaceProbe* reopened=[WorkspaceProbe new]; [reopened seed:@[]];
+    [reopened restoreSidebarWorkspaceState:session[@"sidebar"]];
+    WorkspaceScrollProbe* restored=[reopened createScrollProbe]; [reopened applySidebarWorkspaceState];
+    Check(restored.tabScrollOffset==500 && reopened.saves==0,@"per-window YAML roundtrip retains tab-strip scroll");
+    [reopened restoreSidebarWorkspaceState:@{@"tabStripScroll":@(-1)}];
+    Check(!reopened.sidebarWorkspaceState[@"tabStripScroll"],@"invalid negative tab scroll is ignored");
+}
 static void BenchmarkWorkspace(void) {
     for (NSNumber* countValue in @[@20,@200,@1000]) {
         NSUInteger count=countValue.unsignedIntegerValue;
@@ -136,6 +167,7 @@ int main(int argc, const char* argv[]) {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         if (argc>1 && strcmp(argv[1],"--benchmark")==0) { BenchmarkWorkspace(); return 0; }
         CheckDocumentMoveIntegration();
+        CheckTabScrollPersistence();
         WorkspaceProbe* reader = [WorkspaceProbe new]; [reader seed:@[Tab(@"Alpha.pdf"),Tab(@"Beta.md")]];
         Check(![reader showSidebarWorkspacePanel] && reader.collectionPanelChecks == 0,
             @"ordinary chapter sidebar starts no management or Collection work");

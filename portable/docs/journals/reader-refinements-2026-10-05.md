@@ -99,3 +99,21 @@ Collection store, integrity and cleanup tests and the full Markdown/UI integrati
 Collection displays the latest saved copy, so its **Compare with Latest** command compared that copy with itself. The command and its unused routing were removed from Collection. **Compare with Previous** remains useful there. Older History rows now offer **Compare with Latest** on right-click; the latest History row omits it. Context comparison snapshots the clicked version rather than reading whatever row is selected afterward.
 
 The complete headless Markdown/UI integration suite passes. Native Collection and History menu tests fail against the prior layout/controller, proving the removed command and new context action are covered. The active document and updater flow are unchanged.
+
+
+## Follow-up: scrolling crowded tabs without losing groups
+
+The old admission algorithm gave the active group's documents first claim on width, then omitted other group headers. A crowded group consequently showed a large `+59` count while hiding the rest of the workspace. With the tab-navigation agent, this was replaced by continuous document geometry and a clipped, scrollable lane. Compact collapsed headers remain pinned in actual group order around the expanded group's lane whenever they fit. If there are too many headers to fit, the full strip becomes scrollable rather than dropping groups.
+
+Mouse-wheel and two-finger horizontal/vertical trackpad input scroll the lane without selecting a document. Left/right `+` counts appear for offscreen entries and can be clicked to move through the list. New selections reveal their tab; manual scrolling, hover and ordinary refreshes do not snap back. Add Document and All Groups remain separate controls. Renaming/hiding is explicit: hover a group name for stable rename/hide targets, use the group's context menu, or toggle an eye in All Groups. Hiding does not close documents or change the reader. Scroll buttons and group actions expose VoiceOver actions/labels.
+
+Native offscreen production-strip evidence with 60 documents and adjacent collapsed groups:
+
+![Collapsed groups beside scrollable documents](reader-refinements-2026-10-05/scrollable-groups.png)
+![Group hover actions](reader-refinements-2026-10-05/group-hover-actions.png)
+
+Root integration persists manual scroll per window in `session.yaml` under `windows[].sidebar.tabStripScroll`. Restoration uses existing in-memory window state, and wheel bursts coalesce into one save after 200 ms. No store access or saves happen during initial wiring; repeated workspace application cannot reset a manual scroll.
+
+Validation covers pinned headers before/after a 60-document group; bilateral indicators and edge clamping; real NSEvent trackpad deltas; explicit selected-tab reveal; restored/manual scroll retention; 20 collapsed groups forcing the continuous-strip fallback; stable hover targets, rename/hide routing and All Groups eye controls; accessibility; and existing drag/drop, title, geometry and style behavior. The old GroupLayout compiles with the final harness and fails the pinned-header regression. Previous workspace code fails the new scroll restoration/callback checks. YAML roundtrip and coalesced-save tests pass.
+
+Repeated scroll plus layout work measured 0.049 ms/input at 60 tabs, 0.127 ms at 200 and 0.522 ms at 1,000, so no additional geometry-cache architecture was needed. Full reader probes pass at four widths in both themes with PDF/Markdown/text, Find/History, panel click/drag, hidden/presentation layouts and updater-menu routing. Tab group integration, lifecycle/state, window chrome, launch-work policy and all 32 updater tests pass. Source-size and whitespace checks pass. The rebuilt `dist` app is signature-verified; the running user app is untouched. No release is published here.

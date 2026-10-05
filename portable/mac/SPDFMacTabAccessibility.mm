@@ -7,6 +7,8 @@ typedef NS_ENUM(NSInteger, SPDFTabAccessibilityKind) {
     SPDFTabAccessibilityKindGroup,
     SPDFTabAccessibilityKindOverflow,
     SPDFTabAccessibilityKindNewTab,
+    SPDFTabAccessibilityKindScrollLeft,
+    SPDFTabAccessibilityKindScrollRight,
 };
 
 @interface SPDFMacTabAccessibilityElement : NSAccessibilityElement
@@ -37,6 +39,11 @@ typedef NS_ENUM(NSInteger, SPDFTabAccessibilityKind) {
             return YES;
         case SPDFTabAccessibilityKindOverflow:
             [strip showOverflowMenuForAccessibility];
+            return YES;
+        case SPDFTabAccessibilityKindScrollLeft:
+        case SPDFTabAccessibilityKindScrollRight:
+            [strip scrollTabStripBy:(self.kind==SPDFTabAccessibilityKindScrollLeft ? -1 : 1)
+                *MAX(96,NSWidth([strip tabViewportRect])*.7)];
             return YES;
         case SPDFTabAccessibilityKindNewTab:
             [strip.reader newTabRequested:strip];
@@ -86,7 +93,9 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
         for (id layout in [strip groupLayouts]) {
             SPDFTabGroup* group = [layout valueForKey:@"group"];
             NSRect frame = [[layout valueForKey:@"header"] rectValue];
-            if (!group || NSIsEmptyRect(frame)) continue;
+            NSRect area=NSMakeRect([strip leftInset],0,[strip tabAreaRightWithOverflow:YES]-[strip leftInset],NSHeight(strip.bounds));
+            if (!group || NSIsEmptyRect(frame) || !NSIntersectsRect(frame,area)) continue;
+            frame=NSIntersectionRect(frame,area);
             SPDFMacTabAccessibilityElement* element =
                 Element(strip, SPDFTabAccessibilityKindGroup, NSAccessibilityDisclosureTriangleRole,
                         group.displayName, frame);
@@ -100,12 +109,27 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
             element.accessibilityCustomActions = @[
                 [[NSAccessibilityCustomAction alloc] initWithName:@"Show Group Menu" handler:^BOOL {
                   return [weakElement showAccessibleMenu];
+                }],
+                [[NSAccessibilityCustomAction alloc] initWithName:@"Rename Group" handler:^BOOL {
+                    [weakElement.strip promptForGroup:weakElement.group creating:NO]; return YES;
+                }],
+                [[NSAccessibilityCustomAction alloc] initWithName:@"Hide Group" handler:^BOOL {
+                    [weakElement.strip.groupReader setTabGroup:weakElement.group hidden:YES]; return YES;
                 }]
             ];
             [children addObject:element];
         }
     }
 
+    for (NSNumber* left in @[@YES,@NO]) {
+        NSInteger count=[strip tabScrollHiddenCountOnLeft:left.boolValue];
+        if (count<=0) continue;
+        SPDFMacTabAccessibilityElement* button=Element(strip,left.boolValue ? SPDFTabAccessibilityKindScrollLeft
+            : SPDFTabAccessibilityKindScrollRight,NSAccessibilityButtonRole,
+            [NSString stringWithFormat:@"Scroll tabs %@, %ld more",left.boolValue ? @"left" : @"right",(long)count],
+            [strip tabScrollIndicatorRectOnLeft:left.boolValue]);
+        [children addObject:button];
+    }
     NSArray<NSNumber*>* hidden = [strip hiddenTabIndexes];
     NSRect overflowFrame = [strip overflowRect];
     for (NSInteger index = 0; index < (NSInteger)strip.tabs.count; ++index) {

@@ -1,5 +1,4 @@
 #import <Cocoa/Cocoa.h>
-
 #import "SPDFMacTabGroups.h"
 #import "SPDFMacTabStripViewPrivate.h"
 
@@ -14,7 +13,6 @@
 @end
 @implementation SPDFGroupFakeTab
 @end
-
 @interface SPDFGroupFakeReader : NSObject <SPDFTabGroupReader>
 @property(nonatomic) NSInteger toggles;
 @property(nonatomic) NSInteger createdGroups;
@@ -241,9 +239,11 @@ static void check_group_reorder(BOOL useGeneral) {
 
 #include "SPDFMacTabGroupOverflowChecks.h"
 
+#include "SPDFMacTabStripScrollChecks.h"
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
+        check_scrollable_group_strip(); benchmark_strip_scrolling();
         check_compact_workspace_tabs();
         check_group_reorder(YES);
         check_group_reorder(NO);
