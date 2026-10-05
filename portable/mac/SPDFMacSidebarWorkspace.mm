@@ -89,7 +89,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
         NSMutableDictionary* row = lookup[identifier];
         if (!row) {
             row = [@{@"id":identifier,@"name":group.displayName ?: @"General",@"color":group.colorName ?: @"Gray",
-                @"hidden":@(group.hidden),@"selected":@NO,@"documents":[NSMutableArray array]} mutableCopy];
+                @"collapsed":@(group.collapsed),@"hidden":@(group.hidden),@"selected":@NO,@"documents":[NSMutableArray array]} mutableCopy];
             lookup[identifier] = row; [groups addObject:row];
         }
         BOOL selected = tab == [self selectedTab]; if (selected) row[@"selected"] = @YES;
@@ -102,7 +102,8 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
     for (SPDFDocumentTab* tab in _tabs) if ([tab.group.identifier isEqual:identifier]) { group = tab.group; break; }
     if (!group && [identifier isEqual:@"general"]) group = [self ensureGeneralTabGroup];
     if (!group) return;
-    if ([action isEqual:@"visibility"]) [self setTabGroup:group hidden:!group.hidden];
+    if ([action isEqual:@"collapse"]) [self toggleTabGroup:group];
+    else if ([action isEqual:@"visibility"]) [self setTabGroup:group hidden:!group.hidden];
     else if ([action isEqual:@"rename"]) [self renameTabGroup:group name:value];
     else if ([action isEqual:@"move-document"]) {
         NSDictionary* source = [NSJSONSerialization JSONObjectWithData:[value dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];

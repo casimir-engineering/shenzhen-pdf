@@ -115,7 +115,22 @@ static void check_compact_workspace_tabs(void) {
     render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-compact-workspace-tabs-hover.png");
     expect([strip valueForKey:@"groupPicker"]==nil,@"group picker allocated before first use");
     NSView* picker=[strip groupPickerContentView];
-    expect(NSWidth(picker.frame)==236 && picker.subviews.count==8,@"all-groups picker omitted hidden groups or management");
+    expect(NSWidth(picker.frame)==264 && picker.subviews.count==11,@"all-groups picker omitted hidden groups or management");
+    SPDFGroupFakeReader* pickerReader=[SPDFGroupFakeReader new]; strip.reader=(id)pickerReader;
+    NSUInteger collapses=0;
+    for(NSView* child in picker.subviews) if([child isKindOfClass:NSButton.class]) {
+        NSButton* button=(NSButton*)child;
+        if(button.action==NSSelectorFromString(@"toggleGroupPickerCollapse:")) {
+            collapses++; NSInteger before=pickerReader.toggles;
+            NSString* label=button.accessibilityLabel;
+            [button performClick:nil]; [button performClick:nil];
+            expect(pickerReader.toggles==before+2 && [label isEqual:button.accessibilityLabel],
+                @"collapse toggle must roundtrip immediately without selecting a document");
+        }
+        if(button.action==NSSelectorFromString(@"browseGroupPickerRow:"))
+            expect(NSWidth(button.frame)==198,@"collapse button stole group title space");
+    }
+    expect(collapses==3,@"every picker group needs a collapse toggle");
     BOOL hasHidden=NO;
     for (NSView* child in picker.subviews)
         if ([[child accessibilityLabel] containsString:@"hidden"]) hasHidden=YES;
