@@ -77,6 +77,7 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     __block NSString* action; __block NSString* target; __block NSUInteger changes = 0;
     manager.actionHandler = ^(NSString* verb, NSString* group, NSString* value) { (void)value; action = verb; target = group; changes++; };
     NSView* research = [manager tableView:table viewForTableColumn:table.tableColumns.firstObject row:1];
+    Check(Button(research,@"Collapse Research in tab bar").image!=nil,"tab-bar collapse has a valid distinct symbol");
     [Button(research,@"Collapse Research in tab bar") performClick:nil];
     Check([action isEqual:@"collapse"] && [target isEqual:@"group-1"] && changes==1,
         "tab-bar collapse is a distinct group action");

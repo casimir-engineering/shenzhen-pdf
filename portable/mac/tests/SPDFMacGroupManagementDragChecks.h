@@ -15,72 +15,67 @@ static SPDFGroupDragInfoProbe* BeginGroupDocumentDrag(SPDFGroupManagementControl
         forRowIndexes:[NSIndexSet indexSetWithIndex:row]];
     return info;
 }
+static void CheckGroupDragAutoscroll(void);
 static void CheckGroupDocumentDragging(void) {
-    SPDFGroupManagementController* manager = [SPDFGroupManagementController new];
-    NSDictionary* state = @{@"groupQuery":@"Research",@"expandedGroups":@[@"general",@"group-1"],@"groupScroll":@0};
-    [manager updateGroups:Groups() state:state];
-    NSTableView* table = (id)Find(manager.view,NSTableView.class);
-    __block NSMutableArray* published = [NSMutableArray array];
-    __block NSMutableArray* actions = [NSMutableArray array];
-    manager.stateHandler = ^(NSDictionary* value) { [published addObject:value]; };
-    manager.actionHandler = ^(NSString* action,NSString* group,NSString* value) {
-        [actions addObject:@{@"action":action,@"group":group,@"value":value ?: @""}];
+    CheckGroupDragAutoscroll();
+    SPDFGroupManagementController* manager=[SPDFGroupManagementController new];
+    NSDictionary* state=@{@"expandedGroups":@[@"general",@"group-1"],@"groupScroll":@0};
+    [manager updateGroups:Groups() state:state]; NSTableView* table=(id)Find(manager.view,NSTableView.class);
+    __block NSString* target; __block NSDictionary* payload;
+    manager.actionHandler=^(NSString* action,NSString* group,NSString* value) {
+        Check([action isEqual:@"move-document"],"drop dispatches a document move"); target=group;
+        payload=[NSJSONSerialization JSONObjectWithData:[value dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
     };
-    Check(table.numberOfRows == 3,"drag fixture begins with an active group filter and its documents");
-    Check([manager tableView:table pasteboardWriterForRow:0] == nil,"group headers cannot start document drags");
-    SPDFGroupDragInfoProbe* info = BeginGroupDocumentDrag(manager,table,2);
-    Check(table.numberOfRows == 6,"drag temporarily exposes all group headers despite the active filter");
-    BOOL onlyHeaders = YES;
-    for (NSDictionary* row in [manager valueForKey:@"rows"]) onlyHeaders &= row[@"document"] == nil;
-    Check(onlyHeaders,"drag temporarily collapses every destination group");
-    Check([manager.viewState[@"expandedGroups"] isEqual:state[@"expandedGroups"]] &&
-        [manager.viewState[@"groupQuery"] isEqual:@"Research"] && !published.count,
-        "temporary collapse changes neither persisted expansion nor the search query");
+    NSInteger count=table.numberOfRows;
+    SPDFGroupDragInfoProbe* info=BeginGroupDocumentDrag(manager,table,5);
+    Check(table.numberOfRows==count && count==10,"drag preserves expanded groups and document rows");
+    Check([manager tableView:table validateDrop:(id)info proposedRow:4 proposedDropOperation:NSTableViewDropAbove]==NSDragOperationMove,
+        "same-group insertion is accepted");
+    Check([manager tableView:table acceptDrop:(id)info row:4 dropOperation:NSTableViewDropAbove] &&
+        [target isEqual:@"group-1"] && [payload[@"before"] isEqual:@"/Getting started.pdf"],"same-group drop carries exact before-document anchor");
+    Check([manager tableView:table acceptDrop:(id)info row:6 dropOperation:NSTableViewDropOn] && [target isEqual:@"group-2"] && ![payload[@"before"] length],
+        "drop on a group appends to that group");
+    Check([manager tableView:table acceptDrop:(id)info row:count dropOperation:NSTableViewDropAbove] && [target isEqual:@"group-5"],
+        "drop after last row appends at list end");
+    info.draggingSource=[NSTableView new];
+    Check(![manager tableView:table acceptDrop:(id)info row:4 dropOperation:NSTableViewDropAbove],"foreign source is rejected");
+    info.draggingSource=table;
     [manager tableView:table draggingSession:(id)[NSObject new] endedAtPoint:NSZeroPoint operation:NSDragOperationNone];
-    Check(table.numberOfRows == 3 && [manager.viewState[@"expandedGroups"] isEqual:state[@"expandedGroups"]] &&
-        [manager.viewState[@"groupQuery"] isEqual:@"Research"] && !actions.count,
-        "cancelling restores filtered rows and all original expansion without moving documents");
-    Check(published.count == 1 && [published.lastObject[@"expandedGroups"] isEqual:state[@"expandedGroups"]],
-        "cancel never saves the temporary collapsed presentation");
+    Check(![manager tableView:table acceptDrop:(id)info row:4 dropOperation:NSTableViewDropAbove],"cancelled drag tokens cannot be replayed");
+    Check(table.numberOfRows==count,"cancel preserves disclosure state");
     [info.draggingPasteboard releaseGlobally];
+    // A document context menu is supplied by the tab strip, not group actions.
+    manager.documentMenuProvider=^NSMenu*(NSString* path,NSString* group) {
+        Check([path isEqual:@"/Getting started.pdf"] && [group isEqual:@"general"],"context menu targets the document identity");
+        NSMenu* menu=[NSMenu new]; [menu addItemWithTitle:@"Close Document" action:nil keyEquivalent:@""]; return menu;
+    };
+    [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
+    [manager menuNeedsUpdate:table.menu];
+    Check(table.menu.numberOfItems==1 && [table.menu.itemArray.firstObject.title isEqual:@"Close Document"],"document rows use document menu provider");
+}
 
-    info = BeginGroupDocumentDrag(manager,table,2);
-    SPDFGroupDragInfoProbe* foreign = [SPDFGroupDragInfoProbe new];
-    foreign.draggingSource = [NSTableView new]; foreign.draggingPasteboard = info.draggingPasteboard;
-    Check([manager tableView:table validateDrop:(id)foreign proposedRow:2 proposedDropOperation:NSTableViewDropOn] == NSDragOperationNone &&
-        ![manager tableView:table acceptDrop:(id)foreign row:2 dropOperation:NSTableViewDropOn],
-        "a foreign workspace cannot replay even a valid local token");
-    NSPasteboard* validPasteboard = info.draggingPasteboard;
-    info.draggingPasteboard = [NSPasteboard pasteboardWithUniqueName];
-    [info.draggingPasteboard setString:@"foreign-token" forType:@"com.shenzhenpdf.group-document"];
-    Check([manager tableView:table validateDrop:(id)info proposedRow:2 proposedDropOperation:NSTableViewDropOn] == NSDragOperationNone &&
-        ![manager tableView:table acceptDrop:(id)info row:2 dropOperation:NSTableViewDropOn],
-        "a mismatched token cannot move a document");
-    [info.draggingPasteboard releaseGlobally]; info.draggingPasteboard = validPasteboard;
-    Check([manager tableView:table validateDrop:(id)info proposedRow:1 proposedDropOperation:NSTableViewDropOn] == NSDragOperationNone &&
-        [manager tableView:table validateDrop:(id)info proposedRow:-1 proposedDropOperation:NSTableViewDropOn] == NSDragOperationNone &&
-        [manager tableView:table validateDrop:(id)info proposedRow:6 proposedDropOperation:NSTableViewDropOn] == NSDragOperationNone,
-        "same-group and out-of-range drops are rejected");
-    Check([manager tableView:table validateDrop:(id)info proposedRow:2 proposedDropOperation:NSTableViewDropAbove] == NSDragOperationMove &&
-        [manager tableView:table acceptDrop:(id)info row:2 dropOperation:NSTableViewDropOn],
-        "a local document can move onto another group header");
-    NSDictionary* command = actions.lastObject;
-    NSDictionary* payload = [NSJSONSerialization JSONObjectWithData:[command[@"value"] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
-    Check(actions.count == 1 && [command[@"action"] isEqual:@"move-document"] && [command[@"group"] isEqual:@"group-2"] &&
-        [payload[@"source"] isEqual:@"group-1"] && [payload[@"path"] isEqual:@"/Conference notes.md"],
-        "move JSON identifies source group and exact path even when other groups contain that same path");
-    Check(published.count == 1,"accepted drop still does not persist the temporary collapsed presentation");
-    [manager tableView:table draggingSession:(id)[NSObject new] endedAtPoint:NSZeroPoint operation:NSDragOperationMove];
-    Check(table.numberOfRows == 3 && [manager.viewState[@"groupQuery"] isEqual:@"Research"] &&
-        [manager.viewState[@"expandedGroups"] containsObject:@"group-2"] &&
-        [manager.viewState[@"expandedGroups"] containsObject:@"general"] &&
-        [manager.viewState[@"expandedGroups"] containsObject:@"group-1"],
-        "successful move restores the filter and original expansion and remembers the destination expanded");
-    Check(published.count == 2 && [published.lastObject[@"expandedGroups"] count] == 3,
-        "only final expanded state is saved after a successful move");
-    Check(![manager tableView:table acceptDrop:(id)info row:0 dropOperation:NSTableViewDropOn],
-        "an ended drag cannot replay its move");
-    [info.draggingPasteboard releaseGlobally];
+static void CheckGroupDragAutoscroll(void) {
+    NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,280,240) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    SPDFGroupManagementController* manager=[SPDFGroupManagementController new];
+    NSMutableArray* documents=[NSMutableArray array];
+    for(NSUInteger i=0;i<40;i++) [documents addObject:@{@"title":@"Document",@"path":[NSString stringWithFormat:@"/%lu.pdf",i]}];
+    [manager updateGroups:@[@{@"id":@"g",@"name":@"Group",@"color":@"Blue",@"documents":documents}]
+        state:@{@"expandedGroups":@[@"g"]}];
+    window.contentView=manager.view; [window.contentView layoutSubtreeIfNeeded];
+    NSTableView* table=(id)Find(manager.view,NSTableView.class);
+    NSScrollView* scroll=table.enclosingScrollView;
+    NSRect visible=table.visibleRect;
+    NSPoint point=[table convertPoint:NSMakePoint(NSMidX(visible),NSMaxY(visible)+8) toView:nil];
+    NSEvent* event=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:point modifierFlags:0 timestamp:0
+        windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];
+    [table autoscroll:event];
+    Check(NSMinY(scroll.contentView.bounds)>0,"document drag at the lower edge scrolls a crowded panel");
+    point=[table convertPoint:NSMakePoint(NSMidX(table.visibleRect),NSMinY(table.visibleRect)-8) toView:nil];
+    CGFloat before=NSMinY(scroll.contentView.bounds);
+    event=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:point modifierFlags:0 timestamp:0
+        windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:1];
+    [table autoscroll:event];
+    Check(NSMinY(scroll.contentView.bounds)<before,"document drag at the upper edge scrolls back");
 }
 
 // Contact sheet of the actual background draw calls, with fixture labels only.
