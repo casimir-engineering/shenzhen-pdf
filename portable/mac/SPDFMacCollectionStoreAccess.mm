@@ -60,6 +60,20 @@
         return YES;
     } error:error];
 }
+- (BOOL)deletePreviousBackupsForDocumentID:(NSString*)documentID error:(NSError**)error {
+    return [self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
+        NSMutableDictionary* doc=manifest[@"documents"][documentID];
+        if (!doc) { if(failure)*failure=SPDFCollectionError(8,@"Document history no longer exists."); return NO; }
+        NSArray* versions=doc[@"versions"];
+        NSDictionary* latest=[self versionID:doc[@"latestVersionID"] document:doc] ?: versions.lastObject;
+        // Decide under the manifest lock: a capture during confirmation must
+        // never turn the newest protected revision into a deletion target.
+        doc[@"versions"]=latest ? [NSMutableArray arrayWithObject:latest] : [NSMutableArray array];
+        if (latest) { doc[@"latestVersionID"]=latest[@"id"]; doc[@"capturedAt"]=latest[@"capturedAt"]; }
+        manifest[@"_collectUnreferencedFiles"]=@YES;
+        return YES;
+    } error:error];
+}
 - (NSURL*)materializeVersionID:(NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error {
     __block NSURL* result;
     // Preview files may be created/repaired, but no library metadata changes.

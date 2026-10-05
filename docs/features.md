@@ -130,7 +130,7 @@ does not re-trigger the macOS access prompt.
 
 - First-use choice to keep local copies and history, with on/off, location, storage cap and management in Settings. Reading continues from original paths.
 - Background capture after opening; reachable recent documents are imported when Collection is enabled. Identical content shares storage, while distinct documents retain separate histories.
-- Immutable original and version copies, pre-edit protection, saved milestones and deliberate deletion of copies. Deleting Collection history never deletes source documents.
+- Immutable original and version copies, pre-edit protection, saved milestones and deliberate deletion of copies. Deleting Collection history never deletes source documents. History’s context menu deletes individual saved versions; the linked original offers **Delete all previous backups…**, retaining the latest saved copy. Collection’s bulk action uses that same scope. Manual deletion includes kept versions after confirmation.
 - Read-only version previews and a history view; Save a Copy creates a separate editable document.
 - PDF and Markdown comparison with old/new panes, red removals, green additions, linked scrolling/zoom, and clickable change markers. Inserted and deleted pages have blank counterparts.
 - Missing-original recovery from protected copies. Locate Original offers manual selection or a cancellable exact-hash search, sorted by modification date from oldest to newest.

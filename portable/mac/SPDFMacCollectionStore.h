@@ -59,6 +59,8 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 // nil versionID removes document history; nil documentID removes all archived data.
 // Caller obtains explicit scope confirmation. Originals/exclusion choices are untouched.
 - (BOOL)deleteDocumentID:(nullable NSString*)documentID versionID:(nullable NSString*)versionID error:(NSError**)error;
+// Removes older snapshots, retaining the latest saved version and source binding.
+- (BOOL)deletePreviousBackupsForDocumentID:(NSString*)documentID error:(NSError**)error;
 - (nullable NSURL*)materializeVersionID:(NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error;
 - (BOOL)linkDocumentID:(NSString*)documentID toPath:(NSString*)path
         allowMismatch:(BOOL)allowMismatch error:(NSError**)error;

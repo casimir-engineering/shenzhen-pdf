@@ -116,17 +116,23 @@
     NSArray* rows = [self selectedRowsSnapshot]; if (!rows.count) return;
     BOOL versionsOnly = [self.destination isEqual:@"History"];
     NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = versionsOnly ? @"Delete selected versions permanently?" : @"Delete all history for selected documents?";
-    alert.informativeText = [NSString stringWithFormat:@"%lu selected %@, including any kept versions. This cannot be undone. Original documents are kept.",
-        rows.count,versionsOnly ? @"versions" : @"document histories"];
-    [alert addButtonWithTitle:@"Cancel"]; [alert addButtonWithTitle:@"Delete Copies"];
+    alert.messageText = versionsOnly ? @"Delete selected versions permanently?" : @"Delete all previous backups for selected documents?";
+    alert.informativeText = [NSString stringWithFormat:versionsOnly ?
+        @"%lu selected versions, including kept versions, will be permanently deleted. Originals are kept." :
+        @"Older backups for %lu selected documents, including kept versions, will be permanently deleted. Originals and latest saved copies are kept.",rows.count];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:versionsOnly ? @"Delete Versions" : @"Delete Previous Backups"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
         if (result != NSAlertSecondButtonReturn) return;
         // Snapshot identities before showing the sheet; a background refresh or
         // a changed selection must never change what the confirmation deletes.
         [self performMutation:^(NSError** error) {
-            for (NSDictionary* row in rows) if (![self.store deleteDocumentID:row[@"document"][@"id"]
-                versionID:versionsOnly ? row[@"version"][@"id"] : nil error:error]) break;
+            for (NSDictionary* row in rows) {
+                BOOL deleted=versionsOnly ? [self.store deleteDocumentID:row[@"document"][@"id"]
+                    versionID:row[@"version"][@"id"] error:error] :
+                    [self.store deletePreviousBackupsForDocumentID:row[@"document"][@"id"] error:error];
+                if(!deleted) break;
+            }
         }];
     }];
 }

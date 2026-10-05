@@ -42,6 +42,7 @@
     NSStackView* _recoveryActions;
     BOOL _showsDocumentTitle;
     BOOL _storageLimited;
+    BOOL _deletionPending;
 }
 @synthesize showsDocumentTitle = _showsDocumentTitle;
 - (void)setShowsDocumentTitle:(BOOL)value { _showsDocumentTitle = value; _title.hidden = !value; }
@@ -369,6 +370,50 @@
     if (row < 0 || row >= (NSInteger)_versions.count) return;
     NSMenuItem* reveal = [[NSMenuItem alloc] initWithTitle:@"Show in Explorer" action:@selector(showVersionInExplorer:) keyEquivalent:@""];
     reveal.target = self; reveal.representedObject = _versions[row]; [menu addItem:reveal];
+    NSDictionary* version=_versions[row];
+    BOOL original=SPDFCollectionVersionIsLatest(_document,version) && SPDFCollectionOriginalAvailable(_document);
+    [menu addItem:NSMenuItem.separatorItem];
+    NSMenuItem* remove=[[NSMenuItem alloc] initWithTitle:original ? @"Delete all previous backups…" : @"Delete version…"
+        action:@selector(deleteHistoryItem:) keyEquivalent:@""];
+    remove.target=self; remove.representedObject=@{@"version":version,@"previousBackups":@(original)};
+    remove.enabled=!_deletionPending && (!original || _versions.count>1);
+    menu.autoenablesItems=NO; [menu addItem:remove];
+}
+- (void)confirmDeletionOfVersion:(NSDictionary*)version previousBackups:(BOOL)previous
+                     completion:(void (^)(BOOL))completion {
+    NSAlert* alert=[NSAlert new];
+    alert.messageText=previous ? @"Delete all previous backups?" : @"Delete this saved version?";
+    NSString* date=[NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:
+        [version[@"capturedAt"] doubleValue]] dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
+    alert.informativeText=previous ?
+        @"Older saved versions, including Keep forever versions, will be permanently deleted. The original and latest saved copy are kept." :
+        [NSString stringWithFormat:@"The saved version from %@ will be permanently deleted. The original document is kept. This cannot be undone.",date];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:previous ? @"Delete Previous Backups" : @"Delete Version"];
+    [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse result) {
+        completion(result==NSAlertSecondButtonReturn);
+    }];
+}
+- (void)deleteHistoryItem:(NSMenuItem*)sender {
+    NSDictionary* intent=sender.representedObject; NSDictionary* version=intent[@"version"];
+    if (_deletionPending || !version[@"id"]) return;
+    NSString* documentID=_documentID; NSString* versionID=version[@"id"];
+    BOOL previous=[intent[@"previousBackups"] boolValue];
+    _deletionPending=YES;
+    [self confirmDeletionOfVersion:version previousBackups:previous completion:^(BOOL confirmed) {
+        if (!confirmed) { self->_deletionPending=NO; return; }
+        [self cancelPendingPreviews];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+            NSError* error=nil;
+            if (previous) [self->_store deletePreviousBackupsForDocumentID:documentID error:&error];
+            else [self->_store deleteDocumentID:documentID versionID:versionID error:&error];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self->_deletionPending=NO;
+                if(error) [self.view.window presentError:error];
+                [self reload];
+            });
+        });
+    }];
 }
 - (void)showVersionInExplorer:(NSMenuItem*)sender {
     NSDictionary* version = sender.representedObject; if (!version) return;
