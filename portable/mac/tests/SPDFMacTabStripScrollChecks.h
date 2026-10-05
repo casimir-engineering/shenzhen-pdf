@@ -46,19 +46,22 @@ static void check_scrollable_group_strip(void) {
     CGFloat expected=MAX(48.0,ceil([before.displayName sizeWithAttributes:
         @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width)+14);
     expect(fabs(NSWidth(header)-expected)<.01,@"group pill reserves space for hidden hover actions");
-    NSRect rename=[strip groupActionRect:header hide:NO];
-    click=NSMakePoint(NSMidX(rename),NSMidY(rename)); [strip updateHoverForPoint:click];
+    NSRect name=NSMakeRect(NSMaxX(header)-40,NSMidY(header)-10,20,20);
+    click=NSMakePoint(NSMidX(name),NSMidY(name)); [strip updateHoverForPoint:click];
     render_strip(strip,[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua],@"/tmp/spdf-scroll-group-hover.png");
     expect(NSEqualRects(header,[[layout_for_group(strip,before) valueForKey:@"header"] rectValue]),
         @"hover changed group pill geometry");
     [strip handleGroupMouseDown:mouse(window,NSEventTypeLeftMouseDown,click)];
     [strip handleGroupMouseUp:mouse(window,NSEventTypeLeftMouseUp,click)];
-    expect(strip.renameRequests==1 && reader.toggles==0,@"hover rename icon toggled the group instead of renaming");
-    NSRect hide=[strip groupActionRect:header hide:YES]; click=NSMakePoint(NSMidX(hide),NSMidY(hide));
+    expect(strip.renameRequests==0 && reader.toggles==1,@"removed rename icon still intercepts group-name clicks");
+    NSMenuItem* rename=[[strip contextMenuForGroup:before] itemWithTitle:@"Rename Group…"];
+    [NSApp sendAction:rename.action to:rename.target from:rename];
+    expect(strip.renameRequests==1,@"context-menu rename no longer opens the group prompt");
+    NSRect hide=[strip groupHideRect:header]; click=NSMakePoint(NSMidX(hide),NSMidY(hide));
     [strip updateHoverForPoint:click];
     [strip handleGroupMouseDown:mouse(window,NSEventTypeLeftMouseDown,click)];
     [strip handleGroupMouseUp:mouse(window,NSEventTypeLeftMouseUp,click)];
-    expect(before.hidden && reader.toggles==0,@"hover eye icon must hide only the intended group");
+    expect(before.hidden && reader.toggles==1,@"hover eye icon must hide only the intended group");
     NSMenuItem* show=[[strip contextMenuForGroup:before] itemWithTitle:@"Show Group"];
     expect(show!=nil,@"group menu must offer visibility independently of collapse");
     [NSApp sendAction:show.action to:show.target from:show];
