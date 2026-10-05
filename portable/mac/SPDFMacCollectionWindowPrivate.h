@@ -73,7 +73,6 @@
 - (void)preview:(id)sender;
 - (void)selectSearchMatch:(NSControl*)sender;
 - (void)history:(id)sender;
-- (void)compareCurrent:(id)sender;
 - (void)comparePrevious:(id)sender;
 - (void)locate:(id)sender;
 - (void)exportCopy:(id)sender;

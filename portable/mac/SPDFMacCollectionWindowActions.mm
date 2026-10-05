@@ -2,7 +2,6 @@
 #import "SPDFMacCollectionSavePanel.h"
 #import "SPDFMacCollectionAvailability.h"
 #import "SPDFMacCollectionStyle.h"
-#import "SPDFMacCollectionCompareLatest.h"
 #import "SPDFMacCollectionWindowPrivate.h"
 @implementation SPDFMacCollectionWindow (Actions)
 - (void)openOriginal:(id)sender {
@@ -26,23 +25,22 @@
     (void)sender; NSDictionary* doc = [self selectedDocument];
     if (doc) [self showHistoryForDocument:doc version:[self selectedVersion]];
 }
-- (void)compareVersionWithPrevious:(BOOL)previous {
+- (void)comparePrevious:(id)sender {
+    (void)sender;
     NSDictionary* doc = [self selectedDocument], *version = [self selectedVersion];
     if (!doc || !version[@"id"]) return;
     NSArray* versions = doc[@"versions"] ?: @[];
     NSUInteger index = [versions indexOfObjectPassingTest:^BOOL(NSDictionary* v, NSUInteger i, BOOL* stop) {
         (void)i; (void)stop; return [v[@"id"] isEqual:version[@"id"]];
     }];
-    if (previous && (index == NSNotFound || index == 0)) {
+    if (index == NSNotFound || index == 0) {
         self.details.stringValue = @"This is the first protected version; there is no previous version."; return;
     }
-    NSDictionary* older = previous ? versions[index - 1] : version;
+    NSDictionary* older = versions[index - 1];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError* error = nil;
         NSURL* oldURL = [self.store materializeVersionID:older[@"id"] documentID:doc[@"id"] error:&error];
-        NSDictionary* latest = previous ? nil : SPDFCollectionResolveLatestComparison(self.store,doc[@"id"],&error);
-        NSURL* newURL = previous ? [self.store materializeVersionID:version[@"id"] documentID:doc[@"id"] error:&error]
-                                : latest[@"URL"];
+        NSURL* newURL = [self.store materializeVersionID:version[@"id"] documentID:doc[@"id"] error:&error];
         NSString* (^date)(NSDictionary*) = ^NSString*(NSDictionary* row) {
             return [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:[row[@"capturedAt"] doubleValue]]
                 dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
@@ -50,12 +48,10 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!oldURL || !newURL) { [self showError:error]; return; }
             SPDFMacShowCollectionComparison(oldURL, newURL, [NSString stringWithFormat:@"%@ · %@",doc[@"title"],date(older)],
-                previous ? [NSString stringWithFormat:@"%@ · %@",doc[@"title"],date(version)] : latest[@"label"],self.window);
+                [NSString stringWithFormat:@"%@ · %@",doc[@"title"],date(version)],self.window);
         });
     });
 }
-- (void)compareCurrent:(id)sender { (void)sender; [self compareVersionWithPrevious:NO]; }
-- (void)comparePrevious:(id)sender { (void)sender; [self compareVersionWithPrevious:YES]; }
 - (void)locate:(id)sender {
     (void)sender; NSDictionary* doc = [self selectedDocument]; if (!doc) return;
     SPDFMacLocateCollectionOriginal(self.store, doc[@"id"], self.window, ^(NSString* path) {

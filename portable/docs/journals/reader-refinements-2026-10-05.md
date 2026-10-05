@@ -92,3 +92,10 @@ Deletion snapshots the chosen version/document before confirmation, so changing 
 The headless UI suite verifies native menu labels and targets, cancel behavior, deferred mutation, and selection changes during confirmation. Compiling the current tests against the prior History controller fails the new context-action assertions. An isolated store fixture verifies A → B → A deduplication, kept-history pruning, latest/source preservation, persistence after reopening, individual deletion, missing originals and shared-object survival/reclamation. Its initial rewrite fixture was corrected to pass the same explicit document-continuity identity used by real edit/external-change captures; a replacement file intentionally starts a separate history.
 
 Collection store, integrity and cleanup tests and the full Markdown/UI integration suite pass. The app and Collection helper are rebuilt in `dist`; the user's running app is untouched. No release is published by this change.
+
+
+## Follow-up: comparison belongs to history
+
+Collection displays the latest saved copy, so its **Compare with Latest** command compared that copy with itself. The command and its unused routing were removed from Collection. **Compare with Previous** remains useful there. Older History rows now offer **Compare with Latest** on right-click; the latest History row omits it. Context comparison snapshots the clicked version rather than reading whatever row is selected afterward.
+
+The complete headless Markdown/UI integration suite passes. Native Collection and History menu tests fail against the prior layout/controller, proving the removed command and new context action are covered. The active document and updater flow are unchanged.
