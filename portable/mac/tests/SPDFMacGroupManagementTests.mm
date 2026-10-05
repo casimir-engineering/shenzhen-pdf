@@ -77,6 +77,10 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     __block NSString* action; __block NSString* target; __block NSUInteger changes = 0;
     manager.actionHandler = ^(NSString* verb, NSString* group, NSString* value) { (void)value; action = verb; target = group; changes++; };
     NSView* research = [manager tableView:table viewForTableColumn:table.tableColumns.firstObject row:1];
+    [Button(research,@"Collapse Research in tab bar") performClick:nil];
+    Check([action isEqual:@"collapse"] && [target isEqual:@"group-1"] && changes==1,
+        "tab-bar collapse is a distinct group action");
+    changes=0;
     [Button(research,hiddenActive ? @"Show Research in tab bar" : @"Hide Research from tab bar") performClick:nil];
     Check([action isEqual:@"visibility"] && [target isEqual:@"group-1"] && changes == 1,"eye action changes visibility without jumping");
     [Button(research,@"Collapse Research documents") performClick:nil];

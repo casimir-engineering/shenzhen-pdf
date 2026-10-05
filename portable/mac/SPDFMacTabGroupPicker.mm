@@ -80,6 +80,13 @@ static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
     button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.hidden ? @"Show" : @"Hide",group.displayName];
 }
 
+static void StylePickerCollapse(NSButton* button,SPDFTabGroup* group) {
+    button.image=[NSImage imageWithSystemSymbolName:group.collapsed ? @"chevron.right" : @"chevron.down" accessibilityDescription:nil];
+    [button.image setTemplate:YES]; button.contentTintColor=NSColor.labelColor;
+    button.toolTip=[NSString stringWithFormat:@"%@ group in tab bar",group.collapsed ? @"Expand" : @"Collapse"];
+    button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.collapsed ? @"Expand" : @"Collapse",group.displayName];
+}
+
 @implementation SPDFTabStripView (GroupPicker)
 - (NSView*)groupPickerContentView {
     NSMutableArray<SPDFTabGroup*>* groups = [NSMutableArray array];
@@ -91,7 +98,7 @@ static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
         counts[group.identifier]=@([counts[group.identifier] integerValue]+1);
     }
     // Construct only on demand; no extra view tree or model traversal at launch.
-    NSView* content = [[SPDFTabGroupPickerContent alloc] initWithFrame:NSMakeRect(0,0,236,groups.count*32+52)];
+    NSView* content = [[SPDFTabGroupPickerContent alloc] initWithFrame:NSMakeRect(0,0,264,groups.count*32+52)];
     CGFloat y=NSHeight(content.bounds)-38;
     for (SPDFTabGroup* group in groups) {
         SPDFTabGroupPickerRow* row=[[SPDFTabGroupPickerRow alloc] initWithFrame:NSMakeRect(6,y,224,32)];
@@ -101,14 +108,17 @@ static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
         row.accessibilityLabel=[NSString stringWithFormat:@"%@, %@ documents%@",group.displayName,counts[group.identifier],group.hidden ? @", hidden" : @""];
         row.toolTip=[NSString stringWithFormat:@"Show %@ tabs without changing the document",group.displayName];
         row.frame=NSMakeRect(6,y,198,32);
-        NSButton* eye=[[NSButton alloc] initWithFrame:NSMakeRect(204,y+4,26,24)];
+        NSButton* eye=[[NSButton alloc] initWithFrame:NSMakeRect(232,y+4,26,24)];
         eye.bordered=NO; StylePickerEye(eye,group);
         eye.target=self; eye.action=@selector(toggleGroupPickerVisibility:); eye.identifier=group.identifier;
-        [content addSubview:row]; [content addSubview:eye]; y-=32;
+        NSButton* collapse=[[NSButton alloc] initWithFrame:NSMakeRect(204,y+4,26,24)];
+        collapse.bordered=NO; StylePickerCollapse(collapse,group);
+        collapse.target=self; collapse.action=@selector(toggleGroupPickerCollapse:); collapse.identifier=group.identifier;
+        [content addSubview:row]; [content addSubview:collapse]; [content addSubview:eye]; y-=32;
     }
-    NSBox* line=[[NSBox alloc] initWithFrame:NSMakeRect(6,40,224,1)]; line.boxType=NSBoxSeparator;
+    NSBox* line=[[NSBox alloc] initWithFrame:NSMakeRect(6,40,252,1)]; line.boxType=NSBoxSeparator;
     [content addSubview:line];
-    SPDFTabGroupPickerRow* manage=[[SPDFTabGroupPickerRow alloc] initWithFrame:NSMakeRect(6,5,224,32)];
+    SPDFTabGroupPickerRow* manage=[[SPDFTabGroupPickerRow alloc] initWithFrame:NSMakeRect(6,5,252,32)];
     manage.title=@"Manage groups"; manage.bordered=NO; manage.target=self; manage.action=@selector(manageGroupsFromPicker:);
     [content addSubview:manage];
     return content;
@@ -126,6 +136,22 @@ static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
         return;
     }
 }
+- (void)toggleGroupPickerCollapse:(NSButton*)sender {
+    for (SPDFDocumentTab* tab in self.tabs) if ([tab.group.identifier isEqual:sender.identifier]) {
+        [self.groupReader toggleTabGroup:tab.group];
+        // Expanding one group can collapse others; refresh every toggle.
+        for (NSView* child in sender.superview.subviews) {
+            [child setNeedsDisplay:YES];
+            if (![child isKindOfClass:NSButton.class]) continue;
+            NSButton* button=(NSButton*)child;
+            if (button.action!=@selector(toggleGroupPickerCollapse:)) continue;
+            for (SPDFDocumentTab* member in self.tabs) if ([member.group.identifier isEqual:button.identifier]) {
+                StylePickerCollapse(button,member.group); break;
+            }
+        }
+        [sender.superview setNeedsDisplay:YES]; return;
+    }
+}
 - (void)manageGroupsFromPicker:(id)sender {
     [_groupPicker close];
     [NSApp sendAction:NSSelectorFromString(@"showGroupsSidebar:") to:self.reader from:sender];
@@ -136,7 +162,7 @@ static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
     NSView* content=[self groupPickerContentView];
     NSViewController* controller=[NSViewController new];
     if (NSHeight(content.frame)>420) {
-        NSScrollView* scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,236,420)];
+        NSScrollView* scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,264,420)];
         scroll.hasVerticalScroller=YES; scroll.drawsBackground=NO; scroll.documentView=content;
         controller.view=scroll;
         [content scrollPoint:NSMakePoint(0,NSHeight(content.frame)-420)];

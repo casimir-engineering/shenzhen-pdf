@@ -365,7 +365,11 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         SPDFGroupActionButton* visibility = Icon(hidden ? @"eye.slash" : @"eye",[NSString stringWithFormat:@"%@ %@ %@ tab bar",hidden ? @"Show" : @"Hide",group[@"name"],hidden ? @"in" : @"from"],self,@selector(visibility:));
         visibility.groupID = group[@"id"];
         [labels setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
-        contents = [NSStackView stackViewWithViews:@[disclosure,swatch,labels,visibility]]; contents.spacing = 5;
+        BOOL collapsed=[group[@"collapsed"] boolValue];
+        SPDFGroupActionButton* collapse=Icon(collapsed ? @"chevron.right" : @"chevron.down",
+            [NSString stringWithFormat:@"%@ %@ in tab bar",collapsed ? @"Expand" : @"Collapse",group[@"name"]],self,@selector(collapseGroup:));
+        collapse.groupID=group[@"id"];
+        contents = [NSStackView stackViewWithViews:@[disclosure,swatch,labels,collapse,visibility]]; contents.spacing = 5;
         container.toolTip = [NSString stringWithFormat:@"Open %@. Right-click for group actions.",group[@"name"]];
     }
     contents.distribution = NSStackViewDistributionFill; contents.alignment = NSLayoutAttributeCenterY;
@@ -388,6 +392,9 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (void)disclose:(SPDFGroupActionButton*)sender {
     if ([_expanded containsObject:sender.groupID]) [_expanded removeObject:sender.groupID]; else [_expanded addObject:sender.groupID];
     [self rebuildRows]; [self publishState];
+}
+- (void)collapseGroup:(SPDFGroupActionButton*)sender {
+    if (self.actionHandler) self.actionHandler(@"collapse",sender.groupID,@"");
 }
 - (void)visibility:(SPDFGroupActionButton*)sender {
     if (self.actionHandler) self.actionHandler(@"visibility",sender.groupID,@"");

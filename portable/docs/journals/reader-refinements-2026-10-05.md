@@ -188,3 +188,11 @@ Validation: temporary offline session tests pass without an NSApplication instan
 ### Toolbar alignment refinement
 
 The editable page number previously reserved 30 points even for one digit, while its total used a different font. The counter now uses one monospaced-digit font, a shared baseline, and a width fitted to the current page number. Zoom measures the longest menu item instead of adding 49 points to a hardcoded label. Its title is centered explicitly because AppKit ignores the popup alignment setting. Paired buttons retain their grouping and separate hit targets but use a faint fill, no outer border, and a quieter divider. The toolbar image above is updated to this design. Native workspace geometry and click regression probes pass; verification did not launch or capture the user's app.
+
+### Group collapse controls in both menus
+
+Added explicit tab-bar collapse/expand buttons beside the visibility eyes in the right All Groups picker and left Group Management panel. The sidebar's existing disclosure remains independent: it controls the document list inside that panel. These new buttons reuse the persistent group operation and never select another document. Expanding one group updates the other picker toggles too. The right picker grows from 236 to 264 points, preserving its 198-point title/count rows.
+
+![All Groups with collapse and visibility controls](images/reader-refinements-2026-10-05/group-picker-collapse.png)
+
+Validation: picker tests assert unchanged title width, one toggle for each group, and immediate double-click roundtrips. Sidebar tests verify a distinct collapse action without navigation. The full native workspace probe and file-size checks pass. The app is rebuilt in dist without restarting the user's running reader.
