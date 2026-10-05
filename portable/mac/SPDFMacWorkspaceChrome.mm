@@ -122,7 +122,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         if (constraint.firstItem == _sidebarTable.enclosingScrollView && constraint.firstAttribute == NSLayoutAttributeBottom)
             state.sidebarBottom = constraint;
     _sidebarTable.backgroundColor = NSColor.clearColor; _sidebarTable.enclosingScrollView.drawsBackground = NO;
-    _toolbar.edgeInsets = NSEdgeInsetsMake(8,8,8,8); _toolbar.spacing = 4;
+    _toolbar.edgeInsets = NSEdgeInsetsMake(4,8,4,8); _toolbar.spacing = 4;
     // Replace the crowded global toolbar with document controls; Cmd+F's real
     // field now lives in the Find panel, keeping search state and its delegate.
     for (NSView* view in _toolbar.arrangedSubviews.copy) { [_toolbar removeArrangedSubview:view]; [view removeFromSuperview]; }
@@ -175,7 +175,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [state.mapHeader.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor],
         [state.mapHeader.leadingAnchor constraintEqualToAnchor:_minimapView.leadingAnchor],
         [state.mapHeader.trailingAnchor constraintEqualToAnchor:_minimapView.trailingAnchor],
-        [state.mapHeader.heightAnchor constraintEqualToConstant:44]]];
+        [state.mapHeader.heightAnchor constraintEqualToConstant:36]]];
     // Keep one control alive at one position. Swapping hidden controls under a
     // stationary pointer leaves AppKit's mouse target pointing at the old view.
     [_minimapToggleButton removeFromSuperview];
@@ -183,7 +183,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     [_documentContainer addSubview:_minimapToggleButton positioned:NSWindowAbove relativeTo:nil];
     [NSLayoutConstraint activateConstraints:@[
         [_minimapToggleButton.trailingAnchor constraintEqualToAnchor:_documentContainer.trailingAnchor constant:-8],
-        [_minimapToggleButton.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor constant:8],
+        [_minimapToggleButton.topAnchor constraintEqualToAnchor:_documentContainer.topAnchor constant:4],
         [_minimapToggleButton.widthAnchor constraintEqualToConstant:28],
         [_minimapToggleButton.heightAnchor constraintEqualToConstant:28]]];
     [_documentContainer addSubview:_minimapDividerView positioned:NSWindowAbove relativeTo:nil];
@@ -273,7 +273,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     BOOL revision = NO;
     for (NSView* view in _toolbar.arrangedSubviews)
         if ([view.identifier isEqualToString:@"CollectionVersionIndicator"] && !view.hidden) revision = YES;
-    _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 76 : 44) + (revision ? 28 : 0);
+    _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 68 : 36) + (revision ? 28 : 0);
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _presentationMode;
     _toolbarOverflowButton.hidden = YES;

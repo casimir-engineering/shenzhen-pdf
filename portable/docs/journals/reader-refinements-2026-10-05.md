@@ -248,3 +248,11 @@ Headless native-table regression tests check both directions at 40, 20 and 1 poi
 The previous tests invoked `autoscroll:` directly and proved the speed calculation, but did not prove that NSTableView's drag session called it. The reported failure exposed that missing integration coverage. Group Management now starts an explicit 60 Hz scrolling driver at source-drag begin and invalidates it at drag end/cancellation. It reads the current pointer in window coordinates and runs in the drag-tracking mode as well as common modes, so a stationary pointer continues scrolling. Native autoscroll is suppressed while this driver is active to avoid double scrolling. The acceleration is now 60–840 points per second at the nominal timer cadence. There is no timer before a drag or after it ends.
 
 New headless tests run the tracking-mode timer with a stationary pointer at both edges, verify cancellation stops further movement, and assert that the controller's real source callbacks install/remove the driver. Existing distance/acceleration and sidebar suites also pass. This is stronger integration coverage than the previous direct-hook tests; no live user-app drag was performed because repository instructions prohibit launching or capturing it for verification.
+
+### Compact reader toolbar
+
+Reduced vertical padding from 8 to 4 points and the standard toolbar height from 44 to 36 points. Wrapped layouts shrink from 76 to 68 points. Text, icons, 28-point controls, and horizontal spacing retain their sizes. The map header and toggle move with the same spacing so the right edge stays aligned. Initial construction and presentation-mode restoration use the new height too.
+
+![Compact reader toolbar in the native dark Markdown fixture](images/reader-refinements-2026-10-05/compact-toolbar-dark.png)
+
+The full native workspace probe passes across PDF, Markdown, narrow/wide windows, themes, version indicators and presentation mode. Its control-bounds checks now cover vertical containment as well as horizontal containment. Inspected light narrow and dark wide offscreen renders; text and controls remain unclipped.

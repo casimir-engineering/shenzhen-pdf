@@ -317,7 +317,7 @@ static void CheckIconReadability(NSControl* control) {
             // AppKit frame extents include transparent bezel overdraw beyond
             // constrained alignment rectangles; compare the painted control bounds.
             NSRect rect=[_toolbar convertRect:[control alignmentRectForFrame:control.frame] fromView:control.superview];
-            Check(NSMinX(rect)>=-.5 && NSMaxX(rect)<=NSWidth(_toolbar.bounds)+.5,
+            Check(NSMinX(rect)>=-.5 && NSMaxX(rect)<=NSWidth(_toolbar.bounds)+.5 && NSMinY(rect)>=-.5 && NSMaxY(rect)<=NSHeight(_toolbar.bounds)+.5,
                 @"direct toolbar controls stay inside the header");
             for(NSValue* value in bounds) Check(!NSIntersectsRect(NSInsetRect(value.rectValue,.5,.5),NSInsetRect(rect,.5,.5)),
                 [NSString stringWithFormat:@"toolbar controls never overlap: %@ / %@",NSStringFromRect(value.rectValue),NSStringFromRect(rect)]);
