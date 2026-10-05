@@ -154,3 +154,11 @@ Clicking either count opens a native, group-labelled list of the documents offsc
 ![Bilateral overflow over collapsed groups](reader-refinements-2026-10-05/overlay-group-counts.png)
 
 Headless interaction tests cover full-width viewport geometry, bilateral lists with no scrolling, accurate document membership, selecting from a list, collapsed-group fallback, overlay hit/hover isolation and VoiceOver. Existing tab geometry/style tests and the full native reader workspace probe pass. Repeated scroll/layout work remains about 0.05 ms at 60 tabs and 0.56 ms at 1,000. Source-size and whitespace checks pass. Native images come from offscreen fixtures; the running user's app is untouched.
+
+## Release candidate: visible and hidden eyes
+
+Hidden groups again use the barred eye, with the gray tint retained. Visible groups use the normal eye. The picker still shows only names and counts, and updates the symbol and tint together when visibility changes.
+
+![Hidden group with dimmed barred eye](reader-refinements-2026-10-05/group-picker-barred-eye.png)
+
+Headless group interaction tests pass. The release draft contains a brief updater overview followed by a detailed list covering tabs/groups, images/fit, history management, reader layout, and separate AI/configuration notes.
