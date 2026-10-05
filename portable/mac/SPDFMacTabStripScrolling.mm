@@ -55,7 +55,7 @@
     }
     return NO;
 }
-- (NSRect)groupActionRect:(NSRect)header hide:(BOOL)hide {
-    return NSMakeRect(NSMaxX(header)-(hide ? 20 : 40),NSMidY(header)-10,20,20);
+- (NSRect)groupHideRect:(NSRect)header {
+    return NSMakeRect(NSMaxX(header)-20,NSMidY(header)-10,20,20);
 }
 @end

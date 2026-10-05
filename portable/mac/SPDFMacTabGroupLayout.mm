@@ -196,7 +196,7 @@
         // Like tab close buttons: keep the full title geometry and fade beneath
         // overlay actions, without reserving empty space or changing pill width.
         if (hovered) {
-            CGFloat edge=NSMaxX(layout.header)-40;
+            CGFloat edge=NSMaxX(layout.header)-20;
             CGContextSetBlendMode(graphics,kCGBlendModeDestinationOut);
             CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
             CGFloat colors[]={0,0,0,0,0,0,0,1}, stops[]={0,1};
@@ -204,21 +204,21 @@
             CGContextDrawLinearGradient(graphics,fade,CGPointMake(edge-8,NSMidY(titleRect)),
                 CGPointMake(edge,NSMidY(titleRect)),0);
             CGContextSetRGBFillColor(graphics,0,0,0,1);
-            CGContextFillRect(graphics,CGRectMake(edge,NSMinY(titleRect),40,NSHeight(titleRect)));
+            CGContextFillRect(graphics,CGRectMake(edge,NSMinY(titleRect),20,NSHeight(titleRect)));
             CGGradientRelease(fade); CGColorSpaceRelease(space); CGContextEndTransparencyLayer(graphics);
         }
         [NSGraphicsContext restoreGraphicsState];
         if (hovered) {
             [NSGraphicsContext saveGraphicsState];
             [[NSBezierPath bezierPathWithRoundedRect:layout.header xRadius:4 yRadius:4] addClip];
-            for (NSNumber* hide in @[@NO,@YES]) {
-                NSRect action = [self groupActionRect:layout.header hide:hide.boolValue];
+            {
+                NSRect action = [self groupHideRect:layout.header];
                 if (NSPointInRect(_lastHoverPoint,action)) {
                     [[NSColor.labelColor colorWithAlphaComponent:.12] setFill];
                     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(action,1,1) xRadius:3 yRadius:3] fill];
                 }
-                NSImage* actionIcon = [NSImage imageWithSystemSymbolName:hide.boolValue ? @"eye.slash" : @"pencil"
-                    accessibilityDescription:hide.boolValue ? @"Hide group" : @"Rename group"];
+                NSImage* actionIcon = [NSImage imageWithSystemSymbolName:@"eye.slash"
+                    accessibilityDescription:@"Hide group"];
                 actionIcon = [actionIcon imageWithSymbolConfiguration:[NSImageSymbolConfiguration
                     configurationWithPaletteColors:@[NSColor.labelColor]]];
                 [actionIcon drawInRect:NSInsetRect(action,4,4)];

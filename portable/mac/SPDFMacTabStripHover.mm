@@ -21,8 +21,7 @@
     for (id layout in [self groupLayouts]) {
         NSRect header=[[layout valueForKey:@"header"] rectValue];
         if (header.origin.x<[self leftInset] || NSMaxX(header)>[self tabAreaRightWithOverflow:YES]) continue;
-        [self addToolTipRect:[self groupActionRect:header hide:NO] owner:self userData:(void*)1];
-        [self addToolTipRect:[self groupActionRect:header hide:YES] owner:self userData:(void*)2];
+        [self addToolTipRect:[self groupHideRect:header] owner:self userData:(void*)2];
     }
     for (NSNumber* left in @[@YES,@NO]) if ([self tabScrollHiddenCountOnLeft:left.boolValue]>0)
         [self addToolTipRect:[self tabScrollIndicatorRectOnLeft:left.boolValue] owner:self userData:(void*)(uintptr_t)(left.boolValue ? 3 : 4)];
@@ -42,7 +41,6 @@
 - (NSString*)view:(NSView*)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point userData:(void*)userData {
     (void)view;
     (void)tag;
-    if (userData==(void*)1) return @"Rename group";
     if (userData==(void*)2) return @"Hide group from tab bar. Show it again in All Groups.";
     if (userData==(void*)3 || userData==(void*)4) return @"Scroll tabs. You can also use a mouse wheel or two-finger swipe.";
     NSInteger index = [self tabIndexAtPoint:point];

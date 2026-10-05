@@ -158,13 +158,13 @@
     SPDFTabGroup* group = [self groupAtPoint:point headerOnly:YES];
     _pressedGroup = group;
     if (!group) return NO;
-    _pressedGroupAction=nil; _pressedGroupActionKind=0;
+    _pressedGroupAction=nil;
     for (id layout in [self groupLayouts]) if ([layout valueForKey:@"group"]==group) {
         NSRect header=[[layout valueForKey:@"header"] rectValue];
         // Hover-only controls never steal the first click on an unseen name.
         if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,header)) {
-            for (NSNumber* hide in @[@NO,@YES]) if (NSPointInRect(point,[self groupActionRect:header hide:hide.boolValue])) {
-                _pressedGroupAction=group; _pressedGroupActionKind=hide.boolValue ? 2 : 1;
+            if (NSPointInRect(point,[self groupHideRect:header])) {
+                _pressedGroupAction=group;
             }
         }
     }
@@ -189,11 +189,11 @@
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     if ([self groupAtPoint:point headerOnly:YES] != group) return YES;
     if (_pressedGroupAction==group) {
-        NSInteger action=_pressedGroupActionKind; _pressedGroupAction=nil; _pressedGroupActionKind=0;
+        _pressedGroupAction=nil;
         for (id layout in [self groupLayouts]) if ([layout valueForKey:@"group"]==group) {
             NSRect header=[[layout valueForKey:@"header"] rectValue];
-            if (NSPointInRect(point,[self groupActionRect:header hide:action==2])) {
-                if (action==2) [self.groupReader setTabGroup:group hidden:YES]; else [self renameGroup:group];
+            if (NSPointInRect(point,[self groupHideRect:header])) {
+                [self.groupReader setTabGroup:group hidden:YES];
             }
         }
         return YES;

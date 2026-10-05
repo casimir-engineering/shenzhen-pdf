@@ -135,3 +135,11 @@ All Groups now shows only the group name and document count. The eye is the same
 ![Group picker with gray eye for a hidden group](reader-refinements-2026-10-05/group-picker-eyes.png)
 
 Headless group interaction tests and source-size checks pass. The image above comes from the native offscreen fixture, without opening or capturing the user's app.
+
+## Correction: keep only the hover eye
+
+Removed the rename icon and its hover hit target. Only the hide eye now overlays the trailing 20 points, so more of the group name remains visible. Right-click **Rename Group…** still opens the existing name popup anchored to that group. Group-name clicks keep their collapse/expand behavior, including the area formerly occupied by the pencil.
+
+![Single hover eye on a compact group pill](reader-refinements-2026-10-05/group-hide-only.png)
+
+Headless interaction checks cover the recovered name-click area, retained context rename, stable pill geometry and hide action. Source-size checks pass.
