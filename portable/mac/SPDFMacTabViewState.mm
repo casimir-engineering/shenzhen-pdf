@@ -53,6 +53,7 @@
     [self seedKeepImageColorsForNewTab:tab];
     NSDictionary* state = _documentStates[[self documentStateKeyForPath:tab.path]];
     if (![state isKindOfClass:NSDictionary.class]) return;
+    if (state[@"preservesImageColors"] != nil) tab.preservesImageColors=[state[@"preservesImageColors"] boolValue];
     // Absent for every document that has never been turned, and for every PDF:
     // only the Markdown rotate command writes it (SPDFMacMarkdownOrientation.mm).
     if (state[@"markdownLandscape"] != nil) tab.markdownLandscape = [state[@"markdownLandscape"] boolValue];

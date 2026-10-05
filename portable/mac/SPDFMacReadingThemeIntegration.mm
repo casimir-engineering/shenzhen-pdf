@@ -1,6 +1,7 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
 #import "SPDFMacReadingTheme.h"
+#import "SPDFMacWorkspaceChrome.h"
 
 #import "SPDFMacSupport.h"
 #import "markdown/SPDFMarkdown.h"
@@ -138,9 +139,18 @@
 // cache is dropped.
 - (void)toggleDarkThemePreservesImages:(id)sender {
     (void)sender;
-    _darkThemePreservesImages = !_darkThemePreservesImages;
     SPDFDocumentTab* selected = [self selectedTab];
+    if (!selected) return;
+    _darkThemePreservesImages = !selected.preservesImageColors;
     selected.preservesImageColors = _darkThemePreservesImages;
+    NSString* key=[self documentStateKeyForPath:selected.path];
+    if(key.length) {
+        if(!_documentStates) _documentStates=[NSMutableDictionary dictionary];
+        NSMutableDictionary* state=[_documentStates[key] mutableCopy] ?: [NSMutableDictionary dictionary];
+        state[@"preservesImageColors"]=@(_darkThemePreservesImages); state[@"path"]=selected.path;
+        _documentStates[key]=state;
+    }
+    [self syncWorkspaceChrome];
     [self savePersistentState];
     // Only the recolored formats care, and only while the theme is on.
     if (!_darkReadingTheme) return;
@@ -159,6 +169,12 @@
     selected.cachedRenderedPages = nil;
     NSValue* restoreOrigin = [NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin];
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:restoreOrigin];
+}
+
+- (void)toggleDefaultImageColors:(id)sender {
+    (void)sender;
+    _darkThemePreservesImagesDefault=!_darkThemePreservesImagesDefault;
+    [self savePersistentState];
 }
 
 // The toggle has to reach EVERY tab, not just the active one, or a background
@@ -211,7 +227,7 @@ void SPDFMacInstallReadingThemeMenuItems(NSMenu* viewMenu, id target) {
                                      keyEquivalent:@"i"];
     theme.target = target;
     theme.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-    NSMenuItem* images = [viewMenu addItemWithTitle:@"Keep Image Colors in Dark Theme"
+    NSMenuItem* images = [viewMenu addItemWithTitle:@"Invert Image Colors in Dark Theme"
                                              action:@selector(toggleDarkThemePreservesImages:)
                                       keyEquivalent:@"I"];
     images.target = target;
