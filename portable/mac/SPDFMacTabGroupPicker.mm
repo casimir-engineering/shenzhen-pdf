@@ -156,6 +156,10 @@ static void StylePickerCollapse(NSButton* button,SPDFTabGroup* group) {
     [_groupPicker close];
     [NSApp sendAction:NSSelectorFromString(@"showGroupsSidebar:") to:self.reader from:sender];
 }
+- (BOOL)dismissGroupPickerIfShown {
+    if (!_groupPicker.shown) return NO;
+    [_groupPicker close]; return YES;
+}
 - (void)showGroupPicker {
     if (_groupPicker.shown) { [_groupPicker close]; return; }
     [self dismissHoverPanel];

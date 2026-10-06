@@ -28,3 +28,7 @@
 @interface SPDFTabStripView (Hover)
 - (void)dismissHoverPanel;
 @end
+
+@interface SPDFTabStripView (PickerDismissal)
+- (BOOL)dismissGroupPickerIfShown;
+@end
