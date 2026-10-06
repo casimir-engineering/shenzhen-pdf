@@ -27,6 +27,18 @@ int main(void) {
         NSArray* reports = spdf_collection_palette_open_name_rows(candidates, @"Report");
         Expect(@"equal relevance uses most recently focused window", reports.count == 2 &&
                [reports[0][@"path"] isEqual:@"/tmp/new.pdf"]);
+        NSArray* assembly = @[
+            @{@"title":@"/Projects/carrier-pcb/Laser Support/01 - Original R2/Assembly guide", @"path":@"/Projects/carrier-pcb/Laser Support/01 - Original R2/Assembly guide.pdf", @"focusedAt":@100},
+            @{@"title":@"carrier-stand-r4-assembly", @"path":@"/Projects/carrier-stand-r4-assembly.pdf"},
+            @{@"title":@"carrier-stand-r2-assembly", @"path":@"/Projects/carrier-stand-r2-assembly.pdf"},
+            @{@"title":@"assembly R2.pdf", @"path":@"/Projects/assembly R2.pdf", @"focusedAt":@1}];
+        NSArray* matches = spdf_collection_palette_open_name_rows(assembly,@"assembly R2");
+        Expect(@"exact document name precedes unordered name and path matches regardless of recency",
+            matches.count == 3 && [matches[0][@"path"] isEqual:assembly[3][@"path"]] &&
+            [matches[1][@"path"] isEqual:assembly[2][@"path"]] && [matches[2][@"path"] isEqual:assembly[0][@"path"]]);
+        Expect(@"reverse words and mixed whitespace still match path context",
+            spdf_collection_palette_open_name_rows(@[assembly[0]],@"  r2\tASSEMBLY  ").count == 1);
+        Expect(@"all terms are required",spdf_collection_palette_open_name_rows(assembly,@"assembly R9").count == 0);
         NSArray* groups = spdf_collection_palette_group_rows(session, @"res");
         Expect(@"persisted group activates last-used path across processes", groups.count == 1 &&
                [groups[0][@"path"] isEqual:@"/tmp/last.pdf"] && [groups[0][@"count"] integerValue] == 2);
