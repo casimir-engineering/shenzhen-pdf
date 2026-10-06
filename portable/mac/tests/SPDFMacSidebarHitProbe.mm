@@ -176,6 +176,16 @@ static void ProbeCursorSet(id object,SEL action) {
     Method active=class_getInstanceMethod(NSApplication.class,@selector(isActive));
     IMP oldActive=method_setImplementation(active,(IMP)ProbeAppActive);
     failures += [self probeDividerMouseDrags];
+    NSView* collapse=nil;
+    for(NSView* child in _sidebarModeControl.subviews)
+        if([child.accessibilityLabel isEqual:@"Hide side panel"]) collapse=child;
+    NSPoint openCenter=[collapse convertPoint:NSMakePoint(NSMidX(collapse.bounds),NSMidY(collapse.bounds)) toView:nil];
+    [self setSidebarActuallyVisible:NO]; [_window.contentView layoutSubtreeIfNeeded];
+    NSPoint closedCenter=[_sidebarToggleButton convertPoint:NSMakePoint(NSMidX(_sidebarToggleButton.bounds),NSMidY(_sidebarToggleButton.bounds)) toView:nil];
+    if(fabs(openCenter.x-closedCenter.x)>.01 || fabs(openCenter.y-closedCenter.y)>.01) {
+        fprintf(stderr,"FAIL: panel toggle moves open=%s closed=%s\n",NSStringFromPoint(openCenter).UTF8String,NSStringFromPoint(closedCenter).UTF8String); failures++;
+    }
+    [self setSidebarActuallyVisible:YES]; [_window.contentView layoutSubtreeIfNeeded];
     failures += CheckChromeButtonClicks(_window,@[_window.contentView]);
     NSInteger eventNumber=0;
     for (NSNumber* y in @[@1,@7,@14,@21,@27]) for (NSString* title in @[@"Groups",@"Search",@"Comments",@"History",@"History",@"Chapters"]) {

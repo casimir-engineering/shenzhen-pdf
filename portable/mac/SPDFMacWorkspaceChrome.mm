@@ -307,6 +307,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     for (NSView* view in _toolbar.arrangedSubviews)
         if ([view.identifier isEqualToString:@"CollectionVersionIndicator"] && !view.hidden) revision = YES;
     _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 68 : 36) + (revision ? 28 : 0);
+    _toolbar.edgeInsets = NSEdgeInsetsMake(4,_sidebarVisible ? 8 : 8-_splitView.dividerThickness,4,8);
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _presentationMode;
     _toolbarOverflowButton.hidden = YES;
