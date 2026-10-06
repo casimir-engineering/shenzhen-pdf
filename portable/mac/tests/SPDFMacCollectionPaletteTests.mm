@@ -39,6 +39,15 @@ int main(void) {
         Expect(@"reverse words and mixed whitespace still match path context",
             spdf_collection_palette_open_name_rows(@[assembly[0]],@"  r2\tASSEMBLY  ").count == 1);
         Expect(@"all terms are required",spdf_collection_palette_open_name_rows(assembly,@"assembly R9").count == 0);
+        NSArray* recentTabs=spdf_collection_palette_open_name_rows(@[
+            @{@"path":@"/a.pdf",@"title":@"A",@"lastViewedAt":@10},
+            @{@"path":@"/b.pdf",@"title":@"B",@"lastViewedAt":@30},
+            @{@"path":@"/c.pdf",@"title":@"C",@"lastViewedAt":@20}],@"");
+        Expect(@"open documents follow last viewed, not tab position",[[recentTabs valueForKey:@"title"] isEqual:@[@"B",@"C",@"A"]]);
+        NSArray* searched=spdf_collection_palette_open_name_rows(@[
+            @{@"path":@"/a.pdf",@"title":@"Report",@"lastViewedAt":@10,@"_order":@0},
+            @{@"path":@"/b.pdf",@"title":@"Report",@"lastViewedAt":@30,@"_order":@1}],@"Report");
+        Expect(@"typing preserves previous search ranking",[searched.firstObject[@"path"] isEqual:@"/a.pdf"]);
         NSArray* groups = spdf_collection_palette_group_rows(session, @"res");
         Expect(@"persisted group activates last-used path across processes", groups.count == 1 &&
                [groups[0][@"path"] isEqual:@"/tmp/last.pdf"] && [groups[0][@"count"] integerValue] == 2);

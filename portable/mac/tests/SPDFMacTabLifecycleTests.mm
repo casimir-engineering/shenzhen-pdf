@@ -10,7 +10,19 @@
         }                                                                                                         \
     } while (0)
 
+@interface ViewedTabFixture : NSObject
+@property NSTimeInterval lastViewedAt;
+@end
+@implementation ViewedTabFixture
+@end
+
 static int test_active_detach_restores_mru(void) {
+    ViewedTabFixture* viewed=[ViewedTabFixture new];
+    SPDFMacTabLifecycle* tracking=[SPDFMacTabLifecycle new];
+    NSTimeInterval before=NSDate.timeIntervalSinceReferenceDate;
+    [tracking recordActivationOfIdentifier:viewed];
+    EXPECT(viewed.lastViewedAt>=before);
+
     NSObject* a = [NSObject new];
     NSObject* b = [NSObject new];
     NSObject* c = [NSObject new];

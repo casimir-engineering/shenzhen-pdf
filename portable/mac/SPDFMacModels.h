@@ -57,6 +57,7 @@ typedef NS_ENUM(NSInteger, SPDFFitMode) {
 @end
 
 @interface SPDFDocumentTab : NSObject
+@property(nonatomic) NSTimeInterval lastViewedAt;
 @property(nonatomic, strong) SPDFTabGroup* group;
 @property(nonatomic, copy) NSString* collectionHistoryDocumentID;
 @property(nonatomic, copy) NSString* collectionVersionLabel;

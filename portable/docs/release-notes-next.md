@@ -8,6 +8,9 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Renaming a read-only document now offers **Save As…**. The writable copy replaces the old tab and becomes the source for its existing Collection history; the original file is left on disk and its old history link is removed.
+- Opening ⌘K with an empty search lists open documents by last viewed, newest first. Typing retains the existing search ranking. Viewing times persist across launches.
+
 - Drag a tab onto another tab in the same group and pause briefly to create a new group, with its name ready to edit. The middle three-fifths stays still for grouping; only the outer fifth at either end triggers reordering.
 - **Rename Document…** is now available in the tab context menu. It renames the file in its existing folder, preserves its extension and open reading state, and updates the Collection source link.
 
@@ -50,3 +53,9 @@ Document rename uses a native sheet prefilled with the filename stem. Invalid na
 ### Stable tab drag zones
 
 Reordering previously crossed the target midpoint immediately, while grouping armed later at the same location and restored the target to its original slot. The competing thresholds caused the move-away/return effect. Reorder thresholds now sit at 20% and 80%, matching a central 60% grouping zone. Releasing in that zone before the group preview arms leaves the order unchanged. Native tests traverse the middle zone before and after dwell, assert a stationary target, and verify outer-edge reorder in both directions for General and custom groups.
+
+### Read-only rename fallback and empty-palette recency
+
+Rename checks source and parent-folder write access before presenting the name editor, with a second permission-error fallback for access changes during rename. Save As copies the readable source or its read-only working copy through the existing atomic save helper, makes the output writable and rebases the existing Collection record before replacing the tab. The source alias is removed in the same manifest transaction as the new binding. Cancellation or copy/rebase failure retains the old tab; a completed copy can remain on disk if relinking fails. The source itself is never deleted.
+
+Tab activation records lastViewedAt, preserved in tab copies and YAML session serialization. The empty palette sorts by this timestamp before its existing fallback ordering. Query-bearing results do not use this new key. Tests cover preserved history identity and version count, forgotten source alias, failed-rebase safety, timestamp persistence, empty-query recency and unchanged typed-query ordering.

@@ -17,6 +17,10 @@ static BOOL spdf_contains_identical_identifier(NSArray* identifiers, id identifi
     return spdf_index_of_identical_identifier(identifiers, identifier) != NSNotFound;
 }
 
+@protocol SPDFTabViewing <NSObject>
+- (void)setLastViewedAt:(NSTimeInterval)time;
+@end
+
 @implementation SPDFMacTabLifecycle
 
 - (instancetype)init {
@@ -31,6 +35,8 @@ static BOOL spdf_contains_identical_identifier(NSArray* identifiers, id identifi
 }
 
 - (void)recordActivationOfIdentifier:(id)identifier {
+    if ([identifier respondsToSelector:@selector(setLastViewedAt:)])
+        [(id<SPDFTabViewing>)identifier setLastViewedAt:NSDate.timeIntervalSinceReferenceDate];
     if (!identifier) return;
     NSInteger existingIndex = spdf_index_of_identical_identifier(_activationHistory, identifier);
     if (existingIndex != NSNotFound) [_activationHistory removeObjectAtIndex:(NSUInteger)existingIndex];

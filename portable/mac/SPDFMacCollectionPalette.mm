@@ -54,7 +54,7 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
     for (SPDFDocumentTab* tab in _tabs) {
         if (!tab.path.length) continue;
         NSMutableDictionary* item = [@{@"path":tab.path, @"title":tab.title ?: @"",
-            @"markdownLandscape":@(tab.markdownLandscape)} mutableCopy];
+            @"markdownLandscape":@(tab.markdownLandscape), @"lastViewedAt":@(tab.lastViewedAt)} mutableCopy];
         if (tab.group) item[@"group"] = tab.group.dictionary;
         [tabs addObject:item];
     }
