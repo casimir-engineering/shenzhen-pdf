@@ -82,6 +82,7 @@ SPDFDocumentTab* spdf_copy_document_tab(SPDFDocumentTab* source) {
     copy.collectionVersionLabel = source.collectionVersionLabel;
     copy.path = source.path;
     copy.title = source.title;
+    copy.lastViewedAt = source.lastViewedAt;
     copy.pageIndex = source.pageIndex;
     copy.zoom = source.zoom;
     copy.customZoom = source.customZoom;
@@ -114,6 +115,7 @@ NSDictionary* spdf_dictionary_from_tab(SPDFDocumentTab* tab, NSInteger sourceWin
     NSDictionary* result = @{
         @"path" : tab.path ?: @"",
         @"title" : tab.title ?: @"",
+        @"lastViewedAt" : @(tab.lastViewedAt),
         @"page" : @(tab.pageIndex),
         @"zoom" : @(tab.zoom),
         @"customZoom" : @(tab.customZoom),
@@ -162,6 +164,7 @@ SPDFDocumentTab* spdf_tab_from_dictionary(NSDictionary* item) {
     if ([item[@"collectionVersionLabel"] isKindOfClass:NSString.class]) tab.collectionVersionLabel = item[@"collectionVersionLabel"];
     if ([item[@"collectionHistoryID"] isKindOfClass:NSString.class]) tab.collectionHistoryDocumentID = item[@"collectionHistoryID"];
     if ([item[@"title"] isKindOfClass:NSString.class]) tab.title = item[@"title"];
+    if ([item[@"lastViewedAt"] isKindOfClass:NSNumber.class]) tab.lastViewedAt = [item[@"lastViewedAt"] doubleValue];
     tab.pageIndex = MAX(0, [item[@"page"] integerValue]);
     tab.zoom = [item[@"zoom"] doubleValue] > 0 ? [item[@"zoom"] doubleValue] : 1.0;
     tab.customZoom = [item[@"customZoom"] doubleValue] > 0 ? [item[@"customZoom"] doubleValue] : tab.zoom;

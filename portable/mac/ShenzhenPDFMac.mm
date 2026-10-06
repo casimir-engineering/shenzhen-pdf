@@ -11887,15 +11887,14 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 - (NSArray<NSDictionary*>*)openDocumentPaletteCandidates {
     NSMutableArray<NSDictionary*>* candidates = [NSMutableArray array];
     for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
-        NSArray<NSString*>* paths = [controller openTabPaths];
         NSMutableDictionary* titles = [[controller openDocumentPaletteTitlesByStandardizedPath] mutableCopy];
         for (SPDFDocumentTab* tab in controller->_tabs)
             if (tab.collectionVersionLabel.length) titles[tab.path.stringByStandardizingPath] = tab.collectionVersionLabel;
-        for (NSUInteger i = 0; i < paths.count; ++i) {
-            NSString* path = paths[i];
+        for (SPDFDocumentTab* tab in controller->_tabs) {
+            NSString* path = tab.path;
             if (!path.length) continue;
             NSString* title = titles[path.stringByStandardizingPath];
-            [candidates addObject:@{@"path" : path, @"title" : title ?: @""}];
+            [candidates addObject:@{@"path" : path, @"title" : title ?: @"", @"lastViewedAt":@(tab.lastViewedAt)}];
         }
     }
     return candidates;

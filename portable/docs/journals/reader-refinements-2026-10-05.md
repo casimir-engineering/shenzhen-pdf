@@ -300,3 +300,9 @@ Root cause: center-hover detection discarded all sibling tabs before dwell detec
 ## Stable tab drag zones — 2026-10-06
 
 Confirmed two competing rules: midpoint crossing moved a sibling immediately, then center-hover grouping suppressed that movement after its delay. Aligned grouping and reordering boundaries to 20%/80%, leaving the middle 60% stationary. An unarmed center release cancels without reordering. Kept the existing group preview and naming flow. Headless tests cover middle-zone traversal, pre/post-dwell target geometry, early release, and left/right edge reorder in both General and custom groups.
+
+## Read-only rename and empty ⌘K recency — 2026-10-06
+
+Added a permission preflight and Save As choice to Rename Document. Reused the atomic copy/install helper and rebased the same Collection ID before adopting the writable path, removing the old alias transactionally. Existing tab state is retained, read-only copy metadata is cleared and the old recent entry is removed. Tests cover rebase identity/history retention and failure preserving the original binding.
+
+The user clarified that recency ordering applies only before typing in ⌘K. Added a persisted lastViewedAt activation timestamp and an empty-query-only sorting key; tests explicitly assert typed-query order is unchanged. No app launch or screenshots.

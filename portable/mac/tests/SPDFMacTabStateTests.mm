@@ -32,6 +32,9 @@ int main(void) {
         // "Default being on" is the whole user-visible promise: a document
         // nobody has configured keeps its image colors in the dark theme.
         SPDFDocumentTab* fresh = TabWithPath(@"/tmp/fresh.pdf");
+        fresh.lastViewedAt=12345;
+        Expect("last-viewed order survives session restoration",spdf_tab_from_dictionary(RoundTrip(fresh)).lastViewedAt==12345);
+        Expect("last-viewed timestamp survives tab copies",spdf_copy_document_tab(fresh).lastViewedAt==12345);
         Expect("a new document keeps image colors by default", fresh.preservesImageColors);
 
         // --- It is written, and read back --------------------------------

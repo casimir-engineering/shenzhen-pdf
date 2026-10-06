@@ -38,6 +38,8 @@ static NSInteger MatchRank(NSString* query, NSString* title, NSString* path) {
 static NSComparisonResult RankRows(NSDictionary* left, NSDictionary* right) {
     NSComparisonResult rank = [Number(left[@"_rank"]) compare:Number(right[@"_rank"])];
     if (rank != NSOrderedSame) return rank;
+    NSComparisonResult viewed = [Number(right[@"_viewedAt"]) compare:Number(left[@"_viewedAt"])];
+    if (viewed != NSOrderedSame) return viewed;
     NSComparisonResult recent = [Number(right[@"focusedAt"]) compare:Number(left[@"focusedAt"])];
     if (recent != NSOrderedSame) return recent;
     NSComparisonResult order = [Number(left[@"_order"]) compare:Number(right[@"_order"])];
@@ -73,7 +75,7 @@ static NSArray<NSDictionary*>* SessionCandidates(id sessionObject) {
             if (![tab isKindOfClass:NSDictionary.class]) continue;
             NSString* path = Text(tab[@"path"]); if (!path.length) continue;
             NSMutableDictionary* row = [@{@"path":path, @"title":Text(tab[@"collectionVersionLabel"]).length ? tab[@"collectionVersionLabel"] : Text(tab[@"title"]),
-                @"focusedAt":focusedAt, @"_order":@(order++),
+                @"focusedAt":focusedAt, @"lastViewedAt":Number(tab[@"lastViewedAt"]), @"_order":@(order++),
                 @"markdownLandscape":@([tab[@"markdownLandscape"] boolValue])} mutableCopy];
             if ([tab[@"group"] isKindOfClass:NSDictionary.class]) row[@"group"] = tab[@"group"];
             [results addObject:row];
@@ -95,7 +97,7 @@ NSArray<NSDictionary*>* spdf_collection_palette_open_candidates(NSArray<NSDictio
         NSString* key = PathKey(path); NSNumber* existing = indices[key];
         if (existing) {
             NSMutableDictionary* row = [results[existing.unsignedIntegerValue] mutableCopy];
-            for (NSString* field in @[@"group", @"markdownLandscape", @"focusedAt"])
+            for (NSString* field in @[@"group", @"markdownLandscape", @"focusedAt", @"lastViewedAt"])
                 if (!row[field] && raw[field]) row[field] = raw[field];
             if ([Number(raw[@"focusedAt"]) doubleValue] > [Number(row[@"focusedAt"]) doubleValue])
                 row[@"focusedAt"] = raw[@"focusedAt"];
@@ -127,7 +129,8 @@ NSArray<NSDictionary*>* spdf_collection_palette_open_name_rows(NSArray<NSDiction
         NSInteger rank = MatchRank(query, title, path); if (rank == NSNotFound) continue;
         NSMutableDictionary* row = [candidate mutableCopy];
         row[@"kind"] = @"openDoc"; row[@"title"] = title.length ? title : path.lastPathComponent;
-        row[@"_rank"] = @(rank); [ranked addObject:row];
+        row[@"_rank"] = @(rank); row[@"_viewedAt"] = query.length ? @0 : Number(candidate[@"lastViewedAt"]);
+        [ranked addObject:row];
     }
     [ranked sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) { return RankRows(a, b); }];
     return ranked;
