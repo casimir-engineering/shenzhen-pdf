@@ -1,5 +1,9 @@
 #import "SPDFMacEmptyDocumentView.h"
 #import <objc/runtime.h>
+#import "SPDFMacModels.h"
+@interface NSObject (EmptyDocumentState)
+- (SPDFDocumentTab*)selectedTab;
+@end
 
 @interface SPDFEmptyOpenButton : NSButton
 @end
@@ -9,7 +13,7 @@
     (void)dirty;
     NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,1,1) xRadius:8 yRadius:8];
     [(self.highlighted ? NSColor.selectedControlColor : NSColor.controlAccentColor) setFill]; [shape fill];
-    NSString* label=@"＋  Open document";
+    NSString* label=[self.title isEqual:@"Locate document"] ? self.title : @"＋  Open document";
     NSDictionary* attributes=@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
         NSForegroundColorAttributeName:NSColor.whiteColor};
     NSSize size=[label sizeWithAttributes:attributes];
@@ -93,9 +97,14 @@ void SPDFShowEmptyDocumentView(NSView* owner, NSString* message, id target) {
         [owner addSubview:view];
     }
     view.hidden=NO; view.openButton.target=target;
+    BOOL missing=[target respondsToSelector:@selector(selectedTab)] && [target selectedTab].missingFile;
+    view.openButton.title=missing ? @"Locate document" : @"Open document";
+    view.openButton.accessibilityLabel=view.openButton.title;
+    view.openButton.action=missing ? NSSelectorFromString(@"showCollectionRecovery:") : @selector(newTabRequested:);
+    view.formats.hidden=missing; view.shortcut.hidden=missing;
     BOOL welcome=!message.length || [message isEqual:@"Open a document"];
     view.titleLabel.stringValue=welcome ? @"Your next document" : message;
-    view.hint.stringValue=welcome ? @"Drop a file here to start reading" : @"You can open another document";
+    view.hint.stringValue=missing ? @"Find it automatically or choose its new location" : welcome ? @"Drop a file here to start reading" : @"You can open another document";
     // Center in what the reader can actually see, never in a stale page canvas.
     view.frame=NSIsEmptyRect(owner.visibleRect) ? owner.bounds : owner.visibleRect;
     [view setNeedsLayout:YES]; [view layoutSubtreeIfNeeded];

@@ -184,9 +184,13 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
 }
 - (void)addCollectionItemsToTabMenu:(NSMenu*)menu path:(NSString*)path {
     [menu addItem:NSMenuItem.separatorItem];
-    NSArray* titles = @[@"Previous Version", @"Version History", @"Locate Original / Collection Recovery…"];
+    NSArray* titles = @[@"Previous Version", @"Version History", @"Locate Document…"];
     NSArray* actions = @[@"showCollectionPreviousVersion:", @"showCollectionHistory:", @"showCollectionRecovery:"];
     for (NSUInteger i = 0; i < titles.count; i++) {
+        if (i==2) {
+            NSDictionary* doc=[SPDFMacCollectionStore.defaultStore documentForPath:path] ?: [SPDFMacCollectionStore.defaultStore archiveInfoForPath:path][@"document"];
+            if (doc ? SPDFCollectionOriginalAvailable(doc) : [NSFileManager.defaultManager fileExistsAtPath:path]) continue;
+        }
         NSMenuItem* item = [menu addItemWithTitle:titles[i] action:NSSelectorFromString(actions[i]) keyEquivalent:@""];
         item.target = self; item.representedObject = path;
     }
@@ -248,7 +252,27 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     return YES;
 }
 - (void)showCollectionRecovery:(id)sender {
-    // Missing sources remain readable through History, with inline recovery actions.
-    [self showCollectionHistory:sender];
+    NSString* path=[self collectionPathForSender:sender];
+    if (!path.length) return;
+    SPDFMacCollectionStore* store=SPDFMacCollectionStore.defaultStore;
+    NSDictionary* doc=[store documentForPath:path] ?: [store archiveInfoForPath:path][@"document"];
+    NSString* original=doc[@"path"] ?: path;
+    if (doc ? SPDFCollectionOriginalAvailable(doc) : [NSFileManager.defaultManager fileExistsAtPath:original]) return;
+    __weak ShenzhenMacDelegate* weakSelf=self;
+    SPDFMacLocateCollectionOriginal(store,doc[@"id"] ?: original,_window, ^(NSString* preview) {
+        [weakSelf collectionOpenPath:preview archived:NO];
+    }, ^(NSString* restored) {
+        ShenzhenMacDelegate* reader=weakSelf; if (!reader) return;
+        SPDFDocumentTab* missing=nil;
+        for (SPDFDocumentTab* tab in reader->_tabs) if (tab.missingFile && [tab.path isEqual:original]) { missing=tab; break; }
+        if (missing) {
+            missing.path=restored; missing.title=restored.lastPathComponent.stringByDeletingPathExtension;
+            missing.missingFile=NO; missing.missingMessage=@"";
+            NSInteger index=[reader->_tabs indexOfObjectIdenticalTo:missing];
+            if (index==reader->_selectedTabIndex) [reader loadSelectedTab]; else [reader selectTabAtIndex:index];
+            [reader savePersistentState];
+        } else [reader collectionOpenPath:restored archived:NO];
+        [reader collectionRefreshHistory];
+    });
 }
 @end
