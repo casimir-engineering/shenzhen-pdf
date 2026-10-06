@@ -62,6 +62,8 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 // Removes older snapshots, retaining the latest saved version and source binding.
 - (BOOL)deletePreviousBackupsForDocumentID:(NSString*)documentID error:(NSError**)error;
 - (nullable NSURL*)materializeVersionID:(NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error;
+// Save As replaces the source binding without retaining the abandoned path alias.
+- (BOOL)rebaseDocumentID:(NSString*)documentID toPath:(NSString*)path forgettingPath:(NSString*)oldPath error:(NSError**)error;
 - (BOOL)linkDocumentID:(NSString*)documentID toPath:(NSString*)path
         allowMismatch:(BOOL)allowMismatch error:(NSError**)error;
 @end

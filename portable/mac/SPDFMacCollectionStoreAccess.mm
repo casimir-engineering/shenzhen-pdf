@@ -114,6 +114,13 @@
     return ok ? result : nil;
 }
 - (BOOL)linkDocumentID:(NSString*)documentID toPath:(NSString*)path allowMismatch:(BOOL)allowMismatch error:(NSError**)error {
+    return [self linkDocumentID:documentID toPath:path allowMismatch:allowMismatch forgettingPath:nil error:error];
+}
+- (BOOL)rebaseDocumentID:(NSString*)documentID toPath:(NSString*)path forgettingPath:(NSString*)oldPath error:(NSError**)error {
+    return [self linkDocumentID:documentID toPath:path allowMismatch:YES forgettingPath:oldPath error:error];
+}
+- (BOOL)linkDocumentID:(NSString*)documentID toPath:(NSString*)path allowMismatch:(BOOL)allowMismatch
+        forgettingPath:(NSString*)oldPath error:(NSError**)error {
     path=SPDFCollectionPath(path);
     if ([self isArchivePath:path]) { if(error)*error=SPDFCollectionError(11,@"Choose an original outside Collection."); return NO; }
     NSString* hash=SPDFCollectionHashURL([NSURL fileURLWithPath:path],error); if (!hash) return NO;
@@ -130,6 +137,7 @@
         NSMutableArray* aliases=[doc[@"aliases"] mutableCopy] ?: [NSMutableArray array];
         if (![aliases containsObject:doc[@"path"]]) [aliases addObject:doc[@"path"]];
         if (![aliases containsObject:path]) [aliases addObject:path];
+        if (oldPath.length && ![SPDFCollectionPath(oldPath) isEqual:path]) [aliases removeObject:SPDFCollectionPath(oldPath)];
         doc[@"aliases"]=aliases; doc[@"path"]=path; doc[@"title"]=path.lastPathComponent;
         [doc removeObjectForKey:@"sourceReplaced"]; [doc removeObjectForKey:@"originalUnavailable"];
         doc[@"status"]=[latest[@"hash"] isEqual:hash] ? @"Protected" : @"Not protected";
