@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacTabStripViewPrivate.h"
 #import "SPDFMacTabTitleDrawing.h"
 #import "SPDFMacCollectionTabIdentity.h"
@@ -160,7 +161,7 @@
     if (!NSIsEmptyRect(overflowRect)) {
         NSImage* icon = [NSImage imageWithSystemSymbolName:@"square.3.layers.3d" accessibilityDescription:@"All Groups"];
         icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
-        [icon drawInRect:NSInsetRect(overflowRect,6,6)];
+        [icon drawInRect:SPDFIconAspectFitRect(icon,NSInsetRect(overflowRect,6,6))];
     }
 
     NSRect plusRect = [self plusRect];

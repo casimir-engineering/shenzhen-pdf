@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import "SPDFMacSidebarModeControl.h"
+#import "SPDFMacIconGeometry.h"
 static int failures;
 static void Check(BOOL ok, const char* label) { if (!ok) { fprintf(stderr,"FAIL: %s\n",label); failures++; } }
 @interface SidebarSurface : NSView
@@ -177,6 +178,19 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        for (NSString* name in @[@"sidebar.left",@"text.bubble",@"magnifyingglass",@"clock.arrow.circlepath",
+                                  @"square.3.layers.3d",@"list.bullet.indent",@"eye.slash",@"chevron.down"]) {
+            NSImage* icon=[NSImage imageWithSystemSymbolName:name accessibilityDescription:nil];
+            for (NSNumber* width in @[@10,@12,@16,@24]) {
+                NSRect slot=NSMakeRect(3,7,width.doubleValue,16);
+                NSRect fitted=SPDFIconAspectFitRect(icon,slot);
+                Check(icon!=nil && NSWidth(fitted)>0 && NSHeight(fitted)>0,"system icon has drawable proportions");
+                Check(fabs(NSWidth(fitted)/NSHeight(fitted)-icon.size.width/icon.size.height)<.0001,
+                    "wide and tall symbols retain natural aspect ratio");
+                Check(NSContainsRect(slot,fitted) && fabs(NSMidX(slot)-NSMidX(fitted))<.001 &&
+                    fabs(NSMidY(slot)-NSMidY(fitted))<.001,"fitted icons stay centered inside existing targets");
+            }
+        }
         NSString* directory = NSProcessInfo.processInfo.environment[@"SPDF_SIDEBAR_EVIDENCE_DIR"];
         if (directory.length) [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
         Exercise(176,296,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-minimum.png"] : nil);

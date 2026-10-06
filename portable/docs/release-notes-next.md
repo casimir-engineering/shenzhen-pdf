@@ -8,6 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Icons retain their natural proportions throughout reader toolbars, sidebar navigation, group controls and Collection buttons, without changing click targets.
+
 - ⌘K matches multiple words across open-document names and paths in any order. Exact document names rank first, followed by filename matches and then folder context—for example, “assembly R2” finds “Assembly guide” inside “Original R2”.
 
 - Reader buttons respond reliably to the first click after moving the window or clicking another control quickly. The titlebar search icon uses explicit press/release tracking.
@@ -25,3 +27,7 @@ Group underlines remain continuous beneath the left and right +N overflow badges
 ### Multiword document lookup
 
 Open-document palette matching requires every whitespace-separated query term, without requiring their order or adjacency. Case and diacritics remain ignored. Exact title/filename matches (including extensionless names) outrank phrase prefixes, contained phrases, unordered filename words and finally full-path context. Existing recency/order tie-breaking remains intact. Matching uses in-memory candidate strings only; it does not read files or add launch work. Regression coverage includes the Assembly guide/R2 folder example, exact-name priority over more recently focused path matches, reversed words, whitespace and exclusion of unmatched revisions.
+
+### Proportional icon drawing
+
+Custom chrome drawing now shares a centered aspect-fit geometry helper. Previously several SF Symbols were stretched into square destinations, including the sidebar, toolbar, group picker, group visibility action and Collection controls; segmented toolbar drawing only preserved proportions for two-segment controls. All these paths now fit the natural image size inside the existing slot. Native image views already use proportional scaling. No document-rendering path or launch work changed. Tests cover actual wide/tall symbols across 10–24-point slots, centering, containment and unchanged interaction behavior.

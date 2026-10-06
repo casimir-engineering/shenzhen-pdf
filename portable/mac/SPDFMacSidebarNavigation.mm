@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacChromeColors.h"
 #import "SPDFMacSidebarModeControl.h"
 
@@ -56,7 +57,7 @@ static NSString* Symbol(NSInteger mode) {
     NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-16)/2),6,16,16) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),6,16,16)) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
 
 }
 - (void)updateTrackingAreas {

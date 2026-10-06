@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacChromeColors.h"
 #import "SPDFMacPastedImageState.h"
 #import "SPDFMacHeaderDragView.h"
@@ -55,7 +56,7 @@ static char chromeKey;
     if (self.highlighted) { [SPDFCollectionColor(@"selected") setFill]; [shape fill]; }
     NSImage* image = [self.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]] ?: self.image;
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]] ?: image;
-    [image drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)
+    [image drawInRect:SPDFIconAspectFitRect(image,NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16))
         fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:view.isFlipped hints:nil];
     if (view.window.firstResponder == view) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
