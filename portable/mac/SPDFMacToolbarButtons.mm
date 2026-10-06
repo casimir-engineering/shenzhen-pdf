@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacChromeColors.h"
 #import "SPDFMacUIHelpers.h"
 
@@ -67,7 +68,7 @@
                               accessibilityDescription:nil];
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular]];
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]];
-    [image drawInRect:NSMakeRect(floor((NSWidth(self.bounds)-16)/2),floor((NSHeight(self.bounds)-16)/2),16,16)
+    [image drawInRect:SPDFIconAspectFitRect(image,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),floor((NSHeight(self.bounds)-16)/2),16,16))
             fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
 }
 

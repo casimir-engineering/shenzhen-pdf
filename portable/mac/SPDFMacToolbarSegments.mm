@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacChromeColors.h"
 #import "SPDFMacSupport.h"
 
@@ -58,10 +59,7 @@
         NSColor* color = SPDFChromeIconColor(self.enabled && [self isEnabledForSegment:segment]);
         NSImage* image = [self imageForSegment:segment];
         NSImage* tinted = [NSImage imageWithSize:NSMakeSize(16,16) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-            CGFloat scale = MIN(NSWidth(rect)/MAX(1,image.size.width),NSHeight(rect)/MAX(1,image.size.height));
-            NSSize size = self.segmentCount==2
-                ? NSMakeSize(image.size.width*scale,image.size.height*scale) : rect.size;
-            [image drawInRect:NSMakeRect(NSMidX(rect)-size.width/2,NSMidY(rect)-size.height/2,size.width,size.height)];
+            [image drawInRect:SPDFIconAspectFitRect(image,rect)];
             [color setFill]; NSRectFillUsingOperation(rect,NSCompositingOperationSourceIn); return YES;
         }];
         [tinted drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)

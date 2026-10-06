@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacTabStripViewPrivate.h"
 
 @interface SPDFTabGroupLayout : NSObject
@@ -184,7 +185,7 @@
         if (iconSpace) {
             NSImage* icon=[NSImage imageWithSystemSymbolName:@"books.vertical" accessibilityDescription:nil];
             icon=[icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
-            [icon drawInRect:NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12)];
+            [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12))];
         }
         CGFloat height = [layout.group.displayName sizeWithAttributes:attributes].height;
         BOOL hovered=_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header);
@@ -222,7 +223,7 @@
                     accessibilityDescription:@"Hide group"];
                 actionIcon = [actionIcon imageWithSymbolConfiguration:[NSImageSymbolConfiguration
                     configurationWithPaletteColors:@[NSColor.labelColor]]];
-                [actionIcon drawInRect:NSInsetRect(action,4,4)];
+                [actionIcon drawInRect:SPDFIconAspectFitRect(actionIcon,NSInsetRect(action,4,4))];
             }
             [NSGraphicsContext restoreGraphicsState];
         }

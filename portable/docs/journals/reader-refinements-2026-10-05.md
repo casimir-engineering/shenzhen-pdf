@@ -284,3 +284,7 @@ Added the separator after the panel toggle and centered visible document tools b
 ## Multiword palette lookup — 2026-10-06
 
 The prior matcher required an adjacent phrase in the title or basename. Replaced it with all-terms matching and a relevance hierarchy that favors document names over folder context. This fixes “assembly R2” for an Assembly guide in an Original R2 directory while putting a document actually named assembly R2 first. All matching stays in memory. Palette tests pass, covering exact-name priority, reordered words, whitespace and revision rejection; existing cache/laziness checks also pass.
+
+## Preserve icon proportions — 2026-10-06
+
+Audited custom NSImage drawing in app chrome. Replaced fixed square destination stretching with a shared aspect-fit helper for reader toolbar, sidebar, group controls and Collection buttons. Segmented controls now preserve proportions regardless of segment count. Existing proportional native image views and document rendering remain unchanged. Geometry checks cover actual SF Symbols at several sizes; sidebar and group interaction tests pass.

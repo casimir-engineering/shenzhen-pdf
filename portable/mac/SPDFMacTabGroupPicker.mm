@@ -1,3 +1,4 @@
+#import "SPDFMacIconGeometry.h"
 #import "SPDFMacTabStripViewPrivate.h"
 
 // Transient popovers dismiss before the anchor's mouseDown is delivered. Let
@@ -54,7 +55,7 @@
                             accessibilityDescription:nil];
     NSColor* color = self.group ? spdf_tab_group_accent(self.group.colorName) : NSColor.secondaryLabelColor;
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:NSMakeRect(8,8,16,16) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
+    [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(8,8,16,16)) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
             fraction:1 respectFlipped:YES hints:nil];
     NSMutableParagraphStyle* paragraph = [NSMutableParagraphStyle new];
     paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
