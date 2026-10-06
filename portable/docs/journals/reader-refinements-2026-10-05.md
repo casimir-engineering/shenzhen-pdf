@@ -270,3 +270,9 @@ The tab recovery action only forwarded to History, explaining why it appeared in
 The locator offers automatic search and manual selection. Collection-backed recovery keeps its existing exact-hash search; missing paths without Collection metadata get bounded, cancellable filename scanning on the background queue, with explicit unverified-candidate labels. Confirming a location reloads the missing tab in place. No search starts until the user requests it.
 
 Headless tests exercise the real context action while intercepting window presentation, assert both locator choices, verify recovery is absent for available files, and check missing-view action wiring and reset. Full workspace, Collection store and reader-navigation tests pass. The reported source path was confirmed absent without modifying it.
+
+### Lost source represented in History
+
+History now inserts a presentation-only Missing document row above stored versions when the original is unavailable. It has a recovery context action and cannot be compared, exported or deleted as a saved snapshot. The newest actual snapshot shows Latest copy. The underlying version array remains unchanged; table selection, context menus and comparison availability account for the extra row. Reload preserves the selected version by ID.
+
+Rechecking an original during preview also refreshes source availability, removing the missing row and restoring Latest when the source returns. Native History tests cover the missing entry, copy label, recovery-only menu, version selection/deletion, narrow layout and reconnection; the complete Markdown/UI integration suite passes.

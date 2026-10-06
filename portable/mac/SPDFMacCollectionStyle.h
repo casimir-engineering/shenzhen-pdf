@@ -13,3 +13,4 @@ NSView* SPDFCollectionDivider(void);
 // Current identity comes from the document, never the visible/filtered row order.
 BOOL SPDFCollectionVersionIsLatest(NSDictionary* document, NSDictionary* version);
 NSView* SPDFCollectionLatestBadge(void);
+NSView* SPDFCollectionLatestCopyBadge(void);
