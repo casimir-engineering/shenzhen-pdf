@@ -13,11 +13,11 @@
 #import <PDFKit/PDFKit.h>
 #import <objc/runtime.h>
 #undef main
-
 static NSUInteger failures;
 static void Check(BOOL ok, NSString* message) {
     if (!ok) { fprintf(stderr,"FAIL: %s\n",message.UTF8String); failures++; }
 }
+#import "SPDFMacRegexClickChecks.h"
 static void VisibleControls(NSView* view,NSMutableArray<NSControl*>* controls) {
     if(view.hidden) return;
     if([view isKindOfClass:NSControl.class]) { [controls addObject:(id)view]; return; }
@@ -322,7 +322,7 @@ static void CheckIconReadability(NSControl* control) {
                 [NSString stringWithFormat:@"toolbar controls never overlap: %@ / %@",NSStringFromRect(value.rectValue),NSStringFromRect(rect)]);
             [bounds addObject:[NSValue valueWithRect:rect]];
         }
-        if(_sidebarModeControl.spdf_selectedSidebarMode==SPDFSidebarModeSearch) {
+        if(_sidebarModeControl.spdf_selectedSidebarMode==SPDFSidebarModeSearch) { CheckRegexClick(_window,_findRegexCheckbox,_searchField);
             for(NSView* control in @[_searchField,_findRegexCheckbox,_findCountLabel,_findSegments]) {
                 if(control.hidden) continue;
                 NSRect rect=[control convertRect:control.bounds toView:_sidebarContainer];
@@ -447,6 +447,7 @@ int main(int argc,const char* argv[]) {
         [SPDFReadmeMarkdown() writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
+            if(getenv("SPDF_REGEX_ONLY")) { [reader setProbeFind:YES]; [reader capture:output.length ? [output stringByAppendingPathComponent:@"regex.png"] : nil width:1280 sidebar:YES map:YES]; return failures ? 1 : 0; }
             if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
             CheckMissingDocumentView(); CheckMissingDocumentRecovery(reader,root); CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader); CheckRestoredFindPanel(reader);
             [reader checkResponsivePanels]; [reader checkRepeatedMapClicks]; [reader checkBatchChanges];
@@ -462,8 +463,7 @@ int main(int argc,const char* argv[]) {
             [reader setProbeVersion:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-version.png" : @"reader-light-version.png"] : nil
                 width:640 sidebar:YES map:YES];
-            [reader setProbeVersion:NO];
-            [reader setProbeFind:YES];
+            [reader setProbeVersion:NO]; [reader setProbeFind:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-find.png" : @"reader-light-find.png"] : nil
                 width:1280 sidebar:YES map:YES];
             [reader setProbeFind:NO];

@@ -306,3 +306,7 @@ Confirmed two competing rules: midpoint crossing moved a sibling immediately, th
 Added a permission preflight and Save As choice to Rename Document. Reused the atomic copy/install helper and rebased the same Collection ID before adopting the writable path, removing the old alias transactionally. Existing tab state is retained, read-only copy metadata is cleared and the old recent entry is removed. Tests cover rebase identity/history retention and failure preserving the original binding.
 
 The user clarified that recency ordering applies only before typing in ⌘K. Added a persisted lastViewedAt activation timestamp and an empty-query-only sorting key; tests explicitly assert typed-query order is unchanged. No app launch or screenshots.
+
+## Regex click tracking and spacing — 2026-10-06
+
+Headless production-reader hit testing showed Regex receiving the hit (cell result 5), but native tracking dispatched zero actions and left its state unchanged. A dedicated native-checkbox subclass now owns mouse press/release while retaining AppKit drawing and keyboard/accessibility. The existing options gap increases by two points; a 24-point frame provides reliable box/label targets. Nine-point repeated-click checks and native activation pass. The broad workspace probe also exposed four pre-existing disabled-icon pixel-contrast failures following the earlier aspect-fit change; these are unrelated to this fix and were not relaxed. Focused Regex validation passes. No user app was launched, quit or captured.
