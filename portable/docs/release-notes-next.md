@@ -10,3 +10,5 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 - Reader buttons respond reliably to the first click after moving the window or clicking another control quickly. The titlebar search icon uses explicit press/release tracking.
 - Standalone toolbar icons retain their size but use compact 24-point click targets, leaving more room around them to drag the window. The zoom menu no longer overlaps the next-page button’s edge.
+
+- The left panel toggle stays at the left edge on the reader toolbar’s baseline. Document tools follow it; Groups sits at the right with a small separator.
