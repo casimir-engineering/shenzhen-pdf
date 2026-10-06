@@ -59,7 +59,7 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     Check(navigation.segmentCount == 5,"all PDF workspace modes present");
     Check(navigation.accessibilityChildren.count == 5,"navigation exposes each document mode");
     for (NSButton* row in navigation.accessibilityChildren) {
-        Check(NSHeight(row.frame) == 28 && NSMinY(row.frame) == 8,"icons share one aligned header row");
+        Check(NSHeight(row.frame) == 28 && NSMinY(row.frame) == 4,"icons share one aligned header row");
         Check(NSWidth(row.frame) >= 22 && NSMaxX(row.frame) <= width-16,"icons fit the narrowest panel");
         Check(row.accessibilityLabel.length > 0,"all icons have accessible text names");
         for (NSButton* peer in navigation.accessibilityChildren)
@@ -104,7 +104,7 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
         "disabled icons remain noninteractive");
     history.enabled = YES;
     fixture.changes = 0; navigation.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
-    Check(navigation.intrinsicContentSize.height == 72,"document header reserves filename below icons");
+    Check(navigation.intrinsicContentSize.height == 64,"document header reserves filename below icons");
     Check(NSHeight(scroll.frame) > 100,"short sidebar retains a useful scrollable content viewport");
     NSButton* groups = navigation.accessibilityChildren.firstObject; [groups performClick:nil];
     Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups && fixture.changes == 1,"click selects Groups and dispatches action once");

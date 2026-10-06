@@ -93,7 +93,7 @@ static NSString* Symbol(NSInteger mode) {
     return self;
 }
 - (NSSize)intrinsicContentSize {
-    return NSMakeSize(NSViewNoIntrinsicMetric,self.spdf_selectedSidebarMode == SPDFSidebarModeGroups ? 44 : 72);
+    return NSMakeSize(NSViewNoIntrinsicMetric,self.spdf_selectedSidebarMode == SPDFSidebarModeGroups ? 36 : 64);
 }
 - (void)setDocumentTitle:(NSString*)title {
     if ([_documentTitle isEqualToString:title]) return;
@@ -165,26 +165,24 @@ static NSString* Symbol(NSInteger mode) {
     [super layout];
     NSArray* rows = [self visualRows];
     CGFloat width = MIN(28, floor((NSWidth(self.bounds)-16-(_collapse ? 28 : 0))/MAX(1,rows.count)));
-    CGFloat x = 0;
+    CGFloat x = _collapse ? 28 : 0;
+    _collapse.frame = NSMakeRect(0,4,28,RowHeight);
     for (SPDFSidebarNavigationRow* row in rows) {
-        row.frame = NSMakeRect(x,8,width,RowHeight); x += width;
-        if (row.mode == SPDFSidebarModeGroups) x += 16;
-    }
-    _collapse.frame = NSMakeRect(NSWidth(self.bounds)-28,8,28,28);
-    if (_collapse && rows.count) {
-        NSView* group = rows.firstObject;
-        NSRect groupFrame = group.frame;
-        group.frame = _collapse.frame; _collapse.frame = groupFrame;
+        if (row.mode == SPDFSidebarModeGroups) {
+            row.frame = NSMakeRect(NSWidth(self.bounds)-28,4,28,RowHeight);
+        } else {
+            row.frame = NSMakeRect(x,4,width,RowHeight); x += width;
+        }
     }
 }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty; [[NSColor.labelColor colorWithAlphaComponent:.13] setFill];
-    NSRectFill(NSMakeRect(-8,43,NSWidth(self.bounds)+16,.5));
+    NSRectFill(NSMakeRect(-8,35,NSWidth(self.bounds)+16,.5));
     SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
-    NSRectFill(NSMakeRect(NSMaxX(_collapse ? _collapse.frame : group.frame)+7,14,.5,16));
+    NSRectFill(NSMakeRect(NSMinX(group.frame)-8,10,.5,16));
     if (self.spdf_selectedSidebarMode != SPDFSidebarModeGroups) {
         NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
-        [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,53,MAX(0,NSWidth(self.bounds)-8),16)
+        [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,45,MAX(0,NSWidth(self.bounds)-8),16)
             withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],
                 NSForegroundColorAttributeName:NSColor.secondaryLabelColor,NSParagraphStyleAttributeName:style}];
     }
