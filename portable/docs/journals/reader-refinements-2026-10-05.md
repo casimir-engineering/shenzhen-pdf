@@ -288,3 +288,7 @@ The prior matcher required an adjacent phrase in the title or basename. Replaced
 ## Preserve icon proportions — 2026-10-06
 
 Audited custom NSImage drawing in app chrome. Replaced fixed square destination stretching with a shared aspect-fit helper for reader toolbar, sidebar, group controls and Collection buttons. Segmented controls now preserve proportions regardless of segment count. Existing proportional native image views and document rendering remain unchanged. Geometry checks cover actual SF Symbols at several sizes; sidebar and group interaction tests pass.
+
+## Brighter tabs — 2026-10-06
+
+Used the existing group colors as document-folder markers: more recognizable pastel accents and visible inactive tints, with richer selected fills. The reading canvas stays visually quiet and layout is unchanged. Native light/dark fixture renders were inspected. Contrast/model/integration checks passed; the first render check caught the new Orange selected fill becoming too close to the Collection-copy rim, so Orange was adjusted before the complete suite passed.

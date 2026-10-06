@@ -165,7 +165,7 @@
     for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
         if (NSIsEmptyRect(layout.frame)) continue;
         NSColor* accent = spdf_tab_group_accent(layout.group.colorName);
-        [[accent colorWithAlphaComponent:0.16] setFill];
+        [[accent colorWithAlphaComponent:0.24] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:layout.header xRadius:4 yRadius:4] fill];
         if (!layout.group.collapsed) {
             [accent setFill];
