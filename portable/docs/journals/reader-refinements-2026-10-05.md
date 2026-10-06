@@ -276,3 +276,7 @@ Headless tests exercise the real context action while intercepting window presen
 History now inserts a presentation-only Missing document row above stored versions when the original is unavailable. It has a recovery context action and cannot be compared, exported or deleted as a saved snapshot. The newest actual snapshot shows Latest copy. The underlying version array remains unchanged; table selection, context menus and comparison availability account for the extra row. Reload preserves the selected version by ID.
 
 Rechecking an original during preview also refreshes source availability, removing the missing row and restoring Latest when the source returns. Native History tests cover the missing entry, copy label, recovery-only menu, version selection/deletion, narrow layout and reconnection; the complete Markdown/UI integration suite passes.
+
+## Sidebar centering and overflow underline — 2026-10-06
+
+Added the separator after the panel toggle and centered visible document tools between it and the Groups separator, preserving the toggle frame. The overflow fade previously erased group underlines underneath both +N badges; its clipping region now excludes the underline. Native sidebar tests and tab-strip interaction tests pass, including light/dark pixel checks underneath both badges. No user app was launched or captured.

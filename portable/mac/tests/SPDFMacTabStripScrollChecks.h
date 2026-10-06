@@ -28,6 +28,16 @@ static void check_scrollable_group_strip(void) {
     expect(NSEqualRects(leftHeader,[[layout_for_group(strip,before) valueForKey:@"header"] rectValue]) &&
         NSEqualRects(rightHeader,[[layout_for_group(strip,after) valueForKey:@"header"] rectValue]),
         @"scrolling document lane displaced a pinned collapsed group name");
+    for (NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
+        NSBitmapImageRep* bitmap=render_strip(strip,[NSAppearance appearanceNamed:appearance],
+            [@"/tmp/spdf-overflow-underline-" stringByAppendingFormat:@"%@.png",appearance]);
+        for (NSNumber* left in @[@YES,@NO]) {
+            NSRect badge=[strip tabScrollIndicatorRectOnLeft:left.boolValue];
+            for (CGFloat x=NSMinX(badge)+1;x<NSMaxX(badge)-1;x+=2)
+                expect(alpha_at(bitmap,NSMakePoint(x,NSHeight(strip.bounds)-5))>240,
+                    @"overflow badge interrupts the group underline");
+        }
+    }
     CGFloat saved=strip.tabScrollOffset;
     strip.tabs=strip.tabs; strip.selectedIndex=strip.selectedIndex; [strip groupLayouts];
     expect(fabs(strip.tabScrollOffset-saved)<.01,@"ordinary refresh reset the user's manual scroll position");
