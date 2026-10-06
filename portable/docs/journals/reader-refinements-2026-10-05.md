@@ -280,3 +280,7 @@ Rechecking an original during preview also refreshes source availability, removi
 ## Sidebar centering and overflow underline — 2026-10-06
 
 Added the separator after the panel toggle and centered visible document tools between it and the Groups separator, preserving the toggle frame. The overflow fade previously erased group underlines underneath both +N badges; its clipping region now excludes the underline. Native sidebar tests and tab-strip interaction tests pass, including light/dark pixel checks underneath both badges. No user app was launched or captured.
+
+## Multiword palette lookup — 2026-10-06
+
+The prior matcher required an adjacent phrase in the title or basename. Replaced it with all-terms matching and a relevance hierarchy that favors document names over folder context. This fixes “assembly R2” for an Assembly guide in an Original R2 directory while putting a document actually named assembly R2 first. All matching stays in memory. Palette tests pass, covering exact-name priority, reordered words, whitespace and revision rejection; existing cache/laziness checks also pass.

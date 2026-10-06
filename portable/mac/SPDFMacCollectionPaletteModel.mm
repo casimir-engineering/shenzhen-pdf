@@ -7,16 +7,33 @@ static NSString* PathKey(NSString* path) {
     NSString* key = path.stringByStandardizingPath;
     return key.length ? key : (path ?: @"");
 }
+// Name matches outrank path context; every query word must occur, in any order.
+// Pure string matching keeps this on the immediate, disk-free palette path.
 static NSInteger MatchRank(NSString* query, NSString* title, NSString* path) {
-    if (!query.length) return 0;
+    NSArray* words = [[query componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+        filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString* word, NSDictionary* _) {
+            (void)_; return word.length > 0;
+        }]];
+    if (!words.count) return 0;
+    NSString* phrase = [words componentsJoinedByString:@" "];
     NSStringCompareOptions folded = NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch;
-    for (NSString* value in @[title ?: @"", path.lastPathComponent ?: @""]) {
-        if ([value compare:query options:folded] == NSOrderedSame) return 0;
-        NSRange range = [value rangeOfString:query options:folded];
-        if (range.location == 0) return 1;
-        if (range.location != NSNotFound) return 2;
+    NSInteger best = NSNotFound;
+    for (NSString* value in @[title.lastPathComponent ?: @"", path.lastPathComponent ?: @""]) {
+        NSString* stem = value.stringByDeletingPathExtension;
+        if ([value compare:phrase options:folded] == NSOrderedSame ||
+            [stem compare:phrase options:folded] == NSOrderedSame) return 0;
+        NSRange range = [value rangeOfString:phrase options:folded];
+        if (range.location != NSNotFound) best = MIN(best,range.location == 0 ? 1 : 2);
+        BOOL all = YES;
+        for (NSString* word in words)
+            if ([value rangeOfString:word options:folded].location == NSNotFound) { all = NO; break; }
+        if (all) best = MIN(best,3);
     }
-    return NSNotFound;
+    if (best != NSNotFound) return best;
+    NSString* context = [NSString stringWithFormat:@"%@ %@",title ?: @"",path ?: @""];
+    for (NSString* word in words)
+        if ([context rangeOfString:word options:folded].location == NSNotFound) return NSNotFound;
+    return 4;
 }
 static NSComparisonResult RankRows(NSDictionary* left, NSDictionary* right) {
     NSComparisonResult rank = [Number(left[@"_rank"]) compare:Number(right[@"_rank"])];

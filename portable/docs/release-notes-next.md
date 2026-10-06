@@ -8,6 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- ⌘K matches multiple words across open-document names and paths in any order. Exact document names rank first, followed by filename matches and then folder context—for example, “assembly R2” finds “Assembly guide” inside “Original R2”.
+
 - Reader buttons respond reliably to the first click after moving the window or clicking another control quickly. The titlebar search icon uses explicit press/release tracking.
 - Standalone toolbar icons retain their size but use compact 24-point click targets, leaving more room around them to drag the window. The zoom menu no longer overlaps the next-page button’s edge.
 
@@ -19,3 +21,7 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 ### Continuous group underlines
 
 Group underlines remain continuous beneath the left and right +N overflow badges. The tab-content fade excludes the underline instead of erasing the entire strip height. Offscreen pixel checks cover both badges in light and dark appearances; tab scrolling and overflow-menu interaction tests pass. Sidebar layout checks verify centered document tools, usable narrow-panel targets and unchanged toggle coordinates.
+
+### Multiword document lookup
+
+Open-document palette matching requires every whitespace-separated query term, without requiring their order or adjacency. Case and diacritics remain ignored. Exact title/filename matches (including extensionless names) outrank phrase prefixes, contained phrases, unordered filename words and finally full-path context. Existing recency/order tie-breaking remains intact. Matching uses in-memory candidate strings only; it does not read files or add launch work. Regression coverage includes the Assembly guide/R2 folder example, exact-name priority over more recently focused path matches, reversed words, whitespace and exclusion of unmatched revisions.
