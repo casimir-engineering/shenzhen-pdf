@@ -8,7 +8,7 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-- Drag a tab onto another tab in the same group and pause briefly to create a new group, with its name ready to edit. Quick drags and edge drops still reorder tabs.
+- Drag a tab onto another tab in the same group and pause briefly to create a new group, with its name ready to edit. The middle three-fifths stays still for grouping; only the outer fifth at either end triggers reordering.
 - **Rename Document…** is now available in the tab context menu. It renames the file in its existing folder, preserves its extension and open reading state, and updates the Collection source link.
 
 - Brighter tab-group colors replace the muted palette. Inactive tabs show their group tint more clearly; selected tabs use richer shades, with readable titles in light and dark mode.
@@ -46,3 +46,7 @@ Refreshed the existing named palette with lilac, mint, sky blue, turquoise, rose
 Removed the blanket same-group exclusion in center-hover group detection. The source group handle remains a reorder target; a brief center dwell splits sibling tabs into a new pair using the existing naming prompt. Joining another custom group remains available. Regression coverage exercises General and custom groups, quick reordering, center grouping, overflow placement and document-specific context-menu routing.
 
 Document rename uses a native sheet prefilled with the filename stem. Invalid names are rejected and existing files are never overwritten. The open tab, active path, Markdown session URL, group last-used path, recent list and persistent workspace are updated. Collection copies, unsaved captures and missing files do not expose an actionable rename. Collection relinking is serialized in the background to keep file hashing off the UI thread; a failure is reported without pretending the history link succeeded. Filesystem tests cover extension retention, unsafe names, unchanged names, byte preservation and collision safety.
+
+### Stable tab drag zones
+
+Reordering previously crossed the target midpoint immediately, while grouping armed later at the same location and restored the target to its original slot. The competing thresholds caused the move-away/return effect. Reorder thresholds now sit at 20% and 80%, matching a central 60% grouping zone. Releasing in that zone before the group preview arms leaves the order unchanged. Native tests traverse the middle zone before and after dwell, assert a stationary target, and verify outer-edge reorder in both directions for General and custom groups.

@@ -216,8 +216,8 @@
     if (target >= 0) {
         NSRect rect = [self rectForTabAtIndex:target];
         // The center creates a pair; either edge remains a reorder target.
-        if (point.x < NSMinX(rect) + NSWidth(rect) * 0.28 ||
-            point.x > NSMaxX(rect) - NSWidth(rect) * 0.28) target = -1;
+        if (point.x < NSMinX(rect) + NSWidth(rect) * 0.20 ||
+            point.x > NSMaxX(rect) - NSWidth(rect) * 0.20) target = -1;
     }
     if (target != _groupHoverIndex) {
         _groupHoverIndex = target;

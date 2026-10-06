@@ -16,7 +16,7 @@ static void check_group_reorder(BOOL useGeneral) {
     NSRect first = [strip rectForTabAtIndex:0], second = [strip rectForTabAtIndex:1];
     NSRect third = [strip rectForTabAtIndex:2], outside = [strip rectForTabAtIndex:3];
     NSPoint start = NSMakePoint(NSMinX(first)+28, NSMidY(first));
-    NSPoint right = NSMakePoint(NSMidX(second)+8, start.y);
+    NSPoint right = NSMakePoint(NSMaxX(second)-NSWidth(second)*.10, start.y);
     [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,start)];
     [strip mouseDragged:mouse(window,NSEventTypeLeftMouseDragged,right)];
     expect(strip.isVisuallyReorderingTabs, @"grouped drag did not enable its moving preview");
@@ -37,12 +37,23 @@ static void check_group_reorder(BOOL useGeneral) {
     expect(!strip.isVisuallyReorderingTabs && NSEqualRects([strip visualRectForTabAtIndex:1],second),
            @"drop left stale preview geometry");
 
+    right=NSMakePoint(NSMidX(second),start.y);
+    [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,start)];
+    for (NSNumber* fraction in @[@.21,@.4,@.6,@.79]) {
+        NSPoint middle=NSMakePoint(NSMinX(second)+NSWidth(second)*fraction.doubleValue,start.y);
+        [strip mouseDragged:mouse(window,NSEventTypeLeftMouseDragged,middle)];
+        expect(NSEqualRects([strip visualRectForTabAtIndex:1],second),
+            @"target moved away while crossing the middle three fifths");
+    }
+    [strip mouseUp:mouse(window,NSEventTypeLeftMouseUp,right)];
+    expect(reader.movedToGroup==1 && reader.createdGroups==0,@"unarmed center release must leave order unchanged");
     [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,start)];
     [strip mouseDragged:mouse(window,NSEventTypeLeftMouseDragged,right)];
     [strip setValue:@(NSDate.timeIntervalSinceReferenceDate-1) forKey:@"groupHoverBegan"];
     [strip updateGroupDropForPoint:right sourceIndex:0];
     expect([[strip valueForKey:@"groupDropTabIndex"] integerValue] == 1,
         @"dwelling over a sibling center must preview a new group");
+    expect(NSEqualRects([strip visualRectForTabAtIndex:1],second),@"arming group preview moved the target tab");
     [strip mouseUp:mouse(window,NSEventTypeLeftMouseUp,right)];
     expect(reader.createdGroups == 1,@"sibling center drop must create a named pair");
     reader.createdGroups=0;
@@ -50,7 +61,7 @@ static void check_group_reorder(BOOL useGeneral) {
     first = [strip rectForTabAtIndex:0]; second = [strip rectForTabAtIndex:1];
     third = [strip rectForTabAtIndex:2];
     start = NSMakePoint(NSMinX(third)+28,NSMidY(third));
-    NSPoint left = NSMakePoint(NSMidX(first)-8,start.y);
+    NSPoint left = NSMakePoint(NSMinX(first)+NSWidth(first)*.10,start.y);
     [strip mouseDown:mouse(window,NSEventTypeLeftMouseDown,start)];
     [strip mouseDragged:mouse(window,NSEventTypeLeftMouseDragged,left)];
     expect(NSEqualRects([strip visualRectForTabAtIndex:0],NSOffsetRect(first,NSWidth(third)+kTabGap,0)) &&
