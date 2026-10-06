@@ -180,11 +180,11 @@ int main(void) {
         [host.contentView layoutSubtreeIfNeeded];
         NSTableView* table = (id)Find(history.view,NSTableView.class);
         NSDate* end = [NSDate dateWithTimeIntervalSinceNow:3];
-        while (table.numberOfRows != 2 && end.timeIntervalSinceNow > 0)
+        while (table.numberOfRows != 3 && end.timeIntervalSinceNow > 0)
             [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
-        Expect(table.numberOfRows == 2,"both versions load in the reader history");
-        NSView* newest = [history tableView:table viewForTableColumn:table.tableColumns.firstObject row:0];
-        NSView* older = [history tableView:table viewForTableColumn:table.tableColumns.firstObject row:1];
+        Expect(table.numberOfRows == 3,"both versions load in the reader history");
+        NSView* newest = [history tableView:table viewForTableColumn:table.tableColumns.firstObject row:1];
+        NSView* older = [history tableView:table viewForTableColumn:table.tableColumns.firstObject row:2];
         Expect(Badges(newest) == 1,"latest row has exactly one Latest pill");
         Expect(Badges(older) == 0,"older row never claims to be Latest");
         Expect(table.rowHeight <= 56,"compact version rows preserve history reading space");
@@ -195,7 +195,7 @@ int main(void) {
         Expect([actions itemWithTitle:@"Manage Collection…"].enabled &&
             ![actions itemWithTitle:@"Save a Copy…"].enabled,"menu availability follows selection");
         history.view.hidden = YES; history.view.hidden = NO;
-        Expect(table.numberOfRows == 2,"switching away from History preserves the loaded versions");
+        Expect(table.numberOfRows == 3,"switching away from History preserves the loaded versions");
         Expect(opens == 0,"loading and panel switching never opens a version implicitly");
         Expect(!host.visible,"history tests never show the app");
         NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_HISTORY_EVIDENCE"];
@@ -212,7 +212,7 @@ int main(void) {
         Expect(!Button(history.view,@"Find Document…").superview.hidden,"missing-source actions are visible without a modal");
         [Button(history.view,@"Save New Copy As…") performClick:nil];
         Expect([history.savedVersion isEqual:@"new"] && history.restoresLink,"Save New Copy restores link from latest version without selection");
-        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
         Expect(Await(^BOOL { return opens == 1; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"new.md"],
             "missing latest opens saved version without a prompt");
         [history menuNeedsUpdate:table.menu];
@@ -223,9 +223,10 @@ int main(void) {
         store.fixturePath = [root.path stringByAppendingPathComponent:@"Original.md"];
         [@"live edit" writeToFile:store.fixturePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         [table deselectAll:nil];
-        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
         Expect(Await(^BOOL { return opens == 2; }) && !archivedOpen && [openedPath isEqual:store.fixturePath],
             "Latest rechecks current link and opens on-disk original");
+        Expect(Await(^BOOL { return table.numberOfRows==2; }),"restoring source removes missing entry");
         Expect(!Button(history.view,@"Compare with Latest").enabled &&
             [actions itemWithTitle:@"Compare with Previous"].enabled,
             "latest selected disables self comparison while previous comparison stays reachable");
@@ -269,7 +270,14 @@ int main(void) {
         fprintf(stderr,"History geometry panel=%.0f table=%.0f clip=%.0f column=%.0f\n",
             NSWidth(history.view.bounds),NSWidth(table.bounds),
             NSWidth(table.enclosingScrollView.contentView.bounds),table.tableColumns.firstObject.width);
-        NSView* latestCell = [table viewAtColumn:0 row:0 makeIfNecessary:YES];
+        Expect(table.numberOfRows==3,"missing source remains a distinct history entry above saved copies");
+        NSView* missingCell=[table viewAtColumn:0 row:0 makeIfNecessary:YES];
+        Expect([[(NSTextField*)Identified(missingCell,@"HistoryVersionDate") stringValue] isEqual:@"Missing document"],"history explicitly marks the lost source");
+        [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        [history menuNeedsUpdate:table.menu];
+        Expect([table.menu itemWithTitle:@"Locate document…"]!=nil && ![table.menu itemWithTitle:@"Delete version…"],"missing entry offers recovery rather than snapshot deletion");
+        NSView* latestCell = [table viewAtColumn:0 row:1 makeIfNecessary:YES];
+        Expect([Identified(latestCell,@"CollectionLatestBadge").accessibilityLabel isEqual:@"Latest copy"],"newest saved version is Latest copy when source is missing");
         NSTextField* fullDate = (id)Identified(latestCell,@"HistoryVersionDate");
         Expect(fullDate && NSWidth(fullDate.bounds) >=
             [fullDate.stringValue sizeWithAttributes:@{NSFontAttributeName:fullDate.font}].width,

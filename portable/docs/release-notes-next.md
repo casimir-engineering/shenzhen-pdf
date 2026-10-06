@@ -14,3 +14,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - The left panel toggle stays at the left edge on the reader toolbar’s baseline. Document tools follow it; Groups sits at the right with a small separator.
 - Escape dismisses the top-right Groups menu before clearing an active document search. A second Escape returns to the previous panel.
 - Missing documents show a centered **Locate document** action. It and the tab’s recovery command open automatic search/manual selection directly, rather than only opening History. Recovery is omitted for available originals. Uncollected files can be searched by filename, with candidates clearly distinguished from verified hash matches.
+- History keeps a **Missing document** entry when the original is lost, and labels the newest saved version **Latest copy**. Reconnecting the original removes the missing entry and restores **Latest**.

@@ -203,10 +203,10 @@ BOOL SPDFCollectionVersionIsLatest(NSDictionary* document, NSDictionary* version
     [self setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
     return self;
 }
-- (NSSize)intrinsicContentSize { return NSMakeSize(49,20); }
+- (NSSize)intrinsicContentSize { NSTextField* title=(id)self.subviews.firstObject; return NSMakeSize(MAX(49,ceil(title.intrinsicContentSize.width)+16),20); }
 - (BOOL)isAccessibilityElement { return YES; }
 - (NSString*)accessibilityRole { return NSAccessibilityStaticTextRole; }
-- (NSString*)accessibilityLabel { return @"Latest saved version"; }
+- (NSString*)accessibilityLabel { return [(NSTextField*)self.subviews.firstObject stringValue]; }
 - (NSArray*)accessibilityChildren { return @[]; }
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
 - (void)drawRect:(NSRect)dirty {
@@ -217,3 +217,9 @@ BOOL SPDFCollectionVersionIsLatest(NSDictionary* document, NSDictionary* version
 }
 @end
 NSView* SPDFCollectionLatestBadge(void) { return [SPDFCollectionLatestBadgeView new]; }
+
+NSView* SPDFCollectionLatestCopyBadge(void) {
+    NSView* badge=SPDFCollectionLatestBadge();
+    [(NSTextField*)badge.subviews.firstObject setStringValue:@"Latest copy"];
+    [badge invalidateIntrinsicContentSize]; return badge;
+}

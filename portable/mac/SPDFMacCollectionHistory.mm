@@ -43,6 +43,7 @@
     BOOL _showsDocumentTitle;
     BOOL _storageLimited;
     BOOL _deletionPending;
+    BOOL _missingSource;
 }
 @synthesize showsDocumentTitle = _showsDocumentTitle;
 - (void)setShowsDocumentTitle:(BOOL)value { _showsDocumentTitle = value; _title.hidden = !value; }
@@ -177,6 +178,7 @@
             self->_title.stringValue = found[@"title"] ?: @"No protected history";
             self->_title.toolTip = found[@"path"];
             BOOL available = SPDFCollectionOriginalAvailable(found);
+            self->_missingSource = found != nil && !available;
             self->_recoveryActions.hidden = available || !versions.count;
             self->_status.stringValue = !versions.count ? @"No saved versions yet" :
                 available ? @"Original available · saved versions are read-only" :
@@ -184,19 +186,20 @@
             self->_restoringSelection = YES;
             [self->_table reloadData];
             if (selected) for (NSUInteger i = 0; i < versions.count; i++) if ([versions[i][@"id"] isEqual:selected])
-                [self->_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
+                [self->_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i+(self->_missingSource ? 1 : 0)] byExtendingSelection:NO];
             self->_restoringSelection = NO;
             [self updateActions];
         });
     });
 }
-- (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _versions.count; }
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return _versions.count+(_missingSource ? 1 : 0); }
 - (NSTableRowView*)tableView:(NSTableView*)table rowViewForRow:(NSInteger)row {
     (void)table; (void)row; return [SPDFHistoryVersionRow new];
 }
 - (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
     (void)table; (void)column;
-    NSDictionary* version = _versions[row];
+    BOOL missing = _missingSource && row==0;
+    NSDictionary* version = missing ? nil : _versions[row-(_missingSource ? 1 : 0)];
     NSDate* captured = [NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]];
     NSString* date = [NSDateFormatter localizedStringFromDate:captured
         dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterNoStyle];
@@ -204,19 +207,21 @@
         dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle];
     NSString* size = [NSByteCountFormatter stringFromByteCount:[version[@"size"] longLongValue]
         countStyle:NSByteCountFormatterCountStyleFile];
-    NSTextField* label = [NSTextField labelWithString:date];
+    NSTextField* label = [NSTextField labelWithString:missing ? @"Missing document" : date];
+    if (missing) label.textColor=NSColor.systemRedColor;
     label.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
     label.lineBreakMode = NSLineBreakByTruncatingTail;
     label.identifier = @"HistoryVersionDate";
-    NSTextField* clock = [NSTextField labelWithString:time];
+    NSTextField* clock = [NSTextField labelWithString:missing ? @"Original source unavailable" : time];
     clock.font = [NSFont systemFontOfSize:11]; clock.textColor = NSColor.secondaryLabelColor;
     NSView* spacer = [NSView new];
     // Dates retain a whole line even with always-visible scrollbars at 176pt.
-    NSStackView* title = [NSStackView stackViewWithViews:SPDFCollectionVersionIsLatest(_document,version)
-        ? @[clock,spacer,SPDFCollectionLatestBadge()] : @[clock,spacer]];
+    NSStackView* title = [NSStackView stackViewWithViews:!missing && SPDFCollectionVersionIsLatest(_document,version)
+        ? @[clock,spacer,_missingSource ? SPDFCollectionLatestCopyBadge() : SPDFCollectionLatestBadge()] : @[clock,spacer]];
     title.orientation = NSUserInterfaceLayoutOrientationHorizontal; title.spacing = 5;
     NSTextField* detail = [NSTextField labelWithString:[NSString stringWithFormat:@"%@%@ · %@",
         [version[@"keep"] boolValue] ? @"★ " : @"",version[@"reason"] ?: @"Saved version",size]];
+    if (missing) detail.stringValue=@"Locate document to reconnect";
     detail.font = [NSFont systemFontOfSize:10]; detail.textColor = NSColor.secondaryLabelColor;
     detail.lineBreakMode = NSLineBreakByTruncatingTail;
     NSStackView* lines = [NSStackView stackViewWithViews:@[label,title,detail]];
@@ -224,7 +229,7 @@
     lines.alignment = NSLayoutAttributeLeading; lines.spacing = 1;
     NSTableCellView* cell = [NSTableCellView new]; lines.translatesAutoresizingMaskIntoConstraints = NO;
     [cell addSubview:lines];
-    cell.toolTip = [NSString stringWithFormat:@"%@ · %@ · %@",date,time,detail.stringValue];
+    cell.toolTip = missing ? @"Missing document · Original source unavailable" : [NSString stringWithFormat:@"%@ · %@ · %@",date,time,detail.stringValue];
     cell.accessibilityLabel = cell.toolTip;
     [NSLayoutConstraint activateConstraints:@[
         [lines.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:5],
@@ -236,7 +241,7 @@
     return cell;
 }
 - (NSDictionary*)selectedVersion {
-    NSInteger row = _table.selectedRow;
+    NSInteger row = _table.selectedRow-(_missingSource ? 1 : 0);
     return row >= 0 && row < (NSInteger)_versions.count ? _versions[row] : nil;
 }
 - (void)updateActions {
@@ -253,7 +258,7 @@
     _keepButton.title = [version[@"keep"] boolValue] ? @"Stop keep forever" : @"Keep forever";
     _keepButton.accessibilityLabel = _keepButton.title;
     _keepButton.state = [version[@"keep"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
-    [_actionsMenu itemAtIndex:1].enabled = version != nil && !encrypted && _table.selectedRow+1 < (NSInteger)_versions.count;
+    [_actionsMenu itemAtIndex:1].enabled = version != nil && !encrypted && _table.selectedRow-(_missingSource ? 1 : 0)+1 < (NSInteger)_versions.count;
     [_actionsMenu itemAtIndex:2].enabled = version != nil;
     [_actionsMenu itemAtIndex:3].enabled = YES;
 }
@@ -272,6 +277,7 @@
             self->_document = current; self->_recoveryActions.hidden = SPDFCollectionOriginalAvailable(current);
             self->_status.stringValue = error.localizedDescription ?: (SPDFCollectionOriginalAvailable(current) ?
                 @"Original available · saved versions are read-only" : @"Original missing · saved versions available");
+            if (self->_missingSource == SPDFCollectionOriginalAvailable(current)) [self reload];
             if (URL) self->_open(URL.path,!original);
         });
     });
@@ -368,6 +374,11 @@
 - (void)menuNeedsUpdate:(NSMenu*)menu {
     [menu removeAllItems];
     NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+    if (_missingSource && row==0) {
+        NSMenuItem* locate=[menu addItemWithTitle:@"Locate document…" action:@selector(findDocument:) keyEquivalent:@""];
+        locate.target=self; return;
+    }
+    row-=(_missingSource ? 1 : 0);
     if (row < 0 || row >= (NSInteger)_versions.count) return;
     NSMenuItem* reveal = [[NSMenuItem alloc] initWithTitle:@"Show in Explorer" action:@selector(showVersionInExplorer:) keyEquivalent:@""];
     reveal.target = self; reveal.representedObject = _versions[row]; [menu addItem:reveal];
