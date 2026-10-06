@@ -98,7 +98,11 @@
 }
 - (void)fadeTabScrollEdges {
     CGContextRef graphics=NSGraphicsContext.currentContext.CGContext;
-    [NSGraphicsContext saveGraphicsState]; NSRectClip([self tabViewportRect]);
+    // Fade tab content only: group underlines at y=4..6 must remain continuous
+    // beneath both overflow badges, including the gradient beside each badge.
+    NSRect fadeViewport = [self tabViewportRect];
+    fadeViewport.origin.y = 6; fadeViewport.size.height = MAX(0,NSHeight(self.bounds)-6);
+    [NSGraphicsContext saveGraphicsState]; NSRectClip(fadeViewport);
     CGContextSetBlendMode(graphics,kCGBlendModeDestinationOut);
     CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
     CGFloat colors[]={0,0,0,1,0,0,0,0}, stops[]={0,1};

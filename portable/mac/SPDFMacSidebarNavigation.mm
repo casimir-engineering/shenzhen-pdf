@@ -105,7 +105,7 @@ static NSString* Symbol(NSInteger mode) {
         collapse.ignoresMultiClick=NO; [collapse setButtonType:NSButtonTypeMomentaryChange];
         collapse.target = target; collapse.action = action; collapse.bordered = NO;
         _collapse = collapse; _collapse.toolTip = @"Hide side panel";
-        _collapse.accessibilityLabel = @"Hide side panel"; [self addSubview:_collapse];
+        _collapse.accessibilityLabel = @"Hide side panel"; [self addSubview:_collapse]; self.needsLayout = YES;
     }
 }
 - (NSArray<SPDFSidebarNavigationRow*>*)visualRows {
@@ -164,8 +164,11 @@ static NSString* Symbol(NSInteger mode) {
 - (void)layout {
     [super layout];
     NSArray* rows = [self visualRows];
-    CGFloat width = MIN(28, floor((NSWidth(self.bounds)-16-(_collapse ? 28 : 0))/MAX(1,rows.count)));
-    CGFloat x = _collapse ? 28 : 0;
+    NSUInteger toolCount = rows.count ? rows.count - 1 : 0; // Groups stays anchored at the trailing edge.
+    CGFloat left = _collapse ? 36 : 0;
+    CGFloat right = NSWidth(self.bounds)-36;
+    CGFloat width = MIN(28, floor(MAX(0,right-left)/MAX(1,toolCount)));
+    CGFloat x = left + (right-left-width*toolCount)/2;
     _collapse.frame = NSMakeRect(0,4,28,RowHeight);
     for (SPDFSidebarNavigationRow* row in rows) {
         if (row.mode == SPDFSidebarModeGroups) {
@@ -180,6 +183,7 @@ static NSString* Symbol(NSInteger mode) {
     NSRectFill(NSMakeRect(-8,35,NSWidth(self.bounds)+16,.5));
     SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
     NSRectFill(NSMakeRect(NSMinX(group.frame)-8,10,.5,16));
+    if (_collapse) NSRectFill(NSMakeRect(NSMaxX(_collapse.frame)+8,10,.5,16));
     if (self.spdf_selectedSidebarMode != SPDFSidebarModeGroups) {
         NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
         [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,45,MAX(0,NSWidth(self.bounds)-8),16)
