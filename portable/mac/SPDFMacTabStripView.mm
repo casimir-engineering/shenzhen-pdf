@@ -181,11 +181,11 @@
         if (index == sourceIndex || (withinGroup && self.tabs[(NSUInteger)index].group != sourceGroup)) continue;
         NSRect tabRect = [self rectForTabAtIndex:index];
         if (NSIsEmptyRect(tabRect)) continue;
-        if (index < sourceIndex && point.x < NSMidX(tabRect)) {
+        if (index < sourceIndex && point.x < NSMinX(tabRect) + NSWidth(tabRect)*0.20) {
             targetIndex = index;
             break;
         }
-        if (index > sourceIndex && point.x > NSMidX(tabRect)) targetIndex = index;
+        if (index > sourceIndex && point.x > NSMaxX(tabRect) - NSWidth(tabRect)*0.20) targetIndex = index;
     }
     return targetIndex;
 }
@@ -365,6 +365,11 @@
             sourceIndex:_dragSourceTabIndex atPoint:point]) {
         [self resetTabDragTracking];
         return;
+    }
+    // The middle three fifths are a grouping dead zone. Releasing before
+    // its preview is armed leaves the order untouched, just as the preview did.
+    if (_draggingTab && !_detachedTabDrag && _groupHoverIndex >= 0) {
+        [self resetTabDragTracking]; return;
     }
     if (_draggingTab && !_detachedTabDrag && [self hasTabGroups] && _dragSourceTabIndex >= 0) {
         SPDFTabGroup* destination = [self groupAtPoint:point headerOnly:NO];

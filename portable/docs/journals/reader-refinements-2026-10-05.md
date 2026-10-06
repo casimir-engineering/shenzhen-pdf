@@ -296,3 +296,7 @@ Used the existing group colors as document-folder markers: more recognizable pas
 ## Restore tab pairing and add file rename — 2026-10-06
 
 Root cause: center-hover detection discarded all sibling tabs before dwell detection, explicitly turning every same-group drag into a reorder. Restored sibling center pairing without changing quick/edge reorder or other-group joining. Extended native interaction tests to cover General/custom sibling pairing and overflow positions. Added a native Rename Document sheet and no-overwrite filesystem operation; update live path/state without reopening the document. Collection hash verification runs on a lazy serial background queue, preserving UI response and rename order. Added filesystem safety tests. No user app was launched, quit or captured.
+
+## Stable tab drag zones — 2026-10-06
+
+Confirmed two competing rules: midpoint crossing moved a sibling immediately, then center-hover grouping suppressed that movement after its delay. Aligned grouping and reordering boundaries to 20%/80%, leaving the middle 60% stationary. An unarmed center release cancels without reordering. Kept the existing group preview and naming flow. Headless tests cover middle-zone traversal, pre/post-dwell target geometry, early release, and left/right edge reorder in both General and custom groups.
