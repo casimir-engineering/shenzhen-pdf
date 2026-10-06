@@ -9,6 +9,7 @@ typedef void (^SPDFCollectionNavigateHandler)(NSDictionary* document, NSDictiona
 - (instancetype)initWithStore:(SPDFMacCollectionStore*)store open:(SPDFCollectionOpenHandler)open;
 - (void)showDocumentID:(NSString*)documentID query:(NSString*)query;
 @end
+// Pass a Collection ID for hash matching, or an absolute missing path for filename candidates.
 void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* documentID,
                                     NSWindow* parent, void (^preview)(NSString* path),
                                     void (^completion)(NSString* path));

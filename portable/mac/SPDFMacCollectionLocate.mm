@@ -4,6 +4,7 @@
 @property(nonatomic, copy) void (^onClose)(void);
 @property(nonatomic) SPDFMacCollectionStore* store;
 @property(nonatomic) NSString* documentID;
+@property(nonatomic) NSString* missingPath;
 @property(nonatomic, copy) void (^completion)(NSString*);
 @property(nonatomic, copy) void (^preview)(NSString*);
 @property(nonatomic) NSTableView* table;
@@ -18,12 +19,13 @@
     (void)table; (void)column; NSDictionary* candidate = _candidates[(NSUInteger)row];
     NSString* date = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:[candidate[@"modifiedAt"] doubleValue]]
         dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
-    return [NSString stringWithFormat:@"%@\n%@ · %@ · Exact content match", candidate[@"path"], date,
-        [NSByteCountFormatter stringFromByteCount:[candidate[@"size"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]];
+    return [NSString stringWithFormat:@"%@\n%@ · %@ · %@", candidate[@"path"], date,
+        [NSByteCountFormatter stringFromByteCount:[candidate[@"size"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile], self.documentID ? @"Exact content match" : @"Same filename — check before linking"];
 }
 - (void)windowWillClose:(NSNotification*)note { (void)note; self.cancelled = YES; if (_onClose) _onClose(); }
 - (void)cancel:(id)sender { (void)sender; self.cancelled = YES; [self close]; }
 - (void)linkPath:(NSString*)path allowMismatch:(BOOL)mismatch {
+    if (!self.documentID) { self.cancelled=YES; self.completion(path); [self close]; return; }
     NSError* error = nil;
     if (![_store linkDocumentID:_documentID toPath:path allowMismatch:mismatch error:&error]) {
         [self.window presentError:error]; return;
@@ -44,6 +46,7 @@
     panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO;
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
         if (result != NSModalResponseOK) return;
+        if (!self.documentID) { [self linkPath:panel.URL.path allowMismatch:NO]; return; }
         NSError* error = nil;
         if ([self.store linkDocumentID:self.documentID toPath:panel.URL.path allowMismatch:NO error:&error]) {
             self.completion(panel.URL.path); [self close]; return;
@@ -67,11 +70,29 @@
     }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError* error = nil;
-        NSArray* candidates = [self.store locateCandidatesForDocumentID:self.documentID roots:roots
+        NSArray* candidates;
+        if (self.documentID) candidates = [self.store locateCandidatesForDocumentID:self.documentID roots:roots
             cancelled:^BOOL { return self.cancelled || generation != self.searchGeneration; } error:&error];
+        else {
+            NSMutableArray* names=[NSMutableArray array]; NSUInteger checked=0;
+            for (NSURL* root in roots) {
+                NSDirectoryEnumerator* files=[NSFileManager.defaultManager enumeratorAtURL:root includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLContentModificationDateKey,NSURLFileSizeKey]
+                    options:NSDirectoryEnumerationSkipsHiddenFiles|NSDirectoryEnumerationSkipsPackageDescendants errorHandler:nil];
+                for (NSURL* file in files) {
+                    if (self.cancelled || generation!=self.searchGeneration || ++checked>500000) break;
+                    if (![file.lastPathComponent isEqual:self.missingPath.lastPathComponent] || [self.store isArchivePath:file.path]) continue;
+                    NSDictionary* values=[file resourceValuesForKeys:@[NSURLIsRegularFileKey,NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil];
+                    if ([values[NSURLIsRegularFileKey] boolValue]) [names addObject:@{@"path":file.path,@"size":values[NSURLFileSizeKey] ?: @0,
+                        @"modifiedAt":@([values[NSURLContentModificationDateKey] timeIntervalSince1970])}];
+                }
+                if (self.cancelled || generation!=self.searchGeneration || checked>500000) break;
+            }
+            candidates=[names sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"modifiedAt" ascending:YES]]];
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self.cancelled || generation != self.searchGeneration) return;
             self.candidates = candidates ?: @[]; [self.table reloadData];
+            if (!self.documentID) { self.status.stringValue=[NSString stringWithFormat:@"%lu filename candidates, oldest to newest. These are not verified content matches. Choose manually if the document was renamed.",(unsigned long)candidates.count]; return; }
             self.status.stringValue = [NSString stringWithFormat:@"%lu exact matches · oldest to newest. Protected hash is the latest saved version. Unavailable, private and unmounted locations were not searched.%@",
                 (unsigned long)candidates.count, error ? [@"\n" stringByAppendingString:error.localizedDescription] : @""];
         });
@@ -88,7 +109,7 @@ void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* do
         backing:NSBackingStoreBuffered defer:NO];
     window.title = @"Locate Original"; window.releasedWhenClosed = NO;
     SPDFCollectionLocator* controller = [[SPDFCollectionLocator alloc] initWithWindow:window];
-    controller.store = store; controller.documentID = documentID; controller.completion = completion; controller.preview = preview;
+    controller.store = store; controller.documentID = documentID.isAbsolutePath ? nil : documentID; controller.missingPath=documentID.isAbsolutePath ? documentID : nil; controller.completion = completion; controller.preview = preview;
     controller.candidates = @[]; [controllers addObject:controller];
     window.delegate = controller;
     __weak SPDFCollectionLocator* weakController = controller;
@@ -102,6 +123,7 @@ void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* do
         dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle];
     controller.status = [NSTextField wrappingLabelWithString:[NSString stringWithFormat:
         @"Find an exact match for the version protected %@. SHA-256: %@\nSearch accessible local files or choose manually. No result is linked automatically.", date, reference[@"hash"] ?: @"unavailable"]];
+    if (!controller.documentID) controller.status.stringValue=@"Search accessible local files for the same filename, or choose a file manually. No saved content hash is available, so review candidates before choosing one.";
     [root addArrangedSubview:controller.status];
     NSScrollView* scroll = [[NSScrollView alloc] init]; scroll.hasVerticalScroller = YES;
     controller.table = [[NSTableView alloc] init]; controller.table.headerView = nil;

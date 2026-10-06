@@ -1,6 +1,5 @@
 #import "SPDFMacSidebarHitProbe.h"
 #import "SPDFMacReadmeFixtures.h"
-// PDF canvas and minimap; no app launch, user configuration or visible window.
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacTabGroups.h"
@@ -432,6 +431,7 @@ static NSURL* Fixture(NSString* root) {
 }
 #import "SPDFMacImageColorChoiceChecks.h"
 #import "SPDFMacRestoredFindPanelChecks.h"
+#import "SPDFMacMissingDocumentChecks.h"
 int main(int argc,const char* argv[]) {
     setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
@@ -448,7 +448,7 @@ int main(int argc,const char* argv[]) {
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
             if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
-            CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader); CheckRestoredFindPanel(reader);
+            CheckMissingDocumentView(); CheckMissingDocumentRecovery(reader,root); CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader); CheckRestoredFindPanel(reader);
             [reader checkResponsivePanels]; [reader checkRepeatedMapClicks]; [reader checkBatchChanges];
             for (NSNumber* width in @[@1280,@880,@640,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-%@.png",dark.boolValue ? @"dark" : @"light",width];
