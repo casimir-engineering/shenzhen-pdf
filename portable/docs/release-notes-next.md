@@ -8,6 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- The Find panel’s **Regex** checkbox responds reliably across its box and label, including repeated clicks. A small additional gap separates it from the search field.
+
 - Renaming a read-only document now offers **Save As…**. The writable copy replaces the old tab and becomes the source for its existing Collection history; the original file is left on disk and its old history link is removed.
 - Opening ⌘K with an empty search lists open documents by last viewed, newest first. Typing retains the existing search ranking. Viewing times persist across launches.
 
@@ -59,3 +61,7 @@ Reordering previously crossed the target midpoint immediately, while grouping ar
 Rename checks source and parent-folder write access before presenting the name editor, with a second permission-error fallback for access changes during rename. Save As copies the readable source or its read-only working copy through the existing atomic save helper, makes the output writable and rebases the existing Collection record before replacing the tab. The source alias is removed in the same manifest transaction as the new binding. Cancellation or copy/rebase failure retains the old tab; a completed copy can remain on disk if relinking fails. The source itself is never deleted.
 
 Tab activation records lastViewedAt, preserved in tab copies and YAML session serialization. The empty palette sorts by this timestamp before its existing fallback ordering. Query-bearing results do not use this new key. Tests cover preserved history identity and version count, forgotten source alias, failed-rebase safety, timestamp persistence, empty-query recency and unchanged typed-query ordering.
+
+### Regex click tracking
+
+A headless reader fixture reproduced presses reaching the Regex button and its trackable native cell without changing state or sending an action. Regex now keeps native checkbox drawing, keyboard and accessibility behavior but tracks mouse press/release explicitly, cancels outside releases and accepts repeated clicks. Its 24-point control height keeps the text and box usable; the options-row constraint adds only two points of spacing (4 → 6). Focused native checks exercise nine locations across the control and native performClick activation.

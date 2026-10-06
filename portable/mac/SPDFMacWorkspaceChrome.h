@@ -6,3 +6,5 @@
 - (void)revealWorkspaceFind;
 - (void)showGroupsSidebar:(id)sender;
 @end
+
+NSButton* SPDFWorkspaceRegexCheckbox(id target,SEL action);

@@ -2717,7 +2717,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                              forOrientation:NSLayoutConstraintOrientationHorizontal];
     [_searchField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
-    _findRegexCheckbox = [NSButton checkboxWithTitle:@"Regex" target:self action:@selector(toggleFindRegex:)];
+    _findRegexCheckbox = SPDFWorkspaceRegexCheckbox(self,@selector(toggleFindRegex:));
     [self styleToolbarTextButton:_findRegexCheckbox];
     _findRegexCheckbox.translatesAutoresizingMaskIntoConstraints = NO;
     [_findRegexCheckbox.widthAnchor constraintEqualToConstant:68].active = YES;

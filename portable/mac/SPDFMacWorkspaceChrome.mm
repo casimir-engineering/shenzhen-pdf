@@ -248,7 +248,8 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [_searchField.leadingAnchor constraintEqualToAnchor:state.searchControls.leadingAnchor],
         [_searchField.trailingAnchor constraintEqualToAnchor:state.searchControls.trailingAnchor],
         [_searchField.heightAnchor constraintEqualToConstant:30],
-        [options.topAnchor constraintEqualToAnchor:_searchField.bottomAnchor constant:4],
+        [options.topAnchor constraintEqualToAnchor:_searchField.bottomAnchor constant:6],
+        [_findRegexCheckbox.heightAnchor constraintEqualToConstant:24],
         [options.leadingAnchor constraintEqualToAnchor:state.searchControls.leadingAnchor],
         [options.trailingAnchor constraintLessThanOrEqualToAnchor:state.searchControls.trailingAnchor]]];
     _sidebarScrollBelowModeConstraint.constant = 82;
