@@ -21,7 +21,7 @@
     NSColor* accent = spdf_tab_group_accent(tab.group.colorName);
     NSColor* fill = missing ? [NSColor.systemRedColor colorWithAlphaComponent:selected ? 0.36 : 0.22]
         : selected ? spdf_tab_group_selected_fill(tab.group.colorName, dark)
-        : [accent colorWithAlphaComponent:hovered ? 0.16 : 0.06];
+        : [accent colorWithAlphaComponent:hovered ? 0.27 : 0.16];
     [fill setFill];
     [[NSBezierPath bezierPathWithRoundedRect:tabRect xRadius:6 yRadius:6] fill];
 

@@ -8,6 +8,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Brighter tab-group colors replace the muted palette. Inactive tabs show their group tint more clearly; selected tabs use richer shades, with readable titles in light and dark mode.
+
 - Icons retain their natural proportions throughout reader toolbars, sidebar navigation, group controls and Collection buttons, without changing click targets.
 
 - ⌘K matches multiple words across open-document names and paths in any order. Exact document names rank first, followed by filename matches and then folder context—for example, “assembly R2” finds “Assembly guide” inside “Original R2”.
@@ -31,3 +33,7 @@ Open-document palette matching requires every whitespace-separated query term, w
 ### Proportional icon drawing
 
 Custom chrome drawing now shares a centered aspect-fit geometry helper. Previously several SF Symbols were stretched into square destinations, including the sidebar, toolbar, group picker, group visibility action and Collection controls; segmented toolbar drawing only preserved proportions for two-segment controls. All these paths now fit the natural image size inside the existing slot. Native image views already use proportional scaling. No document-rendering path or launch work changed. Tests cover actual wide/tall symbols across 10–24-point slots, centering, containment and unchanged interaction behavior.
+
+### Brighter tab-group palette
+
+Refreshed the existing named palette with lilac, mint, sky blue, turquoise, rose, peach and golden accents. Increased inactive-tab tint from 6% to 16%, hover tint from 16% to 27%, and group-pill tint from 16% to 24%. Selected fills retain at least 4.5:1 black/white title contrast in the existing tests. Green and Teal now have distinct selected fills. Orange was tuned to preserve the separate pale Collection-copy outline. Names, persisted group color choices, dimensions and interactions are unchanged. Native light/dark fixture renders and group model/integration/interaction tests pass.
