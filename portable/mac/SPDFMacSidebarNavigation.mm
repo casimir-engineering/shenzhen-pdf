@@ -171,12 +171,17 @@ static NSString* Symbol(NSInteger mode) {
         if (row.mode == SPDFSidebarModeGroups) x += 16;
     }
     _collapse.frame = NSMakeRect(NSWidth(self.bounds)-28,8,28,28);
+    if (_collapse && rows.count) {
+        NSView* group = rows.firstObject;
+        NSRect groupFrame = group.frame;
+        group.frame = _collapse.frame; _collapse.frame = groupFrame;
+    }
 }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty; [[NSColor.labelColor colorWithAlphaComponent:.13] setFill];
     NSRectFill(NSMakeRect(-8,43,NSWidth(self.bounds)+16,.5));
     SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
-    NSRectFill(NSMakeRect(NSMaxX(group.frame)+7,14,.5,16));
+    NSRectFill(NSMakeRect(NSMaxX(_collapse ? _collapse.frame : group.frame)+7,14,.5,16));
     if (self.spdf_selectedSidebarMode != SPDFSidebarModeGroups) {
         NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
         [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,53,MAX(0,NSWidth(self.bounds)-8),16)
