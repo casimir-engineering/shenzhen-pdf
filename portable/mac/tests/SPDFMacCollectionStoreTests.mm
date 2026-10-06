@@ -113,6 +113,11 @@ int main(int argc,const char* argv[]) {
         Expect(@"locate hashes exact full bytes and sorts old to new",located.count==3 && [[located[0][@"path"] stringByResolvingSymlinksInPath] isEqual:match1.stringByResolvingSymlinksInPath] && [[located[1][@"path"] stringByResolvingSymlinksInPath] isEqual:match2.stringByResolvingSymlinksInPath]);
         Expect(@"manual mismatch requires confirmation",![store linkDocumentID:docID toPath:twin allowMismatch:NO error:nil]);
         Expect(@"exact relink succeeds",[store linkDocumentID:docID toPath:match1 allowMismatch:NO error:nil]);
+        NSUInteger historyCount=[store versionsForDocumentID:docID].count;
+        Expect(@"Save As rebases the existing history",[store rebaseDocumentID:docID toPath:match2 forgettingPath:match1 error:nil]);
+        Expect(@"old read-only source is forgotten",[store documentForPath:match1]==nil);
+        Expect(@"new source retains history identity and all backups",[[store documentForPath:match2][@"id"] isEqual:docID] && [store versionsForDocumentID:docID].count==historyCount);
+        Expect(@"failed rebase keeps the live binding",![store rebaseDocumentID:docID toPath:[sandbox stringByAppendingPathComponent:@"absent.pdf"] forgettingPath:match2 error:nil] && [[store documentForPath:match2][@"id"] isEqual:docID]);
         // Linked asset-only edits create a version even when Markdown source hash is unchanged.
         NSString* image=[sandbox stringByAppendingPathComponent:@"figure.svg"];
         Write(image,@"<svg>old</svg>"); NSString* assetDoc=[sandbox stringByAppendingPathComponent:@"Assets.md"];
