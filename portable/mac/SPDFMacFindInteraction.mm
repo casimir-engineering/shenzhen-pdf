@@ -55,6 +55,7 @@ static char previousPanelKey;
 - (BOOL)documentEscapeKeyDown:(NSEvent*)event {
     NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
+    if ([_tabStrip dismissGroupPickerIfShown]) return YES;
     if (![self hasActiveDocument] || _presentationMode) return NO;
     BOOL hasActiveSearch = _searchField.stringValue.length > 0 || _findSearchInProgress || _findMatches.count > 0;
     if (!hasActiveSearch && !objc_getAssociatedObject(self, &previousPanelKey)) return NO;

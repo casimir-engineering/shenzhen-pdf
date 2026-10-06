@@ -15,6 +15,13 @@
 @implementation FindWindow
 - (NSWindowStyleMask)styleMask { return [super styleMask] | (self.simulatesFullscreen ? NSWindowStyleMaskFullScreen : 0); }
 @end
+@interface FindGroupPickerProbe : NSView
+@property BOOL shown;
+- (BOOL)dismissGroupPickerIfShown;
+@end
+@implementation FindGroupPickerProbe
+- (BOOL)dismissGroupPickerIfShown { BOOL shown=self.shown; self.shown=NO; return shown; }
+@end
 @interface FindProbe : ShenzhenMacDelegate
 @property NSObject* tabIdentity;
 @property NSUInteger clears;
@@ -22,6 +29,7 @@
 @property NSUInteger saves;
 @property NSInteger direction;
 - (void)seedMatches;
+- (void)openGroupPicker;
 - (void)seedMode:(NSInteger)mode visible:(BOOL)visible;
 - (NSInteger)mode;
 - (BOOL)visible;
@@ -33,6 +41,7 @@
 - (void)setFullscreen:(BOOL)fullscreen presentation:(BOOL)presentation;
 @end
 @implementation FindProbe
+- (void)openGroupPicker { FindGroupPickerProbe* picker=[FindGroupPickerProbe new]; picker.shown=YES; _tabStrip=(id)picker; }
 - (instancetype)init {
     if ((self = [super init])) {
         _window = (id)[[FindWindow alloc] initWithContentRect:NSMakeRect(0,0,500,300)
@@ -133,7 +142,10 @@ int main(int argc, const char* argv[]) {
             Check([reader documentTypeToSearchKeyDown:Key(@"字",0)],@"typing in a passive view starts Find");
             Check(reader.mode == SPDFSidebarModeSearch && reader.visible && [reader.query isEqual:@"字"],@"Find is revealed with typed text");
             [reader revealWorkspaceFind]; [reader editQuery:@"more typing"];
-            Check([reader documentEscapeKeyDown:escape],@"Escape dismisses active Find");
+            [reader openGroupPicker];
+            Check([reader documentEscapeKeyDown:escape] && [reader.query isEqual:@"more typing"] && reader.clears==0 && reader.mode==SPDFSidebarModeSearch,
+                @"first Escape dismisses Groups before touching the search or panel");
+            Check([reader documentEscapeKeyDown:escape],@"next Escape dismisses active Find");
             Check(reader.mode == mode.integerValue && reader.visible == visible.boolValue,@"Escape restores exact preceding panel/visibility");
             Check(reader.query.length == 0 && reader.clears == 1,@"Escape clears query and highlights once");
             Check(![reader documentEscapeKeyDown:escape],@"repeated Escape has no stale return state");
