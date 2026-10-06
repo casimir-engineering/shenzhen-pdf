@@ -115,6 +115,13 @@
     NSMenuItem* showInFolder = [menu addItemWithTitle:@"Show in Folder" action:@selector(tabContextShowInFolder:)
                                         keyEquivalent:@""];
     showInFolder.target = self; showInFolder.representedObject = indexNumber;
+    NSMenuItem* rename = [menu addItemWithTitle:@"Rename Document…"
+        action:NSSelectorFromString(@"renameDocumentFromTab:") keyEquivalent:@""];
+    rename.target=self.reader; rename.representedObject=tabPath;
+    SPDFDocumentTab* document=self.tabs[(NSUInteger)tabIndex];
+    rename.enabled=!document.missingFile && !document.unsavedPastedImage && !SPDFMacPathIsCollectionArchive(tabPath);
+    if (!rename.enabled) rename.action=nil;
+    spdf_set_menu_item_system_symbol(rename,@"pencil");
     NSMenuItem* copy = [menu addItemWithTitle:@"Copy Document" action:@selector(tabContextCopyFile:) keyEquivalent:@""];
     copy.target = self; copy.representedObject = indexNumber;
     NSMenuItem* copyTitle = [menu addItemWithTitle:@"Copy Title" action:@selector(tabContextCopyTitle:) keyEquivalent:@""];

@@ -8,6 +8,9 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Drag a tab onto another tab in the same group and pause briefly to create a new group, with its name ready to edit. Quick drags and edge drops still reorder tabs.
+- **Rename Document…** is now available in the tab context menu. It renames the file in its existing folder, preserves its extension and open reading state, and updates the Collection source link.
+
 - Brighter tab-group colors replace the muted palette. Inactive tabs show their group tint more clearly; selected tabs use richer shades, with readable titles in light and dark mode.
 
 - Icons retain their natural proportions throughout reader toolbars, sidebar navigation, group controls and Collection buttons, without changing click targets.
@@ -37,3 +40,9 @@ Custom chrome drawing now shares a centered aspect-fit geometry helper. Previous
 ### Brighter tab-group palette
 
 Refreshed the existing named palette with lilac, mint, sky blue, turquoise, rose, peach and golden accents. Increased inactive-tab tint from 6% to 16%, hover tint from 16% to 27%, and group-pill tint from 16% to 24%. Selected fills retain at least 4.5:1 black/white title contrast in the existing tests. Green and Teal now have distinct selected fills. Orange was tuned to preserve the separate pale Collection-copy outline. Names, persisted group color choices, dimensions and interactions are unchanged. Native light/dark fixture renders and group model/integration/interaction tests pass.
+
+### Same-group drag grouping and document rename
+
+Removed the blanket same-group exclusion in center-hover group detection. The source group handle remains a reorder target; a brief center dwell splits sibling tabs into a new pair using the existing naming prompt. Joining another custom group remains available. Regression coverage exercises General and custom groups, quick reordering, center grouping, overflow placement and document-specific context-menu routing.
+
+Document rename uses a native sheet prefilled with the filename stem. Invalid names are rejected and existing files are never overwritten. The open tab, active path, Markdown session URL, group last-used path, recent list and persistent workspace are updated. Collection copies, unsaved captures and missing files do not expose an actionable rename. Collection relinking is serialized in the background to keep file hashing off the UI thread; a failure is reported without pretending the history link succeeded. Filesystem tests cover extension retention, unsafe names, unchanged names, byte preservation and collision safety.
