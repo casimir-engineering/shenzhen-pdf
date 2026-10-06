@@ -15,6 +15,7 @@
     void (^_pendingActivationCompletion)(BOOL, NSError*);
 }
 
+- (void)relocateDocumentToURL:(NSURL*)URL { _documentURL = [URL copy]; }
 - (instancetype)initWithDocumentURL:(NSURL*)URL {
     return [self initWithDocumentURL:URL fontScale:1.0];
 }

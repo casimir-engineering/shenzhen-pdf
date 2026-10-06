@@ -292,3 +292,7 @@ Audited custom NSImage drawing in app chrome. Replaced fixed square destination 
 ## Brighter tabs — 2026-10-06
 
 Used the existing group colors as document-folder markers: more recognizable pastel accents and visible inactive tints, with richer selected fills. The reading canvas stays visually quiet and layout is unchanged. Native light/dark fixture renders were inspected. Contrast/model/integration checks passed; the first render check caught the new Orange selected fill becoming too close to the Collection-copy rim, so Orange was adjusted before the complete suite passed.
+
+## Restore tab pairing and add file rename — 2026-10-06
+
+Root cause: center-hover detection discarded all sibling tabs before dwell detection, explicitly turning every same-group drag into a reorder. Restored sibling center pairing without changing quick/edge reorder or other-group joining. Extended native interaction tests to cover General/custom sibling pairing and overflow positions. Added a native Rename Document sheet and no-overwrite filesystem operation; update live path/state without reopening the document. Collection hash verification runs on a lazy serial background queue, preserving UI response and rename order. Added filesystem safety tests. No user app was launched, quit or captured.

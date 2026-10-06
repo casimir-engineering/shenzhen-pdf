@@ -23,6 +23,8 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 
 @interface SPDFMacMarkdownSession : NSObject
 @property(nonatomic, readonly, copy) NSURL* documentURL;
+// Same-directory file rename; retain the current rendered pages and reading position.
+- (void)relocateDocumentToURL:(NSURL*)URL;
 @property(nonatomic, readonly) NSView* rootView;
 @property(nonatomic, weak, nullable) id<SPDFMacUIReader> reader;
 @property(nonatomic, readonly, nullable) NSTextView* textView;

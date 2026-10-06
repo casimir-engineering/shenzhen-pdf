@@ -208,10 +208,10 @@
     NSInteger target = [self tabIndexAtPoint:point];
     SPDFTabGroup* sourceGroup = source >= 0 && source < (NSInteger)self.tabs.count
                                    ? self.tabs[(NSUInteger)source].group : nil;
-    // Sliding within an existing group is always a reorder, even while paused
-    // over a sibling or the group's own handle. A join would append instead.
+    // The source handle remains a reorder target; dwelling over a sibling
+    // center can still split the pair into a new named group.
     if (sourceGroup && _groupDropGroup == sourceGroup) _groupDropGroup = nil;
-    if (target == source || (sourceGroup && target >= 0 && self.tabs[(NSUInteger)target].group == sourceGroup))
+    if (target == source)
         target = -1;
     if (target >= 0) {
         NSRect rect = [self rectForTabAtIndex:target];
@@ -233,7 +233,7 @@
     _groupDropTabIndex = -1;
     if (target >= 0 && NSDate.timeIntervalSinceReferenceDate - _groupHoverBegan >= 0.35) {
         SPDFTabGroup* group = self.tabs[(NSUInteger)target].group;
-        if (group && !group.general) _groupDropGroup = group;
+        if (group && !group.general && group != sourceGroup) _groupDropGroup = group;
         else {
             _groupDropTabIndex = target;
             if (!_groupPreviewColor) _groupPreviewColor = spdf_tab_group_unused_color(self.tabs);

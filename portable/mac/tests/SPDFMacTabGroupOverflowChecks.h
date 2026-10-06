@@ -44,7 +44,11 @@ static void check_group_creation_side(void) {
         for (NSInteger i=0;i<66;i++) [tabs addObject:tab(@"Crowded General",general)];
         strip.tabs = (id)tabs;
         strip.selectedIndex = 65;
-        NSArray<NSNumber*>* visible = strip.visibleTabIndexes;
+        NSArray<NSNumber*>* visible = [strip.visibleTabIndexes filteredArrayUsingPredicate:
+            [NSPredicate predicateWithBlock:^BOOL(NSNumber* index, NSDictionary* _) {
+                (void)_; NSRect rect=[strip rectForTabAtIndex:index.integerValue];
+                return [strip tabIndexAtPoint:NSMakePoint(NSMidX(rect),NSMidY(rect))]==index.integerValue;
+            }]];
         expect(visible.firstObject.integerValue > 33 && visible.count > 1,
                @"placement fixture must show only the trailing half of document indexes");
         expect([strip newGroupGoesBeforeTargetAtIndex:visible.firstObject.integerValue],
@@ -57,7 +61,6 @@ static void check_group_creation_side(void) {
             [strip tabContextNewGroup:item];
             expect(reader.createdBeforeTarget == [index isEqual:visible.firstObject],
                    @"context group creation lost its visible-side placement");
-            if (grouped.boolValue) continue; // Existing-group sibling drags intentionally reorder.
             NSRect rect = [strip rectForTabAtIndex:index.integerValue];
             NSPoint point = NSMakePoint(NSMidX(rect),NSMidY(rect));
             NSInteger source = [index isEqual:visible.firstObject] ? visible.lastObject.integerValue : visible.firstObject.integerValue;

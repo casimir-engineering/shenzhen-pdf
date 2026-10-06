@@ -803,3 +803,8 @@ mac-image-rotation-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 mac-image-rotation-integration-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacImageRotationIntegrationTests.mm mac/SPDFMacImageRotationIntegration.mm -framework Cocoa -o "$(BUILD)/SPDFMacImageRotationIntegrationTests"
 	"$(BUILD)/SPDFMacImageRotationIntegrationTests"
+
+.PHONY: mac-document-rename-tests
+mac-document-rename-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacDocumentRenameTests.mm -framework Foundation -o "$(BUILD)/SPDFMacDocumentRenameTests"
+	"$(BUILD)/SPDFMacDocumentRenameTests"
