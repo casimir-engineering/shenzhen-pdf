@@ -107,6 +107,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
     if (!group) return;
     if ([action isEqual:@"collapse"]) [self toggleTabGroup:group];
     else if ([action isEqual:@"visibility"]) [self setTabGroup:group hidden:!group.hidden];
+    else if ([action isEqual:@"close"]) [self requestCloseTabGroup:group];
     else if ([action isEqual:@"rename"]) [self renameTabGroup:group name:value];
     else if ([action isEqual:@"move-document"]) {
         NSDictionary* source = [NSJSONSerialization JSONObjectWithData:[value dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];

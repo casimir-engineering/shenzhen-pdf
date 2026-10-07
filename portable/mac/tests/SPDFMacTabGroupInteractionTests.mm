@@ -19,6 +19,7 @@
 @end
 @interface SPDFGroupFakeReader : NSObject <SPDFTabGroupReader>
 @property(nonatomic) NSInteger toggles;
+@property NSInteger closeRequests;
 @property(nonatomic) NSInteger createdGroups;
 @property(nonatomic) BOOL createdBeforeTarget;
 @property(nonatomic) NSInteger movedToGroup;
@@ -53,6 +54,7 @@
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name { (void)group, (void)name; }
 - (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color { (void)group, (void)color; }
 - (void)ungroupTabs:(SPDFTabGroup*)group { (void)group; }
+- (void)requestCloseTabGroup:(SPDFTabGroup*)group { (void)group; self.closeRequests++; }
 - (void)closeTabGroup:(SPDFTabGroup*)group { (void)group; }
 - (void)moveTabGroup:(SPDFTabGroup*)group toIndex:(NSInteger)index { (void)group, (void)index; }
 - (NSArray<NSDictionary*>*)snapshotTabGroup:(SPDFTabGroup*)group { (void)group; return @[]; }
@@ -261,6 +263,9 @@ int main(void) {
         NSMenuItem* rename = [[strip contextMenuForGroup:general] itemWithTitle:@"Rename Group…"];
         [NSApp sendAction:rename.action to:rename.target from:rename];
         expect(strip.renameRequests == 1, @"context menu must retain explicit group rename");
+        NSMenuItem* close=[[strip contextMenuForGroup:general] itemWithTitle:@"Close Group…"];
+        [NSApp sendAction:close.action to:close.target from:close];
+        expect(reader.closeRequests==1,@"tab-bar close must request confirmation rather than close directly");
 
         NSRect hoverTab=[strip rectForTabAtIndex:0];
         [strip updateHoverForPoint:NSMakePoint(NSMinX(hoverTab)+16,NSMidY(hoverTab))]; strip.needsDisplay=NO;

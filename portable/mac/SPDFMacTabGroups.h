@@ -43,6 +43,7 @@ NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tab
 - (void)renameTabGroup:(SPDFTabGroup*)group name:(NSString*)name;
 - (void)recolorTabGroup:(SPDFTabGroup*)group color:(NSString*)color;
 - (void)ungroupTabs:(SPDFTabGroup*)group;
+- (void)requestCloseTabGroup:(SPDFTabGroup*)group;
 - (void)closeTabGroup:(SPDFTabGroup*)group;
 - (void)moveTabGroup:(SPDFTabGroup*)group toIndex:(NSInteger)index;
 - (void)moveTabAtIndex:(NSInteger)index toGroup:(SPDFTabGroup*)group atIndex:(NSInteger)destination;

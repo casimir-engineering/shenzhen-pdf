@@ -39,7 +39,6 @@
     // look disabled, especially in the dark appearance.
     NSMutableDictionary* titleAttrs = [attrs mutableCopy];
     if (selected) titleAttrs[NSFontAttributeName] = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
-    CGFloat titleHeight = [title sizeWithAttributes:titleAttrs].height;
     CGFloat leftInset = 6.0;
     CGFloat rightInset = 6.0;
 
@@ -58,8 +57,7 @@
         leftInset = kReadOnlyDotLeftInset + kReadOnlyDotDiameter + kReadOnlyDotTitleGap;
     }
 
-    NSRect titleRect = NSMakeRect(NSMinX(tabRect)+leftInset, floor(NSMidY(tabRect)-titleHeight/2),
-                                  MAX(1,NSWidth(tabRect)-leftInset-rightInset), titleHeight+2);
+    NSRect titleRect = SPDFTabTitleRect(tabRect,leftInset,rightInset,title,titleAttrs);
     [NSGraphicsContext saveGraphicsState];
     NSRectClip(titleRect);
     CGContextRef graphics = NSGraphicsContext.currentContext.CGContext;

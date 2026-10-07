@@ -450,7 +450,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         return;
     }
     NSDictionary* group = _rows[row][@"group"];
-    for (NSString* title in @[@"Jump to Group",[group[@"hidden"] boolValue] ? @"Show Group" : @"Hide Group",@"Rename…"]) {
+    for (NSString* title in @[@"Jump to Group",[group[@"hidden"] boolValue] ? @"Show Group" : @"Hide Group",@"Rename…",@"Close Group…"]) {
         NSMenuItem* item = [menu addItemWithTitle:title action:@selector(menuAction:) keyEquivalent:@""];
         item.target = self; item.representedObject = group;
     }
@@ -464,6 +464,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         SPDFPresentGroupNamePrompt(_table,rect,group[@"name"],NO,^(NSString* name) {
             if (weakSelf.actionHandler) weakSelf.actionHandler(@"rename",group[@"id"],name);
         });
-    } else self.actionHandler([sender.title isEqual:@"Jump to Group"] ? @"jump" : @"visibility",group[@"id"],@"");
+    } else if ([sender.title isEqual:@"Close Group…"]) self.actionHandler(@"close",group[@"id"],@"");
+    else self.actionHandler([sender.title isEqual:@"Jump to Group"] ? @"jump" : @"visibility",group[@"id"],@"");
 }
 @end

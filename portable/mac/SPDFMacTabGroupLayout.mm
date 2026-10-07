@@ -1,3 +1,4 @@
+#import "SPDFMacTabTitleDrawing.h"
 #import "SPDFMacIconGeometry.h"
 #import "SPDFMacTabStripViewPrivate.h"
 
@@ -187,14 +188,12 @@
             icon=[icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
             [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12))];
         }
-        CGFloat height = [layout.group.displayName sizeWithAttributes:attributes].height;
         BOOL hovered=_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header);
-        NSRect titleRect=NSMakeRect(NSMinX(layout.header)+7+iconSpace,
-            NSMidY(layout.header)-height/2,MAX(1,NSWidth(layout.header)-14-iconSpace),height);
+        NSRect titleRect=SPDFTabTitleRect(layout.header,7+iconSpace,7,layout.group.displayName,attributes);
         [NSGraphicsContext saveGraphicsState]; NSRectClip(titleRect);
         CGContextRef graphics=NSGraphicsContext.currentContext.CGContext;
         if (hovered) CGContextBeginTransparencyLayer(graphics,NULL);
-        [layout.group.displayName drawInRect:titleRect withAttributes:attributes];
+        SPDFDrawTabTitle(layout.group.displayName,titleRect,attributes);
         // Like tab close buttons: keep the full title geometry and fade beneath
         // overlay actions, without reserving empty space or changing pill width.
         if (hovered) {

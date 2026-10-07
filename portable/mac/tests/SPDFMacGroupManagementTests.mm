@@ -160,6 +160,16 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
         Check(NSWidth(eye.bounds) >= 26 && NSHeight(eye.bounds) >= 26,"visibility retains its full click target");
         Check(NSMinX(eyeBounds) >= 0 && NSMaxX(eyeBounds) <= NSWidth(table.bounds),"visibility target never clips at narrow width");
     }
+    if (table.numberOfRows>0) {
+    NSInteger priorRow=table.selectedRow;
+    [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+    NSMenu* groupMenu=[NSMenu new]; [manager menuNeedsUpdate:groupMenu];
+    NSMenuItem* close=[groupMenu itemWithTitle:@"Close Group…"];
+    Check(close!=nil,"group context menu includes Close Group with confirmation ellipsis");
+    [NSApp sendAction:close.action to:close.target from:close];
+    Check([action isEqual:@"close"] && [target isEqual:@"general"],"group menu routes close separately from visibility");
+    [table selectRowIndexes:priorRow>=0 ? [NSIndexSet indexSetWithIndex:priorRow] : [NSIndexSet indexSet] byExtendingSelection:NO];
+    }
     if (output.length) {
         NSBitmapImageRep* bitmap = [host.contentView bitmapImageRepForCachingDisplayInRect:host.contentView.bounds];
         [host.contentView cacheDisplayInRect:host.contentView.bounds toBitmapImageRep:bitmap];

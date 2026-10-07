@@ -364,3 +364,21 @@ Group geometry tests cover fitting complete words at minimum through wide panel
 sizes. The actual-reader mouse-routing checks are retained. Native offscreen
 renders in /tmp/sz-group-placeholder-evidence were visually inspected; no user
 app was launched.
+
+
+## 2026-10-07 — Tab-title alignment and confirmed group closure
+
+Document labels used a floored Y origin and a rectangle two points taller than
+its centering calculation, unlike group labels. Both now share the measured
+text rectangle helper and drawing options, preserving middle truncation for
+document names and tail truncation for groups.
+
+Restored Close Group… in manager context menus and routed that menu and the
+tab-bar group menu through one confirmation method. Its native alert names the
+group and document count, defaults to Cancel, and explains that files/history
+remain. Confirmed closure delegates to existing unsaved-image protection.
+Internal group moves retain the lower-level close path without a second prompt.
+
+Tests cover identical title geometry, menu routing from both locations, Cancel
+versus confirmation, and existing unsaved-image close behavior. No user app was
+launched or restarted.
