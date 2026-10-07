@@ -46,6 +46,8 @@ static NSImage* SPDFGroupExpansionImage(BOOL collapse) {
                 }
                 [arrows stroke]; return YES;
             }];
+            // Match the adjacent scope symbol visually; keep the 26-point hit target.
+            images[index].size=NSMakeSize(16,16);
             [images[index] setTemplate:YES];
         }
     });
