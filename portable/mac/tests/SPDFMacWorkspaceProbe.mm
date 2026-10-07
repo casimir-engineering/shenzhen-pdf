@@ -421,8 +421,7 @@ static void CheckNavigationShortcuts(WorkspaceReaderProbe* reader) {
 }
 static NSURL* Fixture(NSString* root) {
     NSURL* URL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Interface specification.pdf"]];
-    NSData* data=SPDFReadmePDFData();
-    PDFDocument* PDF=[[PDFDocument alloc] initWithData:data]; PDFOutline* outline=[PDFOutline new];
+    PDFDocument* PDF=[[PDFDocument alloc] initWithData:SPDFReadmePDFData()]; PDFOutline* outline=[PDFOutline new];
     for (NSUInteger i=0;i<3;i++) { PDFOutline* entry=[PDFOutline new];
         entry.label=@[@"Overview",@"Reading workspace",@"Technical decisions"][i];
         entry.destination=[[PDFDestination alloc] initWithPage:[PDF pageAtIndex:i] atPoint:NSMakePoint(0,842)];
@@ -432,6 +431,7 @@ static NSURL* Fixture(NSString* root) {
 #import "SPDFMacImageColorChoiceChecks.h"
 #import "SPDFMacRestoredFindPanelChecks.h"
 #import "SPDFMacMissingDocumentChecks.h"
+#import "SPDFMacGroupButtonChecks.h"
 int main(int argc,const char* argv[]) {
     setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
@@ -447,6 +447,7 @@ int main(int argc,const char* argv[]) {
         [SPDFReadmeMarkdown() writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
+            if(getenv("SPDF_GROUP_BUTTONS_ONLY")) { [reader checkGroupButtons]; return failures ? 1 : 0; }
             if(getenv("SPDF_REGEX_ONLY")) { [reader setProbeFind:YES]; [reader capture:output.length ? [output stringByAppendingPathComponent:@"regex.png"] : nil width:1280 sidebar:YES map:YES]; return failures ? 1 : 0; }
             if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
             CheckMissingDocumentView(); CheckMissingDocumentRecovery(reader,root); CheckUpdaterMenu(reader); CheckNavigationShortcuts(reader); CheckImageColorChoices(reader); CheckRestoredFindPanel(reader);
@@ -472,8 +473,7 @@ int main(int argc,const char* argv[]) {
             [reader setProbePresentation:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-presentation.png" : @"reader-light-presentation.png"] : nil
                 width:1280 sidebar:NO map:NO];
-            [reader setProbePresentation:NO];
-            [reader prepareMarkdown:markdownURL];
+            [reader setProbePresentation:NO]; [reader prepareMarkdown:markdownURL];
             [reader checkTextSizeActions]; CheckRestoredFindPanel(reader);
             for (NSNumber* width in @[@1280,@880,@560]) {
                 NSString* name=[NSString stringWithFormat:@"reader-%@-markdown-%@.png",dark.boolValue ? @"dark" : @"light",width];
