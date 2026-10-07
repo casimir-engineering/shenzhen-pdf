@@ -7,7 +7,7 @@
 @interface SPDFGroupSearchField : NSSearchField
 @end
 @implementation SPDFGroupSearchField
-+ (Class)cellClass { return SPDFGroupSearchCell.class; }
++ (Class)cellClass { return SPDFPanelSearchCell.class; }
 - (void)setFrameSize:(NSSize)size { [super setFrameSize:size]; SPDFUpdateGroupSearchPlaceholder(self); }
 - (NSRect)focusRingMaskBounds { return NSInsetRect(self.bounds,.5,.5); }
 - (void)drawFocusRingMask {
@@ -111,7 +111,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     NSSearchFieldCell* searchCell=(id)_search.cell;
     searchCell.usesSingleLineMode=YES; searchCell.scrollable=YES;
     searchCell.wraps=NO; searchCell.lineBreakMode=NSLineBreakByClipping;
-    _search.delegate = self; _search.sendsSearchStringImmediately = YES;
+    SPDFConfigurePanelSearchField(_search); _search.delegate = self; _search.sendsSearchStringImmediately = YES;
     [_search setAccessibilityLabel:@"Search group and document names"];
     _search.focusRingType = NSFocusRingTypeExterior;
     _expandAll = Icon(@"rectangle.expand.vertical",@"Expand all groups",self,@selector(toggleAllGroups:));
@@ -147,14 +147,14 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     NSStackView* footer = [NSStackView stackViewWithViews:@[_summary,info]]; footer.spacing = 6;
     for (NSView* child in @[_search,_expandAll,_jumpCurrent,_scroll,_empty,footer]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
     [NSLayoutConstraint activateConstraints:@[
-        [_search.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8],
+        [_search.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:4],
         [_search.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
         [_search.trailingAnchor constraintEqualToAnchor:_expandAll.leadingAnchor constant:-4],
         [_expandAll.trailingAnchor constraintEqualToAnchor:_jumpCurrent.leadingAnchor constant:-2],
         [_jumpCurrent.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
         [_jumpCurrent.centerYAnchor constraintEqualToAnchor:_search.centerYAnchor],
         [_expandAll.centerYAnchor constraintEqualToAnchor:_search.centerYAnchor],
-        [_search.heightAnchor constraintEqualToConstant:26],
+        [_search.heightAnchor constraintEqualToConstant:30],
         [_scroll.topAnchor constraintEqualToAnchor:_search.bottomAnchor constant:8],
         [_scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:4],
         [_scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-4],
@@ -438,6 +438,14 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     if (notification.object != _search) return;
     SPDFUpdateGroupSearchPlaceholder(_search);
     _searchCollapsed = NO; _savedScroll = 0; [self rebuildRows]; [_scroll.contentView scrollToPoint:NSZeroPoint]; [self publishState];
+}
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)command {
+    (void)textView;
+    if (control!=_search || command!=@selector(cancelOperation:)) return NO;
+    [_search abortEditing]; _search.stringValue=@"";
+    [self controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:_search]];
+    if (self.actionHandler) self.actionHandler(@"end-search",@"",@"");
+    return YES;
 }
 - (void)scrolled:(NSNotification*)notification {
     (void)notification; if (_restoring) return;

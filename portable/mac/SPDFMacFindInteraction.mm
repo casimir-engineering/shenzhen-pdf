@@ -7,10 +7,12 @@
 static char previousPanelKey;
 @interface ShenzhenMacDelegate (FindInteractionHost)
 - (void)clearFindFieldFocus;
+- (NSView*)activeDocumentKeyView;
 - (void)findFromCurrentForward:(BOOL)forward;
 - (BOOL)hasActiveDocument;
 - (void)rebuildSidebar;
 - (void)startFindForCurrentQuery;
+- (void)setSidebarFilterTextForCurrentMode:(NSString*)filter;
 - (void)startFindForCurrentQueryResetSavedIndex:(BOOL)reset revealMatch:(BOOL)reveal;
 @end
 
@@ -39,6 +41,20 @@ static char previousPanelKey;
     [self clearFindFieldFocus];
 }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wobjc-protocol-method-implementation"
+- (void)clearFindFieldFocus {
+    if (_window.firstResponder == _searchField || _window.firstResponder == _searchField.currentEditor)
+        [_window makeFirstResponder:[self activeDocumentKeyView]];
+}
+#pragma clang diagnostic pop
+- (void)dismissSidebarFilterField {
+    // End the shared editor before changing modes/fields. Otherwise Escape
+    // leaves subsequent document typing in the hidden panel's filter.
+    [_sidebarFilterField abortEditing]; _sidebarFilterField.stringValue=@"";
+    [self setSidebarFilterTextForCurrentMode:@""]; [self rebuildSidebar];
+    [_window makeFirstResponder:[self activeDocumentKeyView]];
+}
 - (BOOL)documentFindReturnKeyDown:(NSEvent*)event {
     if (event.keyCode != 36 && event.keyCode != 76) return NO;
     if (![self hasActiveDocument] || _presentationMode || _window.attachedSheet ||

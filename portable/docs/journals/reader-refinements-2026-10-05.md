@@ -441,3 +441,36 @@ The real-reader headless probe also invokes the native menu action, verifies bot
 choices stay enabled without an active document, checks the selected default name
 in the native field editor, and exercises existing group-button hit targets. Tab
 state/lifecycle, unsaved-image close protection, and AI group suites pass as well.
+
+
+## 2026-10-07 — Panel filters, Escape and chapter click targets
+
+The panel-filter → Escape → document typing sequence now has an actual-reader
+regression check using native field editors. Before the filter Escape handler,
+the editor retained focus and document type-to-search rejected subsequent keys.
+Chapters/Comments now abort their editor, clear their filter, rebuild, and return
+focus to the document. Groups follows the same sequence through its controller.
+The test verifies the query and full match count after every panel transition.
+
+Chapter controls now reuse the Groups button's explicit press/release tracking
+and full hit rectangle. Both individual disclosure controls and the all-chapters
+button have explicit heights. A shared vector supplies the same 16-point outlined
+expand/collapse image to Chapters and Groups. No extra work runs during reading;
+button tracking starts on a press and the icon cache is lazy.
+
+Panel search chrome now uses one native search cell configuration: 13-point
+labels, 30-point height, rounded focus ring, horizontal scrolling, and matching
+8-point panel insets. Group placeholder adaptation remains intact at narrow
+widths. Native AppKit retains editing and cancel-button behavior.
+
+Headless checks use a nested outline in the real reader, nine points across the
+all-chapters button, repeated toggles, and three vertical positions on an
+individual disclosure. The existing Groups and empty-group interaction tests
+also run. Focused group/sidebar/find/outline suites pass. No user app was
+launched or captured.
+
+For a regression baseline, the headless reader was separately linked against the
+previous committed chapter implementation. All nine all-chapters mouse actions
+failed to change the outline there; the updated implementation passes those same
+checks. The filter transition check also failed before adding its Escape handler
+and passes afterward. Build, signature verification, diff, and size checks pass.

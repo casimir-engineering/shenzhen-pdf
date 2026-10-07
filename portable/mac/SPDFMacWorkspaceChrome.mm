@@ -3,6 +3,7 @@
 #import "SPDFMacPastedImageState.h"
 #import "SPDFMacHeaderDragView.h"
 #import "SPDFMacWorkspaceChrome.h"
+#import "SPDFMacPanelSearchField.h"
 #import "SPDFMacFindInteraction.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarModeControl.h"
@@ -138,12 +139,12 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
             [surface.bottomAnchor constraintEqualToAnchor:host.bottomAnchor]]];
     }
     for (NSSearchField* field in @[_sidebarFilterField,_searchField]) {
-        SPDFCollectionConfigureSearchField(field); field.font = [NSFont systemFontOfSize:12];
+        SPDFConfigurePanelSearchField(field);
         [field.heightAnchor constraintEqualToConstant:30].active = YES;
     }
     for (NSLayoutConstraint* constraint in _sidebarContainer.constraints)
         if (constraint.firstItem == _sidebarFilterField && constraint.firstAttribute == NSLayoutAttributeLeading)
-            constraint.constant = 12;
+            constraint.constant = 8;
     state.outlineSummary = SPDFCollectionText(@"",11,NSFontWeightRegular,YES);
     state.outlineSummary.translatesAutoresizingMaskIntoConstraints = NO;
     [_sidebarContainer addSubview:state.outlineSummary];
@@ -240,9 +241,9 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     options.spacing = 4; options.translatesAutoresizingMaskIntoConstraints = NO;
     [state.searchControls addSubview:options];
     [NSLayoutConstraint activateConstraints:@[
-        [state.searchControls.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:12],
-        [state.searchControls.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-12],
-        [state.searchControls.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:4],
+        [state.searchControls.leadingAnchor constraintEqualToAnchor:_sidebarContainer.leadingAnchor constant:8],
+        [state.searchControls.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor constant:-8],
+        [state.searchControls.topAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor constant:8],
         [state.searchControls.heightAnchor constraintEqualToConstant:66],
         [_searchField.topAnchor constraintEqualToAnchor:state.searchControls.topAnchor],
         [_searchField.leadingAnchor constraintEqualToAnchor:state.searchControls.leadingAnchor],

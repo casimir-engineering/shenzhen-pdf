@@ -115,6 +115,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
     return groups;
 }
 - (void)performSidebarGroupAction:(NSString*)action identifier:(NSString*)identifier value:(NSString*)value {
+    if ([action isEqual:@"end-search"]) { [_window makeFirstResponder:[self activeDocumentKeyView]]; return; }
     SPDFTabGroup* group = nil;
     for (SPDFDocumentTab* tab in _tabs) if ([tab.group.identifier isEqual:identifier]) { group = tab.group; break; }
     if (!group) for (SPDFTabGroup* empty in [self emptyTabGroups])
