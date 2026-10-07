@@ -147,6 +147,18 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     NSTextView* editor = (id)search.currentEditor; [editor setSelectedRange:NSMakeRange(2,3)];
     [manager updateGroups:fixtureGroups state:manager.viewState];
     Check(NSEqualRanges(editor.selectedRange,NSMakeRange(2,3)),"unchanged background refresh preserves field-editor selection");
+    Check(search.cell.isScrollable && !search.cell.wraps && search.cell.usesSingleLineMode,
+        "group search uses a scrolling single-line editor");
+    NSString* longQuery=[@"long document name " stringByPaddingToLength:300 withString:@"more words " startingAtIndex:0];
+    [editor selectAll:nil]; [editor insertText:longQuery replacementRange:editor.selectedRange];
+    // Invisible fixtures need the layout pass normally driven by display.
+    [editor.layoutManager ensureLayoutForTextContainer:editor.textContainer];
+    [editor sizeToFit];
+    [editor scrollRangeToVisible:NSMakeRange(editor.string.length,0)];
+    Check(editor.selectedRange.location==longQuery.length && editor.superview.bounds.origin.x>22,
+        "typing past field width scrolls horizontally to keep insertion point visible");
+    [editor setSelectedRange:NSMakeRange(0,0)]; [editor scrollRangeToVisible:NSMakeRange(0,0)];
+    Check(editor.visibleRect.origin.x<1,"moving caret to beginning scrolls back");
     [host makeFirstResponder:nil];
     [manager updateGroups:fixtureGroups state:@{@"expandedGroups":@[@"group-1"]}];
     [host.contentView layoutSubtreeIfNeeded];

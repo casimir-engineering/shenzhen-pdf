@@ -382,3 +382,13 @@ Internal group moves retain the lower-level close path without a second prompt.
 Tests cover identical title geometry, menu routing from both locations, Cancel
 versus confirmation, and existing unsaved-image close behavior. No user app was
 launched or restarted.
+
+
+## 2026-10-07 — Horizontally scrolling group search
+
+Applied the reader search field's single-line, scrollable, non-wrapping and
+clipping cell settings to Groups search. The native editor owns scrolling;
+placeholder sizing remains separate. The headless field-editor test inserts
+300 characters, completes the otherwise display-driven layout, and checks
+horizontal movement to the end and back to the beginning without losing text.
+Group management tests pass; no user app is launched.
