@@ -1,5 +1,15 @@
 #import "SPDFMacGroupActionButton.h"
+#import "SPDFMacIconGeometry.h"
 @implementation SPDFGroupActionButton
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self=[super initWithFrame:frame])) SPDFConfigureIconButtonRendering(self);
+    return self;
+}
+- (void)setBordered:(BOOL)bordered {
+    [super setBordered:bordered]; SPDFConfigureIconButtonRendering(self);
+}
+- (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; self.needsDisplay=YES; }
+- (void)setImage:(NSImage*)image { [super setImage:SPDFUncachedVectorIcon(image)]; }
 - (NSEdgeInsets)alignmentRectInsets { return NSEdgeInsetsZero; }
 - (BOOL)acceptsFirstMouse:(NSEvent*)event { (void)event; return YES; }
 - (BOOL)mouseDownCanMoveWindow { return NO; }

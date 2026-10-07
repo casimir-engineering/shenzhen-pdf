@@ -159,7 +159,7 @@
     if (!NSIsEmptyRect(overflowRect)) {
         NSImage* icon = [NSImage imageWithSystemSymbolName:@"square.3.layers.3d" accessibilityDescription:@"All Groups"];
         icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
-        [icon drawInRect:SPDFIconAspectFitRect(icon,NSInsetRect(overflowRect,6,6))];
+        SPDFDrawVectorIcon(icon,NSInsetRect(overflowRect,6,6),YES);
     }
 
     NSRect plusRect = [self plusRect];

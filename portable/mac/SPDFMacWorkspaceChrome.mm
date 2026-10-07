@@ -57,8 +57,7 @@ static char chromeKey;
     if (self.highlighted) { [SPDFCollectionColor(@"selected") setFill]; [shape fill]; }
     NSImage* image = [self.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]] ?: self.image;
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]] ?: image;
-    [image drawInRect:SPDFIconAspectFitRect(image,NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16))
-        fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:view.isFlipped hints:nil];
+    SPDFDrawVectorIcon(image,NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16),view.isFlipped);
     if (view.window.firstResponder == view) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
@@ -70,10 +69,15 @@ static void StyleIcon(NSButton* button) {
     SPDFWorkspaceIconCell* cell = [[SPDFWorkspaceIconCell alloc] initImageCell:image];
     cell.title = title; cell.bordered = NO; cell.imagePosition = NSImageOnly;
     button.cell = cell; button.target = target; button.action = action; button.enabled = enabled;
+    SPDFConfigureIconButtonRendering(button);
 }
 @interface SPDFWorkspaceIconButton : NSButton
 @end
 @implementation SPDFWorkspaceIconButton
+- (void)setBordered:(BOOL)bordered {
+    [super setBordered:bordered]; SPDFConfigureIconButtonRendering(self);
+}
+- (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; self.needsDisplay=YES; }
 - (NSEdgeInsets)alignmentRectInsets { return NSEdgeInsetsMake(0,0,0,0); }
 - (NSView*)hitTest:(NSPoint)point {
     return !self.hidden && NSPointInRect([self convertPoint:point fromView:self.superview],self.bounds) ? self : nil;

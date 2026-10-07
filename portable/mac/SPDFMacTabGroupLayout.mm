@@ -208,7 +208,7 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
         if (iconSpace) {
             NSImage* icon=[NSImage imageWithSystemSymbolName:@"books.vertical" accessibilityDescription:nil];
             icon=[icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
-            [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12))];
+            SPDFDrawVectorIcon(icon,NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12),YES);
         }
         BOOL hovered=_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header);
         NSRect titleRect=SPDFTabTitleRect(layout.header,7+iconSpace,7,layout.group.displayName,attributes);
@@ -244,7 +244,7 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
                     accessibilityDescription:@"Hide group"];
                 actionIcon = [actionIcon imageWithSymbolConfiguration:[NSImageSymbolConfiguration
                     configurationWithPaletteColors:@[NSColor.labelColor]]];
-                [actionIcon drawInRect:SPDFIconAspectFitRect(actionIcon,NSInsetRect(action,4,4))];
+                SPDFDrawVectorIcon(actionIcon,NSInsetRect(action,4,4),YES);
             }
             [NSGraphicsContext restoreGraphicsState];
         }

@@ -10,9 +10,12 @@
 @end
 @implementation SPDFReadableToolbarSegments
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self=[super initWithFrame:frame])) _pressedSegment=-1;
+    if ((self=[super initWithFrame:frame])) {
+        _pressedSegment=-1; SPDFConfigureIconViewRendering(self);
+    }
     return self;
 }
+- (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; self.needsDisplay=YES; }
 - (NSInteger)selectedSegment { return self.dispatchingMouseAction ? self.pressedSegment : super.selectedSegment; }
 - (BOOL)acceptsFirstMouse:(NSEvent*)event { (void)event; return YES; }
 - (NSRect)frameForSegment:(NSInteger)segment {
@@ -58,12 +61,14 @@
 
         NSColor* color = SPDFChromeIconColor(self.enabled && [self isEnabledForSegment:segment]);
         NSImage* image = [self imageForSegment:segment];
-        NSImage* tinted = [NSImage imageWithSize:NSMakeSize(16,16) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-            [image drawInRect:SPDFIconAspectFitRect(image,rect)];
-            [color setFill]; NSRectFillUsingOperation(rect,NSCompositingOperationSourceIn); return YES;
-        }];
-        [tinted drawInRect:NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16)
-            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:self.isFlipped hints:nil];
+        NSRect slot=NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16);
+        // Tint in the destination context, without a size-specific NSImage cache.
+        [NSGraphicsContext saveGraphicsState];
+        CGContextRef context=NSGraphicsContext.currentContext.CGContext;
+        CGContextBeginTransparencyLayer(context,NULL);
+        SPDFDrawVectorIcon(image,slot,self.isFlipped);
+        [color setFill]; NSRectFillUsingOperation(slot,NSCompositingOperationSourceIn);
+        CGContextEndTransparencyLayer(context); [NSGraphicsContext restoreGraphicsState];
     }
     if (self.window.firstResponder == self) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly);

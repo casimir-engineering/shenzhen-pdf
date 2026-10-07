@@ -57,7 +57,7 @@ NSColor* SPDFCollectionColor(NSString* token) {
         NSImage* symbol = self.image;
         if (@available(macOS 12.0,*)) symbol = [symbol imageWithSymbolConfiguration:
             [NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]] ?: symbol;
-        [symbol drawInRect:SPDFIconAspectFitRect(symbol,icon) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+        SPDFDrawVectorIcon(symbol,icon,YES);
         titleRect.origin.x += 24; titleRect.size.width -= 24;
     }
     NSMutableAttributedString* title = [self.attributedTitle mutableCopy];
@@ -99,7 +99,7 @@ NSColor* SPDFCollectionColor(NSString* token) {
     NSImage* image = [NSImage imageWithSystemSymbolName:@"chevron.down" accessibilityDescription:nil];
     if (@available(macOS 12.0,*)) image = [image imageWithSymbolConfiguration:
         [NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFCollectionColor(@"text")]]] ?: image;
-    [image drawInRect:SPDFIconAspectFitRect(image,NSMakeRect(NSWidth(self.bounds)-20,floor(NSMidY(self.bounds)-5),10,10))];
+    SPDFDrawVectorIcon(image,NSMakeRect(NSWidth(self.bounds)-20,floor(NSMidY(self.bounds)-5),10,10),YES);
     if (self.window.firstResponder == self) { [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState]; }
 }
 @end

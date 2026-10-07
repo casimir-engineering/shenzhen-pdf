@@ -55,8 +55,7 @@
                             accessibilityDescription:nil];
     NSColor* color = self.group ? spdf_tab_group_accent(self.group.colorName) : NSColor.secondaryLabelColor;
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(8,8,16,16)) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver
-            fraction:1 respectFlipped:YES hints:nil];
+    SPDFDrawVectorIcon(icon,NSMakeRect(8,8,16,16),YES);
     NSMutableParagraphStyle* paragraph = [NSMutableParagraphStyle new];
     paragraph.lineBreakMode = NSLineBreakByTruncatingTail;
     NSDictionary* attributes = @{NSFontAttributeName:[NSFont systemFontOfSize:12],
@@ -74,16 +73,18 @@
 @end
 
 static void StylePickerEye(NSButton* button,SPDFTabGroup* group) {
+    SPDFConfigureIconButtonRendering(button);
     button.image=[NSImage imageWithSystemSymbolName:group.hidden ? @"eye.slash" : @"eye" accessibilityDescription:nil];
-    [button.image setTemplate:YES];
+    button.image=SPDFUncachedVectorIcon(button.image); [button.image setTemplate:YES];
     button.contentTintColor=group.hidden ? NSColor.secondaryLabelColor : NSColor.labelColor;
     button.toolTip=group.hidden ? @"Show group in tab bar" : @"Hide group from tab bar";
     button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.hidden ? @"Show" : @"Hide",group.displayName];
 }
 
 static void StylePickerCollapse(NSButton* button,SPDFTabGroup* group) {
+    SPDFConfigureIconButtonRendering(button);
     button.image=[NSImage imageWithSystemSymbolName:group.collapsed ? @"arrow.left.and.right" : @"arrow.right.and.line.vertical.and.arrow.left" accessibilityDescription:nil];
-    [button.image setTemplate:YES]; button.contentTintColor=NSColor.labelColor;
+    button.image=SPDFUncachedVectorIcon(button.image); [button.image setTemplate:YES]; button.contentTintColor=NSColor.labelColor;
     button.toolTip=[NSString stringWithFormat:@"%@ group in tab bar",group.collapsed ? @"Expand" : @"Collapse"];
     button.accessibilityLabel=[NSString stringWithFormat:@"%@ %@",group.collapsed ? @"Expand" : @"Collapse",group.displayName];
 }

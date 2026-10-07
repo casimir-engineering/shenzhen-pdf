@@ -22,6 +22,7 @@
         self.translatesAutoresizingMaskIntoConstraints = NO;
         self.focusRingType = NSFocusRingTypeNone;
         [self setButtonType:NSButtonTypeMomentaryChange];
+        SPDFConfigureIconButtonRendering(self);
         [self setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     }
@@ -43,6 +44,7 @@
 }
 
 - (NSSize)intrinsicContentSize { return NSMakeSize(28,28); }
+- (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; self.needsDisplay=YES; }
 
 - (void)setActive:(BOOL)active {
     if (_active == active) return;
@@ -68,8 +70,7 @@
                               accessibilityDescription:nil];
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular]];
     image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]];
-    [image drawInRect:SPDFIconAspectFitRect(image,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),floor((NSHeight(self.bounds)-16)/2),16,16))
-            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+    SPDFDrawVectorIcon(image,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),floor((NSHeight(self.bounds)-16)/2),16,16),NO);
 }
 
 @end
