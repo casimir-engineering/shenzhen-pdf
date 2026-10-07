@@ -15,3 +15,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - Fixed chapter expand/collapse clicks, including the all-chapters toggle and individual disclosures. Chapters now uses the same outlined expand/collapse icon as Groups.
 - Chapters, Comments, Groups, and document Search now share consistent rounded search fields, font size, height, and spacing.
 - Escape from a panel filter clears it and returns focus to the document, so immediately typing starts a fresh document search instead of continuing to filter the panel.
+- Sharper control icons when resizing panels: icons keep their proportions and redraw without requiring hover. Sidebar buttons align to screen pixels; toolbar and panel icons use vector sources rather than resized bitmap copies.

@@ -33,6 +33,15 @@ static NSString* Symbol(NSInteger mode) {
     BOOL _hovered;
 }
 + (Class)cellClass { return SPDFSidebarNavigationCell.class; }
+- (void)setBordered:(BOOL)bordered {
+    [super setBordered:bordered]; SPDFConfigureIconButtonRendering(self);
+}
+- (void)viewDidChangeBackingProperties { [super viewDidChangeBackingProperties]; self.needsDisplay=YES; }
+- (void)viewDidEndLiveResize { [super viewDidEndLiveResize]; self.needsDisplay=YES; }
+- (void)setFrameSize:(NSSize)size {
+    BOOL changed=!NSEqualSizes(size,self.frame.size);
+    [super setFrameSize:size]; if (changed) self.needsDisplay=YES;
+}
 - (void)mouseDown:(NSEvent*)event {
     if (self.mode >= 0) { [super mouseDown:event]; return; }
     [self highlight:NO]; self.state=NSControlStateValueOff;
@@ -57,7 +66,7 @@ static NSString* Symbol(NSInteger mode) {
     NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]];
     icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    [icon drawInRect:SPDFIconAspectFitRect(icon,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),6,16,16)) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    SPDFDrawVectorIcon(icon,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),6,16,16),YES);
 
 }
 - (void)updateTrackingAreas {
@@ -172,11 +181,15 @@ static NSString* Symbol(NSInteger mode) {
     CGFloat x = left + (right-left-width*toolCount)/2;
     _collapse.frame = NSMakeRect(0,4,28,RowHeight);
     for (SPDFSidebarNavigationRow* row in rows) {
+        NSRect frame;
         if (row.mode == SPDFSidebarModeGroups) {
-            row.frame = NSMakeRect(NSWidth(self.bounds)-28,4,28,RowHeight);
+            frame = NSMakeRect(NSWidth(self.bounds)-28,4,28,RowHeight);
         } else {
-            row.frame = NSMakeRect(x,4,width,RowHeight); x += width;
+            frame = NSMakeRect(x,4,width,RowHeight); x += width;
         }
+        // Keep the complete target on device pixels. Fractional panel widths
+        // otherwise place cached glyphs between pixels (especially at 1x).
+        row.frame = [self backingAlignedRect:frame options:NSAlignAllEdgesNearest];
     }
 }
 - (void)drawRect:(NSRect)dirty {

@@ -474,3 +474,43 @@ previous committed chapter implementation. All nine all-chapters mouse actions
 failed to change the outline there; the updated implementation passes those same
 checks. The filter transition check also failed before adding its Escape handler
 and passes afterward. Build, signature verification, diff, and size checks pass.
+
+## 2026-10-07 — Icon redraw, proportions and vector sources
+
+Investigated the report that left-panel icons become soft/deformed until hover,
+including minimum sidebar width and other possible triggers. A native-button
+probe confirmed a stale backing-content path: its first paint count stayed at
+one after resizing; hover invalidation produced the second paint. Borderless
+styling resets AppKit's native button redraw policy, so setting it only in the
+initializer is insufficient. The shared button policy now redraws during resize
+and centers interim layer contents instead of stretching them. Sidebar, toolbar,
+and Groups actions also invalidate on backing-property changes.
+
+The custom-drawn sidebar already redrew in the ordinary offscreen resize probe;
+that probe did not reproduce the user's complete intermittent visual symptom.
+Its fractional layout did place targets between backing pixels, however. The
+sidebar now aligns each final frame to device pixels and explicitly invalidates
+changed sizes and the end of live resize. Unchanged geometry does not add paints.
+
+Per the requested vector-only policy, control icons keep SF Symbol or drawing
+handler sources, preserve their natural aspect ratios, and draw with image
+caching disabled. Toolbar tinting draws directly in the destination context;
+OCR/translation fallback glyphs now use vector drawing handlers instead of
+lockFocus bitmaps. The same drawing helper covers the sidebar, toolbar, tab strip,
+group picker and Collection controls. Document pictures and thumbnails are
+unrelated to this policy and retain their existing rendering paths.
+
+`mac-icon-rendering-tests` checks native resize without hover, backing-change
+invalidation, idle draw count, 48 narrow/fractional widths in both appearances,
+lazy vector drawing, and painted aspect ratio at 1x/2x. Linking the same tests
+against the preceding native-button and sidebar implementations exits 1; the
+updated sources exit 0. The baseline catches native resize invalidation and
+fractional target geometry, rather than claiming a captured user-window repro.
+Sidebar navigation, group management, and reading-theme/toolbar interaction
+suites pass. No user app was launched, quit, or captured.
+
+Final verification: Collection style/alignment and tab-group interaction tests
+also pass. The native symbol orientation remains identical to the existing
+controls. Group scrolling measured about 0.56 ms per input with 1,000 tabs in the
+headless fixture. The rebuilt dist app passes deep/strict signature validation;
+file-size and whitespace checks pass. This is a local build, not a release.

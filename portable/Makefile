@@ -671,6 +671,11 @@ mac-agent-group-tests: $(YAML_OBJ) $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | 
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacAgentGroupTests.mm mac/SPDFMacAgentSavedSession.mm "$(YAML_OBJ)" mac/SPDFMacAgentGroups.mm mac/SPDFMacAgentValidation.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacAgentGroupTests"
 	"$(BUILD)/SPDFMacAgentGroupTests"
 
+.PHONY: mac-icon-rendering-tests
+mac-icon-rendering-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacIconRenderingTests.mm mac/SPDFMacGroupActionButton.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacSupport.mm mac/SPDFMacToolbarSegments.mm -framework Cocoa -framework QuartzCore -framework UniformTypeIdentifiers -o "$(BUILD)/SPDFMacIconRenderingTests"
+	"$(BUILD)/SPDFMacIconRenderingTests"
+
 .PHONY: mac-sidebar-navigation-tests
 mac-sidebar-navigation-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacSidebarNavigationTests.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacSidebarNavigation.mm -framework Cocoa -o "$(BUILD)/SPDFMacSidebarNavigationTests"

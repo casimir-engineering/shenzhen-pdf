@@ -392,3 +392,14 @@ the minimap early‑return path skips".
   certificate; ad-hoc signing churns the signature on every reinstall, which resets TCC grants
   (Full Disk Access / Accessibility) — relevant when the permissions wizard
   reports "not granted" after a reinstall.
+
+## Control icon rendering
+
+UI control icons use SF Symbols or vector drawing handlers, never pre-rendered
+bitmap assets. `SPDFMacIconGeometry.h` preserves each source's natural aspect
+ratio and draws it without an NSImage raster cache. Keep the hit target separate
+from the glyph slot. Icon buttons redraw on geometry/backing-scale changes;
+center interim layer contents rather than stretching a stale image. Sidebar
+button frames align to backing pixels, including fractional panel widths. The
+headless `mac-icon-rendering-tests` target verifies redraw, laziness and aspect
+ratio. This policy concerns interface icons, not document images or thumbnails.
