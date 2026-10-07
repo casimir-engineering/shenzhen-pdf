@@ -192,7 +192,7 @@ int main(int argc, const char* argv[]) {
         Check([reader.sidebarWorkspaceState[@"expandedGroups"] isEqual:@[promoted.identifier]],@"renaming General preserves manager expansion");
         NSMutableDictionary* state = reader.sidebarWorkspaceState;
         state[@"compactPanel"] = @"map";
-        state[@"groupQuery"] = @"Réference"; state[@"expandedGroups"] = @[promoted.identifier]; state[@"groupScroll"] = @48;
+        state[@"groupSearchCollapsed"] = @YES; state[@"groupQuery"] = @"Réference"; state[@"expandedGroups"] = @[promoted.identifier]; state[@"groupScroll"] = @48;
         reader.navigation.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
         NSMutableArray* savedTabs = [NSMutableArray array];
         for (SPDFDocumentTab* tab in reader.tabs) [savedTabs addObject:spdf_dictionary_from_tab(tab,0)];
@@ -205,7 +205,8 @@ int main(int argc, const char* argv[]) {
         Check(reopened.navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups && reopened.sidebarWidth == 284,
             @"YAML restores exact sidebar mode and width");
         Check([reopened.sidebarWorkspaceState[@"compactPanel"] isEqual:@"map"],@"YAML restores compact panel priority");
-        Check([reopened.sidebarWorkspaceState[@"groupQuery"] isEqual:@"Réference"] &&
+        Check([reopened.sidebarWorkspaceState[@"groupSearchCollapsed"] boolValue] &&
+            [reopened.sidebarWorkspaceState[@"groupQuery"] isEqual:@"Réference"] &&
             [reopened.sidebarWorkspaceState[@"expandedGroups"] isEqual:@[promoted.identifier]] &&
             [reopened.sidebarWorkspaceState[@"groupScroll"] integerValue] == 48,@"YAML restores manager query, expansion and scroll");
         Check(reopened.selectedTab.group.hidden && reopened.selectedTab.pageIndex == 7 && reopened.selectedTab.scrollOrigin.y == 132,

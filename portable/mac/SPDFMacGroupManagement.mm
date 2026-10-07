@@ -81,6 +81,8 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 }
 @implementation SPDFGroupManagementController {
     NSSearchField* _search;
+    NSButton* _expandAll;
+    BOOL _searchCollapsed;
     NSTextField* _summary;
     NSTextField* _empty;
     NSTableView* _table;
@@ -109,6 +111,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     _search.delegate = self; _search.sendsSearchStringImmediately = YES;
     [_search setAccessibilityLabel:@"Search group and document names"];
     _search.focusRingType = NSFocusRingTypeExterior;
+    _expandAll = Icon(@"chevron.down",@"Expand all groups",self,@selector(toggleAllGroups:));
     _table = [SPDFGroupManagementTable new]; _table.headerView = nil; _table.dataSource = self; _table.delegate = self;
     _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStylePlain; _table.intercellSpacing = NSMakeSize(0,2);
     _table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
@@ -138,11 +141,13 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     [info.widthAnchor constraintEqualToConstant:12].active = YES;
     [_summary setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSStackView* footer = [NSStackView stackViewWithViews:@[_summary,info]]; footer.spacing = 6;
-    for (NSView* child in @[_search,_scroll,_empty,footer]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
+    for (NSView* child in @[_search,_expandAll,_scroll,_empty,footer]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
     [NSLayoutConstraint activateConstraints:@[
         [_search.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8],
         [_search.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
-        [_search.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_search.trailingAnchor constraintEqualToAnchor:_expandAll.leadingAnchor constant:-4],
+        [_expandAll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_expandAll.centerYAnchor constraintEqualToAnchor:_search.centerYAnchor],
         [_search.heightAnchor constraintEqualToConstant:26],
         [_scroll.topAnchor constraintEqualToAnchor:_search.bottomAnchor constant:8],
         [_scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:4],
@@ -160,7 +165,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (NSDictionary*)viewState {
     return @{@"groupQuery":_search.stringValue ?: @"",@"expandedGroups":[_expanded.allObjects sortedArrayUsingSelector:@selector(compare:)],
-             @"groupScroll":@(MAX(0,_savedScroll))};
+             @"groupSearchCollapsed":@(_searchCollapsed),@"groupScroll":@(MAX(0,_savedScroll))};
 }
 - (void)publishState { if (!_restoring && self.stateHandler) self.stateHandler(self.viewState); }
 - (void)updateGroups:(NSArray<NSDictionary*>*)groups state:(NSDictionary*)state {
@@ -172,9 +177,10 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     CGFloat scroll = [state[@"groupScroll"] respondsToSelector:@selector(doubleValue)] ? MAX(0,[state[@"groupScroll"] doubleValue]) : 0;
     if (!isfinite(scroll)) scroll = 0;
     if (_hasSnapshot && [_groups isEqualToArray:groups ?: @[]] && [_search.stringValue isEqual:query] &&
-        [_expanded isEqualToSet:expanded] && fabs(_savedScroll-scroll)<.5) return;
+        [_expanded isEqualToSet:expanded] && _searchCollapsed==[state[@"groupSearchCollapsed"] boolValue] && fabs(_savedScroll-scroll)<.5) return;
     _restoring = YES; _hasSnapshot = YES; _groups = groups.copy ?: @[];
     if (![_search.stringValue isEqual:query]) _search.stringValue = query;
+    _searchCollapsed = [state[@"groupSearchCollapsed"] boolValue];
     _expanded = expanded; _savedScroll = scroll; _pendingScrollRestore = YES;
     [self rebuildRows]; [self.view layoutSubtreeIfNeeded];
     [self restoreScrollIfReady];
@@ -201,10 +207,15 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         if (!nameMatches && !documents.count) continue;
         ++matched; [rows addObject:@{@"group":group}];
         // Search reveals matching documents without changing saved expansion.
-        if (query.length || [_expanded containsObject:group[@"id"]])
+        if ((query.length && !_searchCollapsed) || [_expanded containsObject:group[@"id"]])
             for (NSDictionary* document in documents) [rows addObject:@{@"group":group,@"document":document}];
     }
     _rows = rows;
+    BOOL anyExpanded = NO;
+    for (NSDictionary* row in rows) if (row[@"document"]) { anyExpanded = YES; break; }
+    NSString* help = anyExpanded ? @"Collapse all groups" : @"Expand all groups";
+    _expandAll.image = [NSImage imageWithSystemSymbolName:anyExpanded ? @"chevron.up" : @"chevron.down" accessibilityDescription:help];
+    _expandAll.toolTip = help; _expandAll.accessibilityLabel = help; _expandAll.enabled = rows.count > 0;
     _summary.stringValue = _search.stringValue.length ? [NSString stringWithFormat:@"%lu of %lu groups",matched,_groups.count] :
         [NSString stringWithFormat:@"%lu %@ · %lu hidden",_groups.count,_groups.count==1 ? @"group" : @"groups",hidden];
     _empty.stringValue = _groups.count ? @"No matching groups or documents.\nTry another name." : @"Open a document to start organizing your groups.";
@@ -337,7 +348,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         contents=[NSStackView stackViewWithViews:@[badge,label]]; contents.spacing=7;
     } else {
         BOOL searching = [_search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length > 0;
-        BOOL expanded = searching || [_expanded containsObject:group[@"id"]];
+        BOOL expanded = (searching && !_searchCollapsed) || [_expanded containsObject:group[@"id"]];
         SPDFGroupActionButton* disclosure = Icon(expanded ? @"chevron.down" : @"chevron.right",
             [NSString stringWithFormat:@"%@ %@ documents",expanded ? @"Collapse" : @"Expand",group[@"name"]],self,@selector(disclose:)); disclosure.groupID = group[@"id"];
         disclosure.enabled = !searching;
@@ -389,6 +400,15 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     self.actionHandler(row[@"document"] ? @"document" : @"jump",row[@"group"][@"id"],row[@"document"][@"path"] ?: @"");
     _activatingPath=nil; _activatingGroup=nil;
 }
+- (void)toggleAllGroups:(id)sender {
+    (void)sender;
+    BOOL collapse = NO;
+    for (NSDictionary* row in _rows) if (row[@"document"]) { collapse = YES; break; }
+    [_expanded removeAllObjects];
+    if (!collapse) for (NSDictionary* group in _groups) [_expanded addObject:group[@"id"]];
+    _searchCollapsed = collapse; _savedScroll = 0;
+    [self rebuildRows]; [_scroll.contentView scrollToPoint:NSZeroPoint]; [self publishState];
+}
 - (void)disclose:(SPDFGroupActionButton*)sender {
     if ([_expanded containsObject:sender.groupID]) [_expanded removeObject:sender.groupID]; else [_expanded addObject:sender.groupID];
     [self publishState]; [self rebuildRows];
@@ -401,7 +421,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 }
 - (void)controlTextDidChange:(NSNotification*)notification {
     if (notification.object != _search) return;
-    _savedScroll = 0; [self rebuildRows]; [_scroll.contentView scrollToPoint:NSZeroPoint]; [self publishState];
+    _searchCollapsed = NO; _savedScroll = 0; [self rebuildRows]; [_scroll.contentView scrollToPoint:NSZeroPoint]; [self publishState];
 }
 - (void)scrolled:(NSNotification*)notification {
     (void)notification; if (_restoring) return;

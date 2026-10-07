@@ -30,7 +30,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
 - (void)restoreSidebarWorkspaceState:(id)value {
     NSMutableDictionary* state = [NSMutableDictionary dictionary];
     if ([value isKindOfClass:NSDictionary.class]) {
-        for (NSString* key in @[@"mode",@"groupScroll",@"width",@"visible",@"newDocumentsInGeneral"])
+        for (NSString* key in @[@"mode",@"groupScroll",@"width",@"visible",@"newDocumentsInGeneral",@"groupSearchCollapsed"])
             if ([value[key] isKindOfClass:NSNumber.class]) state[key] = value[key];
         id tabScroll=value[@"tabStripScroll"];
         if ([tabScroll isKindOfClass:NSNumber.class] && isfinite([tabScroll doubleValue]) && [tabScroll doubleValue]>=0)

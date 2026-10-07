@@ -310,3 +310,18 @@ The user clarified that recency ordering applies only before typing in ⌘K. Add
 ## Regex click tracking and spacing — 2026-10-06
 
 Headless production-reader hit testing showed Regex receiving the hit (cell result 5), but native tracking dispatched zero actions and left its state unchanged. A dedicated native-checkbox subclass now owns mouse press/release while retaining AppKit drawing and keyboard/accessibility. The existing options gap increases by two points; a 24-point frame provides reliable box/label targets. Nine-point repeated-click checks and native activation pass. The broad workspace probe also exposed four pre-existing disabled-icon pixel-contrast failures following the earlier aspect-fit change; these are unrelated to this fix and were not relaxed. Focused Regex validation passes. No user app was launched, quit or captured.
+
+## 2026-10-07 — Group list collapse/expand all
+
+Added a 26-point unbordered chevron beside the Groups search field, with a
+4-point gap and a tooltip/accessibility label describing the next action.
+Mixed expansion collapses all first; the next click expands every group. This
+only folds the manager's document lists, without navigating or hiding tabs.
+Filtered results can also be folded without losing the query. The existing
+expandedGroups state and a validated groupSearchCollapsed flag round-trip in YAML.
+No document I/O or new launch-path work is introduced.
+
+Validation: group-management and sidebar-workspace suites passed, including
+repeated toggling, filtered results, state restoration and narrow-panel geometry.
+Native offscreen fixtures were generated under /tmp/sz-group-toggle-evidence;
+the search-row alignment was visually inspected. No user app was launched.

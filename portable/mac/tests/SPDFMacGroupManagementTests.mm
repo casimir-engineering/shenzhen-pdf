@@ -69,11 +69,24 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     Check(NSWidth(scroll.frame) <= width && NSHeight(scroll.frame) > 35,"group list fits narrow and short panel");
     if (height <= 296) Check(NSHeight(scroll.contentView.bounds) >= 76,"minimum sidebar initially fits two complete group rows including gaps");
     Check([manager tableView:table heightOfRow:0] >= 36,"group metadata retains two readable lines");
-    Check(NSHeight(search.frame) >= 26 && NSWidth(search.frame) >= 160,"search remains usable at minimum supported width");
+    Check(NSHeight(search.frame) >= 26 && NSWidth(search.frame) >= 130,"search remains usable at minimum supported width");
     fprintf(stdout,"Groups geometry %.0fx%.0f modes=%ld list=%.0fpt first=%.0fpt\n",width,height,navigation.segmentCount,
         NSHeight(scroll.contentView.bounds),height-NSMaxY([scroll convertRect:scroll.bounds toView:host.contentView]));
     Check(search.focusRingType != NSFocusRingTypeNone,"search retains accessible keyboard focus feedback");
     Check(table.selectedRow == 3,"active document has selected-row feedback");
+    NSButton* all = Button(manager.view,@"Collapse all groups");
+    Check(all.image != nil,"all-groups toggle has a native symbol");
+    Check(NSMinX(all.frame)>=NSMaxX(search.frame)+3 && fabs(NSMidY(all.frame)-NSMidY(search.frame))<1,
+        "toggle sits beside and centered on the search field");
+    NSDictionary* initialState=manager.viewState;
+    [all performClick:nil];
+    Check(table.numberOfRows==6 && [manager.viewState[@"expandedGroups"] count]==0,"collapse all hides every document row");
+    [all performClick:nil];
+    Check(table.numberOfRows==18 && [manager.viewState[@"expandedGroups"] count]==6,"expand all restores every group's documents");
+    NSDictionary* expandedState=manager.viewState;
+    [manager updateGroups:fixtureGroups state:expandedState];
+    Check(table.numberOfRows==18,"all-group expansion survives a state restore");
+    [manager updateGroups:fixtureGroups state:initialState];
     __block NSString* action; __block NSString* target; __block NSUInteger changes = 0;
     manager.actionHandler = ^(NSString* verb, NSString* group, NSString* value) { (void)value; action = verb; target = group; changes++; };
     NSView* research = [manager tableView:table viewForTableColumn:table.tableColumns.firstObject row:1];
@@ -95,6 +108,11 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     search.stringValue = @"Conference";
     [manager controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]];
     Check(table.numberOfRows == 12,"document-name search reveals matching documents under each owning group");
+    [all performClick:nil];
+    Check(table.numberOfRows==6 && [search.stringValue isEqual:@"Conference"],"collapse all works without clearing search");
+    [all performClick:nil];
+    Check(table.numberOfRows==12,"expand all reveals filtered matches");
+    [manager updateGroups:fixtureGroups state:@{@"groupQuery":@"Conference",@"expandedGroups":@[]}];
     NSArray* matchedRows = [manager valueForKey:@"rows"];
     Check([matchedRows[1][@"document"][@"title"] isEqual:@"Conference notes.md"],"search excludes unrelated siblings");
     Check([manager.viewState[@"expandedGroups"] count] == 0,"temporary search expansion does not change saved groups");

@@ -8,4 +8,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Groups management has a compact Collapse all / Expand all button beside its search field. It folds document lists without switching documents, also works while filtering, and remembers the chosen expansion state.
