@@ -57,11 +57,7 @@
     [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:7 yRadius:7] fill];
 }
 @end
-@interface SPDFGroupActionButton : NSButton
-@property(nonatomic, copy) NSString* groupID;
-@end
-@implementation SPDFGroupActionButton
-@end
+#import "SPDFMacGroupActionButton.h"
 
 static NSTextField* Label(NSString* text, CGFloat size, BOOL secondary) {
     NSTextField* label = [NSTextField labelWithString:text ?: @""];
@@ -82,6 +78,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 @implementation SPDFGroupManagementController {
     NSSearchField* _search;
     NSButton* _expandAll;
+    NSButton* _jumpCurrent;
     BOOL _searchCollapsed;
     NSTextField* _summary;
     NSTextField* _empty;
@@ -111,7 +108,8 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     _search.delegate = self; _search.sendsSearchStringImmediately = YES;
     [_search setAccessibilityLabel:@"Search group and document names"];
     _search.focusRingType = NSFocusRingTypeExterior;
-    _expandAll = Icon(@"chevron.down",@"Expand all groups",self,@selector(toggleAllGroups:));
+    _expandAll = Icon(@"rectangle.expand.vertical",@"Expand all groups",self,@selector(toggleAllGroups:));
+    _jumpCurrent = Icon(@"scope",@"Jump to current document",self,@selector(jumpToCurrentDocument:));
     _table = [SPDFGroupManagementTable new]; _table.headerView = nil; _table.dataSource = self; _table.delegate = self;
     _table.backgroundColor = NSColor.clearColor; _table.style = NSTableViewStylePlain; _table.intercellSpacing = NSMakeSize(0,2);
     _table.selectionHighlightStyle = NSTableViewSelectionHighlightStyleRegular;
@@ -141,12 +139,14 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     [info.widthAnchor constraintEqualToConstant:12].active = YES;
     [_summary setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSStackView* footer = [NSStackView stackViewWithViews:@[_summary,info]]; footer.spacing = 6;
-    for (NSView* child in @[_search,_expandAll,_scroll,_empty,footer]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
+    for (NSView* child in @[_search,_expandAll,_jumpCurrent,_scroll,_empty,footer]) { child.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:child]; }
     [NSLayoutConstraint activateConstraints:@[
         [_search.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8],
         [_search.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
         [_search.trailingAnchor constraintEqualToAnchor:_expandAll.leadingAnchor constant:-4],
-        [_expandAll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_expandAll.trailingAnchor constraintEqualToAnchor:_jumpCurrent.leadingAnchor constant:-2],
+        [_jumpCurrent.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_jumpCurrent.centerYAnchor constraintEqualToAnchor:_search.centerYAnchor],
         [_expandAll.centerYAnchor constraintEqualToAnchor:_search.centerYAnchor],
         [_search.heightAnchor constraintEqualToConstant:26],
         [_scroll.topAnchor constraintEqualToAnchor:_search.bottomAnchor constant:8],
@@ -214,12 +214,15 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     BOOL anyExpanded = NO;
     for (NSDictionary* row in rows) if (row[@"document"]) { anyExpanded = YES; break; }
     NSString* help = anyExpanded ? @"Collapse all groups" : @"Expand all groups";
-    _expandAll.image = [NSImage imageWithSystemSymbolName:anyExpanded ? @"chevron.up" : @"chevron.down" accessibilityDescription:help];
+    _expandAll.image = [NSImage imageWithSystemSymbolName:anyExpanded ? @"rectangle.compress.vertical" : @"rectangle.expand.vertical" accessibilityDescription:help];
     _expandAll.toolTip = help; _expandAll.accessibilityLabel = help; _expandAll.enabled = rows.count > 0;
     _summary.stringValue = _search.stringValue.length ? [NSString stringWithFormat:@"%lu of %lu groups",matched,_groups.count] :
         [NSString stringWithFormat:@"%lu %@ · %lu hidden",_groups.count,_groups.count==1 ? @"group" : @"groups",hidden];
     _empty.stringValue = _groups.count ? @"No matching groups or documents.\nTry another name." : @"Open a document to start organizing your groups.";
     _empty.hidden = rows.count > 0;
+    _jumpCurrent.enabled = NO;
+    for (NSDictionary* group in _groups) for (NSDictionary* document in group[@"documents"])
+        if ([document[@"selected"] boolValue]) _jumpCurrent.enabled = YES;
     [_table reloadData];
     NSInteger selected = -1;
     for (NSUInteger index=0;index<rows.count;index++) {
@@ -228,6 +231,11 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
         if (!row[@"document"] && [row[@"group"][@"selected"] boolValue]) selected = index;
     }
     [_table selectRowIndexes:selected >= 0 ? [NSIndexSet indexSetWithIndex:selected] : [NSIndexSet indexSet] byExtendingSelection:NO];
+}
+- (void)jumpToCurrentDocument:(id)sender {
+    (void)sender;
+    _search.stringValue = @""; _searchCollapsed = NO;
+    [self rebuildRows]; [self revealSelectedDocument]; [self publishState];
 }
 - (void)revealSelectedDocument {
     (void)self.view;

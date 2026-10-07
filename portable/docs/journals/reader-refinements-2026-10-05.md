@@ -325,3 +325,26 @@ Validation: group-management and sidebar-workspace suites passed, including
 repeated toggling, filtered results, state restoration and narrow-panel geometry.
 Native offscreen fixtures were generated under /tmp/sz-group-toggle-evidence;
 the search-row alignment was visually inspected. No user app was launched.
+
+
+## 2026-10-07 — Actual group-control mouse routing and current-document reveal
+
+The isolated group-controller test (including direct mouseDown) did not reproduce
+inert controls, while the production reader's button-routing probe failed all
+nine expansion clicks. Replaced native cell tracking with explicit press/release
+handling for all group action buttons. Targets have zero alignment insets,
+accept the first mouse, cancel outside releases, and ignore unrelated/older
+queued events. The press rectangle stays stable during tracking. Native drawing,
+keyboard activation and accessibility labels remain intact.
+
+Replaced the generic chevron with rectangle.compress.vertical /
+rectangle.expand.vertical symbols. Added a scope target button to clear any
+blocking filter, expand the selected document's group, and reveal its selected
+row using the existing pinned-header-aware scroll routine.
+
+Validation: the production reader headless probe now routes mouse clicks across
+a 3×3 grid for collapse/expand and top/middle/bottom clicks on the current-document
+button. It asserts expansion state, cleared query, selected row and viewport
+containment. The invisible test window is allowed to settle before posting
+synthetic events, avoiding pending window-server coordinate changes. Group
+management and sidebar YAML persistence suites also pass. No user app launched.

@@ -69,7 +69,7 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     Check(NSWidth(scroll.frame) <= width && NSHeight(scroll.frame) > 35,"group list fits narrow and short panel");
     if (height <= 296) Check(NSHeight(scroll.contentView.bounds) >= 76,"minimum sidebar initially fits two complete group rows including gaps");
     Check([manager tableView:table heightOfRow:0] >= 36,"group metadata retains two readable lines");
-    Check(NSHeight(search.frame) >= 26 && NSWidth(search.frame) >= 130,"search remains usable at minimum supported width");
+    Check(NSHeight(search.frame) >= 26 && NSWidth(search.frame) >= 102,"search remains usable at minimum supported width");
     fprintf(stdout,"Groups geometry %.0fx%.0f modes=%ld list=%.0fpt first=%.0fpt\n",width,height,navigation.segmentCount,
         NSHeight(scroll.contentView.bounds),height-NSMaxY([scroll convertRect:scroll.bounds toView:host.contentView]));
     Check(search.focusRingType != NSFocusRingTypeNone,"search retains accessible keyboard focus feedback");
@@ -78,6 +78,8 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     Check(all.image != nil,"all-groups toggle has a native symbol");
     Check(NSMinX(all.frame)>=NSMaxX(search.frame)+3 && fabs(NSMidY(all.frame)-NSMidY(search.frame))<1,
         "toggle sits beside and centered on the search field");
+    NSButton* jump=Button(manager.view,@"Jump to current document");
+    Check(jump.image!=nil && jump.enabled,"jump-to-current has a valid icon and active document");
     NSDictionary* initialState=manager.viewState;
     [all performClick:nil];
     Check(table.numberOfRows==6 && [manager.viewState[@"expandedGroups"] count]==0,"collapse all hides every document row");
@@ -86,6 +88,10 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     NSDictionary* expandedState=manager.viewState;
     [manager updateGroups:fixtureGroups state:expandedState];
     Check(table.numberOfRows==18,"all-group expansion survives a state restore");
+    [manager updateGroups:fixtureGroups state:@{@"groupQuery":@"No matching document",@"expandedGroups":@[]}];
+    [jump performClick:nil];
+    Check(search.stringValue.length==0 && table.selectedRow==3 && table.numberOfRows==8,
+        "jump clears blocking filter, expands active group and selects current document");
     [manager updateGroups:fixtureGroups state:initialState];
     __block NSString* action; __block NSString* target; __block NSUInteger changes = 0;
     manager.actionHandler = ^(NSString* verb, NSString* group, NSString* value) { (void)value; action = verb; target = group; changes++; };
