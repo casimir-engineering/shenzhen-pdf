@@ -92,7 +92,7 @@
 }
 - (void)groupToggleMenu:(NSMenuItem*)sender { [self.groupReader toggleTabGroup:sender.representedObject]; }
 - (void)groupUngroupMenu:(NSMenuItem*)sender { [self.groupReader ungroupTabs:sender.representedObject]; }
-- (void)groupCloseMenu:(NSMenuItem*)sender { [self.groupReader closeTabGroup:sender.representedObject]; }
+- (void)groupCloseMenu:(NSMenuItem*)sender { [self.groupReader requestCloseTabGroup:sender.representedObject]; }
 - (NSMenu*)contextMenuForGroup:(SPDFTabGroup*)group {
     if (!group) return nil;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:group.displayName];
@@ -126,7 +126,7 @@
         ungroup.target = self;
         ungroup.representedObject = group;
     }
-    NSMenuItem* close = [menu addItemWithTitle:@"Close Group" action:@selector(groupCloseMenu:) keyEquivalent:@""];
+    NSMenuItem* close = [menu addItemWithTitle:@"Close Group…" action:@selector(groupCloseMenu:) keyEquivalent:@""];
     close.target = self;
     close.representedObject = group;
     return menu;

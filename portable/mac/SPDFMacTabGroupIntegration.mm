@@ -172,6 +172,22 @@
     for (SPDFDocumentTab* tab in spdf_tab_group_members(_tabs, group)) tab.group = nil;
     [self finishTabGroupChange];
 }
+- (void)presentGroupCloseConfirmation:(NSAlert*)alert completion:(void (^)(NSModalResponse))completion {
+    if (_window) [alert beginSheetModalForWindow:_window completionHandler:completion];
+    else completion([alert runModal]);
+}
+- (void)requestCloseTabGroup:(SPDFTabGroup*)group {
+    NSUInteger count=spdf_tab_group_members(_tabs,group).count;
+    if (!count || _window.attachedSheet) return;
+    NSAlert* alert=[NSAlert new]; alert.alertStyle=NSAlertStyleWarning;
+    alert.messageText=[NSString stringWithFormat:@"Close group “%@”?",group.displayName];
+    alert.informativeText=[NSString stringWithFormat:@"This closes %lu %@ in this group. Files and Collection history are not deleted.",
+        (unsigned long)count,count==1 ? @"document" : @"documents"];
+    [alert addButtonWithTitle:@"Cancel"]; [alert addButtonWithTitle:@"Close Group"];
+    [self presentGroupCloseConfirmation:alert completion:^(NSModalResponse response) {
+        if (response==NSAlertSecondButtonReturn) [self closeTabGroup:group];
+    }];
+}
 - (void)closeTabGroup:(SPDFTabGroup*)group {
     NSArray* members = spdf_tab_group_members(_tabs, group);
     void (^closeMembers)(void) = ^{

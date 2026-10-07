@@ -104,7 +104,10 @@ static NSBitmapImageRep* TitlePixels(NSString* title) {
     [NSColor.whiteColor setFill]; NSRectFill(NSMakeRect(0,0,120,24));
     NSDictionary* attributes = @{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
         NSForegroundColorAttributeName:NSColor.blackColor, NSParagraphStyleAttributeName:SPDFTabTitleParagraphStyle()};
-    NSRect rect = NSMakeRect(0,3,120,18); NSRectClip(rect);
+    NSRect rect = SPDFTabTitleRect(NSMakeRect(0,0,120,24),0,0,title,attributes);
+    NSRect groupRect = SPDFTabTitleRect(NSMakeRect(0,2,120,20),0,0,title,attributes);
+    Check(NSEqualRects(rect,groupRect),@"group and document labels share the same vertical text geometry");
+    NSRectClip(rect);
     SPDFDrawTabTitle(title,rect,attributes);
     [NSGraphicsContext restoreGraphicsState];
     return bitmap;

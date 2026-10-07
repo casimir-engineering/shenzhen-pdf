@@ -17,6 +17,8 @@
 @property(nonatomic) NSInteger stripRefreshCount;
 @property(nonatomic) NSInteger handoffWriteCount;
 @property(nonatomic) NSInteger errorCount;
+@property NSModalResponse closeResponse;
+@property NSAlert* closeAlert;
 - (void)seed:(NSArray*)tabs selected:(NSInteger)index;
 - (NSArray*)tabs;
 - (NSInteger)selectedIndex;
@@ -28,6 +30,9 @@
     (void)action;
     for (SPDFDocumentTab* tab in tabs) NSCAssert(!tab.unsavedPastedImage, @"saved-document fixture required");
     return NO;
+}
+- (void)presentGroupCloseConfirmation:(NSAlert*)alert completion:(void (^)(NSModalResponse))completion {
+    self.closeAlert=alert; completion(self.closeResponse);
 }
 - (void)seed:(NSArray*)tabs selected:(NSInteger)index {
     _tabs = [tabs mutableCopy];
@@ -200,7 +205,12 @@ static void CheckGroupManagement(void) {
     Expect(@"new opens retain General routing after restart and reveal the new tab",next.group.general && !next.group.hidden &&
         ((SPDFDocumentTab*)restored.tabs[0]).group.hidden && [spdf_tab_group_members(restored.tabs,next.group) count]==2);
     SPDFTabGroup* currentGeneral=next.group;
-    [restored closeTabGroup:((SPDFDocumentTab*)restored.tabs[0]).group];
+    NSUInteger beforeClose=restored.tabs.count;
+    restored.closeResponse=NSAlertFirstButtonReturn;
+    [restored requestCloseTabGroup:((SPDFDocumentTab*)restored.tabs[0]).group];
+    Expect(@"Cancel leaves group documents open",restored.tabs.count==beforeClose && restored.closeAlert!=nil);
+    restored.closeResponse=NSAlertSecondButtonReturn;
+    [restored requestCloseTabGroup:((SPDFDocumentTab*)restored.tabs[0]).group];
     SPDFDocumentTab* reopened=Tab(@"/reopened-after-close.md"); [restored appendNewTabToActiveGroup:reopened];
     Expect(@"closing promoted group then reopening reuses the unique General",restored.tabs.count==3 &&
         reopened.group==currentGeneral && spdf_tab_group_members(restored.tabs,currentGeneral).count==3);
