@@ -72,6 +72,11 @@ static void Render(CGFloat width, CGFloat height, BOOL dark, NSInteger variant, 
     Check(NSHeight(search.frame) >= 26 && NSWidth(search.frame) >= 102,"search remains usable at minimum supported width");
     fprintf(stdout,"Groups geometry %.0fx%.0f modes=%ld list=%.0fpt first=%.0fpt\n",width,height,navigation.segmentCount,
         NSHeight(scroll.contentView.bounds),height-NSMaxY([scroll convertRect:scroll.bounds toView:host.contentView]));
+    NSRect textRect=[(NSSearchFieldCell*)search.cell searchTextRectForBounds:search.bounds];
+    Check(NSMaxX(textRect)>=NSWidth(search.bounds)-9,"empty placeholder uses the unused cancel-button space");
+    Check([search.placeholderString sizeWithAttributes:@{NSFontAttributeName:search.font}].width<=NSWidth(textRect),
+        "placeholder uses complete words that fit the actual text area");
+    if (width>=400) Check([search.placeholderString isEqual:@"Search groups and documents"],"wide search retains full document wording");
     Check(search.focusRingType != NSFocusRingTypeNone,"search retains accessible keyboard focus feedback");
     Check(table.selectedRow == 3,"active document has selected-row feedback");
     NSButton* all = Button(manager.view,@"Collapse all groups");
@@ -243,6 +248,7 @@ int main(void) {
         if (evidence.length) [NSFileManager.defaultManager createDirectoryAtPath:evidence withIntermediateDirectories:YES attributes:nil error:nil];
         CheckGroupDocumentDragging(); CheckGroupHeaderColors();
         CheckGroupScrolling(evidence);
+        Render(400,640,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-wide.png"] : nil);
         Render(176,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-minimum.png"] : nil);
         Render(220,296,NO,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-220-minimum.png"] : nil);
         Render(240,640,YES,3,evidence ? [evidence stringByAppendingPathComponent:@"groups-default-dark.png"] : nil);

@@ -348,3 +348,19 @@ button. It asserts expansion state, cleared query, selected row and viewport
 containment. The invisible test window is allowed to settle before posting
 synthetic events, avoiding pending window-server coordinate changes. Group
 management and sidebar YAML persistence suites also pass. No user app launched.
+
+
+## 2026-10-07 — Search placeholder and referenced expansion icons
+
+The empty native search cell reserved the invisible cancel-button area. A focused
+cell override returns that space only while empty; entered queries keep native
+cancel-button geometry. Placeholder wording is measured against the actual text
+rectangle and font on resize, choosing full wording, “docs”, or a shorter label
+at the narrowest widths. The icon is a lazy cached template vector: an unfilled
+rounded square with diagonal arrows pointing inward or outward, matching the
+user's reference while retaining monochrome theme tint and existing click targets.
+
+Group geometry tests cover fitting complete words at minimum through wide panel
+sizes. The actual-reader mouse-routing checks are retained. Native offscreen
+renders in /tmp/sz-group-placeholder-evidence were visually inspected; no user
+app was launched.
