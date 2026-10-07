@@ -108,6 +108,9 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     self.view = [NSView new];
     _summary = Label(@"",11,YES);
     _search = [SPDFGroupSearchField new]; _search.placeholderString = @"Search groups and documents"; _search.toolTip = @"Search group names and document names.";
+    NSSearchFieldCell* searchCell=(id)_search.cell;
+    searchCell.usesSingleLineMode=YES; searchCell.scrollable=YES;
+    searchCell.wraps=NO; searchCell.lineBreakMode=NSLineBreakByClipping;
     _search.delegate = self; _search.sendsSearchStringImmediately = YES;
     [_search setAccessibilityLabel:@"Search group and document names"];
     _search.focusRingType = NSFocusRingTypeExterior;

@@ -15,3 +15,5 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 - The Groups search placeholder uses the space left by its hidden cancel button and shortens to “docs” when needed, rather than clipping words. Collapse/expand uses outlined rounded-square diagonal-arrow icons, sized to match the adjacent current-document target.
 
 - Document-tab titles and group labels share the same vertical text geometry. Group management includes **Close Group…**; both it and the tab-bar group menu ask for confirmation with the document count. Cancel keeps the group open, and unsaved-image protection remains in place.
+
+- Long queries in the Groups search field scroll horizontally while editing, using the same single-line behavior as document search.
