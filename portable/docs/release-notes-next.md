@@ -8,4 +8,4 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Document-search failures are displayed in the Search panel instead of appearing as zero matches. If a background document read fails, press Enter to retry; invalid regex errors are also visible.
