@@ -27,11 +27,7 @@
     if (index < 0 || index >= (NSInteger)self.tabs.count || ![self hasTabGroups]) return nil;
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Move to Group"];
     SPDFDocumentTab* tab = self.tabs[(NSUInteger)index];
-    NSMutableSet<NSString*>* seen = [NSMutableSet set];
-    for (SPDFDocumentTab* candidate in self.tabs) {
-        SPDFTabGroup* group = candidate.group;
-        if (!group.identifier.length || [seen containsObject:group.identifier]) continue;
-        [seen addObject:group.identifier];
+    for (SPDFTabGroup* group in [self orderedTabGroups]) {
         NSMenuItem* item = [menu addItemWithTitle:group.displayName
                                            action:@selector(tabContextMoveToGroup:)
                                     keyEquivalent:@""];
@@ -70,8 +66,18 @@
         if (spdf_tab_group_members(self.tabs,created).count) [self promptForGroup:created creating:YES];
     });
 }
+- (void)revealTabGroup:(SPDFTabGroup*)group {
+    for (id layout in self.groupLayouts) if ([layout valueForKey:@"group"] == group) {
+        NSRect header = [[layout valueForKey:@"header"] rectValue];
+        CGFloat left = [self leftInset], right = [self tabAreaRightWithOverflow:YES];
+        if (NSMinX(header) < left) [self scrollTabStripBy:NSMinX(header)-left];
+        else if (NSMaxX(header) > right) [self scrollTabStripBy:NSMaxX(header)-right];
+        break;
+    }
+}
 - (void)promptForGroup:(SPDFTabGroup*)group creating:(BOOL)creating {
     if (!group || !self.window) return;
+    [self revealTabGroup:group];
     NSRect rect = NSZeroRect;
     for (id layout in self.groupLayouts) if ([layout valueForKey:@"group"] == group) {
         rect = [[layout valueForKey:@"header"] rectValue]; break;

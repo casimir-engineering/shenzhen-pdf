@@ -19,7 +19,7 @@
     for (id layout in [self groupLayouts]) {
         NSRect header = [[layout valueForKey:@"header"] rectValue];
         SPDFTabGroup* group = [layout valueForKey:@"group"];
-        if (NSIsEmptyRect(_tabPinnedViewport) && group.collapsed && (left ? NSMinX(header)<NSMinX(viewport)-.5 : NSMaxX(header)>NSMaxX(viewport)+.5)) ++count;
+        if (NSIsEmptyRect(_tabPinnedViewport) && (group.collapsed || ![[layout valueForKey:@"tabRects"] count]) && (left ? NSMinX(header)<NSMinX(viewport)-.5 : NSMaxX(header)>NSMaxX(viewport)+.5)) ++count;
         NSDictionary* rects = [layout valueForKey:@"tabRects"];
         for (NSValue* value in rects.allValues) {
             NSRect rect = value.rectValue;
@@ -68,10 +68,16 @@
     for (id layout in [self groupLayouts]) {
         SPDFTabGroup* group=[layout valueForKey:@"group"];
         NSRect header=[[layout valueForKey:@"header"] rectValue];
-        BOOL hiddenGroup=NSIsEmptyRect(_tabPinnedViewport) && group.collapsed &&
+        BOOL hiddenGroup=NSIsEmptyRect(_tabPinnedViewport) && (group.collapsed || ![[layout valueForKey:@"tabRects"] count]) &&
             (left ? NSMinX(header)<NSMinX(viewport)-.5 : NSMaxX(header)>NSMaxX(viewport)+.5);
         NSDictionary* rects=[layout valueForKey:@"tabRects"];
         BOOL headingAdded=NO;
+        if (hiddenGroup && !spdf_tab_group_members(self.tabs,group).count) {
+            NSMenuItem* heading=[menu addItemWithTitle:group.displayName
+                action:@selector(browseGroupFromMenu:) keyEquivalent:@""];
+            heading.target=self; heading.representedObject=group;
+            heading.image=spdf_tab_group_swatch_image(group.colorName);
+        }
         for (NSUInteger index=0;index<self.tabs.count;index++) {
             if (self.tabs[index].group!=group) continue;
             NSValue* value=rects[@(index)]; NSRect rect=value.rectValue;

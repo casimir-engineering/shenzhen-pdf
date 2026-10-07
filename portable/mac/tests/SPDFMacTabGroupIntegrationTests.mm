@@ -252,8 +252,48 @@ static void CheckOpeningOriginalFromBackups(void) {
         [spdf_tab_group_members(restored.tabs,afterRestart.group) count] == 3 &&
         ((SPDFDocumentTab*)restored.tabs[0]).group.collectionBackups);
 }
+static void CheckEmptyGroups(void) {
+    GroupReaderProbe* reader=[GroupReaderProbe new];
+    SPDFDocumentTab* current=Tab(@"/reading.pdf"); current.pageIndex=12;
+    [reader seed:@[current] selected:0];
+    Expect(@"ordinary sessions allocate no empty-group registry", [reader emptyTabGroups]==nil);
+    SPDFTabGroup* first=[reader createEmptyTabGroup];
+    Expect(@"empty group preserves document, position and tab count", reader.tabs.count==1 &&
+        reader.selectedIndex==0 && [reader.activePath isEqual:current.path] && current.pageIndex==12);
+    Expect(@"empty group is real, saved and pending", [reader emptyTabGroups].firstObject==first &&
+        [reader.workspace[@"emptyGroups"] count]==1 && [reader pendingNewDocumentGroup]==first);
+    [reader renameTabGroup:first name:@" Research "];
+    [reader setTabGroup:first hidden:YES];
+    Expect(@"empty group supports rename and visibility", [first.name isEqual:@"Research"] && first.hidden);
+    SPDFTabGroup* second=[reader createEmptyTabGroup];
+    Expect(@"multiple empty groups remain distinct", [reader emptyTabGroups].count==2 && ![first.identifier isEqual:second.identifier]);
+    reader.closeResponse=NSAlertFirstButtonReturn; [reader requestCloseTabGroup:second];
+    Expect(@"cancel closing empty group preserves it", [reader emptyTabGroups].count==2);
+    reader.closeResponse=NSAlertSecondButtonReturn; [reader requestCloseTabGroup:second];
+    Expect(@"closing empty group clears pending destination without closing reader", [reader emptyTabGroups].count==1 &&
+        ![reader pendingNewDocumentGroup] && reader.tabs.count==1);
+    [reader jumpTabGroup:first];
+    Expect(@"jump to empty group arms next open without navigating", !first.hidden &&
+        [reader pendingNewDocumentGroup]==first && [reader.activePath isEqual:current.path]);
+    reader.workspace[@"newDocumentsInGeneral"]=@YES;
+    SPDFDocumentTab* a=Tab(@"/new-a.pdf"), *b=Tab(@"/new-b.md");
+    [reader appendNewTabToActiveGroup:a]; [reader normalizeTabGroups];
+    [reader appendNewTabToActiveGroup:b]; [reader normalizeTabGroups];
+    Expect(@"pending destination overrides default and receives entire batch", a.group==first && b.group==first);
+    Expect(@"filled group has no duplicate empty record", ![reader emptyTabGroups].count && !reader.workspace[@"emptyGroups"]);
+    [reader selectTabAtIndex:[reader.tabs indexOfObjectIdenticalTo:b]];
+    Expect(@"activating opened document consumes pending destination", ![reader pendingNewDocumentGroup]);
+    SPDFDocumentTab* c=Tab(@"/normal-after-batch.pdf"); [reader appendNewTabToActiveGroup:c];
+    Expect(@"ordinary destination policy resumes after batch", c.group.general);
+    GroupReaderProbe* blank=[GroupReaderProbe new]; [blank seed:@[] selected:-1];
+    SPDFTabGroup* blankGroup=[blank createEmptyTabGroup];
+    Expect(@"empty window can own a group without fake documents", blank.tabs.count==0 && blank.selectedIndex==-1);
+    SPDFDocumentTab* only=Tab(@"/first.pdf"); [blank appendNewTabToActiveGroup:only]; [blank normalizeTabGroups];
+    Expect(@"first document enters empty-window group", only.group==blankGroup && ![blank emptyTabGroups].count);
+}
 int main(void) {
     @autoreleasepool {
+        CheckEmptyGroups();
         CheckOpeningOriginalFromBackups();
         CheckFreshGeneral();
         CheckCollapsedGroupRestore();

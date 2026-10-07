@@ -7,6 +7,25 @@
 @end
 
 @implementation SPDFTabStripView (Menus)
+- (NSMenu*)newTabOrGroupMenu {
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@"New Tab or Group"];
+    NSMenuItem* tab = [menu addItemWithTitle:@"New Tab" action:@selector(newTabRequested:) keyEquivalent:@""];
+    tab.target = self.reader;
+    spdf_set_menu_item_system_symbol(tab, @"doc.badge.plus");
+    NSMenuItem* group = [menu addItemWithTitle:@"New Group…"
+        action:NSSelectorFromString(@"createEmptyTabGroupFromPlus:") keyEquivalent:@""];
+    group.target = self.reader;
+    spdf_set_menu_item_system_symbol(group, @"folder.badge.plus");
+    return menu;
+}
+
+- (void)showNewTabOrGroupMenu {
+    [self dismissHoverPanel];
+    NSRect rect = [self plusRect];
+    [[self newTabOrGroupMenu] popUpMenuPositioningItem:nil
+        atLocation:NSMakePoint(NSMinX(rect), NSMinY(rect)) inView:self];
+}
+
 - (NSMenu*)overflowMenu {
     NSMenu* menu = [[NSMenu alloc] initWithTitle:@"All Groups"];
     NSMutableSet* seen = [NSMutableSet set];
@@ -29,6 +48,15 @@
         item.representedObject = @(index);
         item.indentationLevel = group ? 1 : 0;
         item.state = index == (NSUInteger)self.selectedIndex ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    for (SPDFTabGroup* group in self.emptyGroups) {
+        if ([seen containsObject:group.identifier]) continue;
+        [seen addObject:group.identifier];
+        if (menu.numberOfItems) [menu addItem:NSMenuItem.separatorItem];
+        NSMenuItem* heading = [menu addItemWithTitle:group.displayName
+            action:@selector(browseGroupFromMenu:) keyEquivalent:@""];
+        heading.target=self; heading.representedObject=group;
+        heading.image=spdf_tab_group_swatch_image(group.colorName);
     }
     return menu;
 }

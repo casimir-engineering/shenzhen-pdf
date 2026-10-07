@@ -33,6 +33,7 @@
 
 @interface SPDFFakeTabReader : NSObject
 @property(nonatomic) NSInteger newTabCount;
+@property(nonatomic) NSInteger newGroupCount;
 @property(nonatomic) NSInteger selectedTabIndex;
 @property(nonatomic) NSInteger movedTabCount;
 @property(nonatomic) NSInteger typeToSearchCalls;
@@ -47,6 +48,11 @@
 - (void)newTabRequested:(id)sender {
     (void)sender;
     self.newTabCount += 1;
+}
+
+- (void)createEmptyTabGroupFromPlus:(id)sender {
+    (void)sender;
+    self.newGroupCount += 1;
 }
 
 - (void)selectTabAtIndex:(NSInteger)index {
@@ -94,6 +100,19 @@
     self.lastChromeAction = spdf_window_chrome_action(event.clickCount, NO, NO, NO);
 }
 
+@end
+
+// Capture the actual menu from the production click path without entering a
+// modal menu loop in the headless fixture.
+@interface SPDFMenuSpyTabStrip : SPDFTabStripView
+@property(nonatomic, strong) NSMenu* lastAddMenu;
+@property(nonatomic) NSInteger addMenuCount;
+@end
+@implementation SPDFMenuSpyTabStrip
+- (void)showNewTabOrGroupMenu {
+    self.lastAddMenu = [self newTabOrGroupMenu];
+    self.addMenuCount += 1;
+}
 @end
 
 // The tab-strip implementation references these application helpers from
@@ -176,7 +195,7 @@ int main(void) {
                                                                              styleMask:NSWindowStyleMaskBorderless
                                                                                backing:NSBackingStoreBuffered
                                                                                  defer:NO];
-        SPDFTabStripView* strip = [[SPDFTabStripView alloc] initWithFrame:window.contentView.bounds];
+        SPDFMenuSpyTabStrip* strip = [[SPDFMenuSpyTabStrip alloc] initWithFrame:window.contentView.bounds];
         strip.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         SPDFFakeTabReader* reader = [[SPDFFakeTabReader alloc] init];
         reader.selectedTabIndex = -1;
@@ -217,8 +236,27 @@ int main(void) {
         expect_integer(@"tab remains reorderable", reader.movedTabCount, 1);
         expect_integer(@"tab gesture never enters window chrome", window.chromeEventCount, 0);
 
+        expect_true(@"chooser is built lazily on demand", strip.lastAddMenu == nil && strip.addMenuCount == 0);
         dispatch(window, NSEventTypeLeftMouseDown, plusPoint, 1);
-        expect_integer(@"plus remains clickable", reader.newTabCount, 1);
+        expect_integer(@"plus opens the compact chooser", strip.addMenuCount, 1);
+        expect_integer(@"plus does not immediately open a document", reader.newTabCount, 0);
+        expect_integer(@"chooser has only the two requested actions", strip.lastAddMenu.numberOfItems, 2);
+        NSMenuItem* newTab = [strip.lastAddMenu itemAtIndex:0];
+        NSMenuItem* newGroup = [strip.lastAddMenu itemAtIndex:1];
+        expect_true(@"New Tab uses existing open action", [newTab.title isEqualToString:@"New Tab"] &&
+            newTab.target == reader && newTab.action == @selector(newTabRequested:));
+        expect_true(@"New Group routes to empty-group action", [newGroup.title isEqualToString:@"New Group…"] &&
+            newGroup.target == reader && newGroup.action == @selector(createEmptyTabGroupFromPlus:));
+        [strip.lastAddMenu performActionForItemAtIndex:0];
+        [strip.lastAddMenu performActionForItemAtIndex:1];
+        expect_integer(@"New Tab calls reader once", reader.newTabCount, 1);
+        expect_integer(@"New Group calls reader once", reader.newGroupCount, 1);
+        for (NSAccessibilityElement* child in strip.accessibilityChildren) {
+            if (![child.accessibilityLabel isEqualToString:@"New Tab or Group"]) continue;
+            expect_true(@"plus has popup accessibility role", [child.accessibilityRole isEqualToString:NSAccessibilityPopUpButtonRole]);
+            expect_true(@"accessible plus press opens chooser", [child accessibilityPerformPress]);
+        }
+        expect_integer(@"mouse and accessibility share chooser", strip.addMenuCount, 2);
         expect_integer(@"plus never enters window chrome", window.chromeEventCount, 0);
 
         dispatch(window, NSEventTypeLeftMouseDown, emptyPoint, 1);

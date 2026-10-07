@@ -45,7 +45,7 @@ typedef NS_ENUM(NSInteger, SPDFTabAccessibilityKind) {
             [strip showHiddenTabsOnLeft:self.kind==SPDFTabAccessibilityKindScrollLeft];
             return YES;
         case SPDFTabAccessibilityKindNewTab:
-            [strip.reader newTabRequested:strip];
+            [strip showNewTabOrGroupMenu];
             return YES;
     }
 }
@@ -169,8 +169,8 @@ NSArray<NSAccessibilityElement*>* SPDFMacTabAccessibilityChildren(SPDFTabStripVi
         [children addObject:overflow];
     }
     SPDFMacTabAccessibilityElement* add =
-        Element(strip, SPDFTabAccessibilityKindNewTab, NSAccessibilityButtonRole, @"Open Document", [strip plusRect]);
-    add.accessibilityHelp = @"Opens a document in a new tab.";
+        Element(strip, SPDFTabAccessibilityKindNewTab, NSAccessibilityPopUpButtonRole, @"New Tab or Group", [strip plusRect]);
+    add.accessibilityHelp = @"Choose New Tab to open a document, or New Group to create an empty group.";
     [children addObject:add];
     return children;
 }

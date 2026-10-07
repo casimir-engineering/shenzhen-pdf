@@ -415,3 +415,29 @@ injected reopen failure, error visibility, successful retry and malformed regex.
 It accepts an optional external PDF path without embedding private files in the
 repository; its normal fixture uses generated reader text. The injected failure
 reproduces the incorrect empty-result behavior, not proof of the user's incident.
+
+
+## 2026-10-07 — New Tab / New Group menu and persistent empty groups
+
+A second agent implemented the native + menu and tab-strip handling. Empty
+groups are real group objects rather than fake document tabs: the current
+reader and reading position stay intact. The existing anchored naming popup
+selects the default name, and dismissing it keeps that default. The next newly
+opened document, including a multi-file open batch, enters the pending group.
+Normal new-document routing resumes after that batch becomes active.
+
+Empty groups serialize into the window sidebar workspace in session YAML, with
+the pending destination ID. Once populated, their state uses the existing tab
+codec. Empty-only windows survive session normalization. Group Management, the
+All Groups picker, context menus, drag-in destinations, accessibility, and AI
+list/update/move-tab operations recognize empty groups. Ordinary sessions do not
+allocate an empty-group registry; the + menu remains lazily built on click.
+
+Headless tests cover menu and accessibility routing, no eager menu construction,
+empty-header layout/overflow, unchanged current reader, YAML round trips, pending
+batch routing, closing/cancel, malformed state, and filling an empty group.
+No user app was launched, quit, or captured.
+The real-reader headless probe also invokes the native menu action, verifies both
+choices stay enabled without an active document, checks the selected default name
+in the native field editor, and exercises existing group-button hit targets. Tab
+state/lifecycle, unsaved-image close protection, and AI group suites pass as well.

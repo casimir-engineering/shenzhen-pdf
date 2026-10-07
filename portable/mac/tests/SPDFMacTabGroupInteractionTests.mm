@@ -158,6 +158,7 @@ static NSBitmapImageRep* render_strip(SPDFTabStripView* strip, NSAppearance* app
 #include "SPDFMacTabGroupOverflowChecks.h"
 
 #include "SPDFMacTabStripScrollChecks.h"
+#include "SPDFMacEmptyTabGroupStripChecks.h"
 int main(void) {
     @autoreleasepool {
         (void)NSApplication.sharedApplication;
@@ -416,6 +417,7 @@ int main(void) {
                @"selected tab accessibility press was rejected");
         expect(reader.selectedTab == 9, @"tab accessibility press did not route selection");
     }
+    check_empty_tab_groups();
     puts("SPDF mac tab-group interaction tests passed");
     return 0;
 }

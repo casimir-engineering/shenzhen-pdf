@@ -47,8 +47,20 @@ static NSDictionary* Group(NSDictionary* state, NSString* identifier) {
     for (NSDictionary* group in state[@"groups"]) if ([group[@"id"] isEqual:identifier]) return group;
     return nil;
 }
+static void CheckEmptyGroupCommands(void) {
+    AgentGroupProbe* host=[AgentGroupProbe new]; [host seed:@[Tab(@"/current.pdf")]];
+    SPDFTabGroup* group=[host createEmptyTabGroup];
+    NSDictionary* state=Run(host,@{@"action":@"list-groups"});
+    Check(Group(state,group.identifier) && [Group(state,group.identifier)[@"paths"] count]==0);
+    state=Run(host,@{@"action":@"update-group",@"groupID":group.identifier,@"name":@"Upcoming",@"hidden":@YES});
+    Check(!state[@"error"] && [Group(state,group.identifier)[@"name"] isEqual:@"Upcoming"]);
+    state=Run(host,@{@"action":@"move-tab",@"groupID":group.identifier,@"path":@"/current.pdf"});
+    Check(!state[@"error"] && [Group(state,group.identifier)[@"paths"] isEqual:@[@"/current.pdf"]]);
+    Check(![host emptyTabGroups].count);
+}
 int main(void) {
     @autoreleasepool {
+        CheckEmptyGroupCommands();
         AgentGroupProbe* host=[AgentGroupProbe new];
         [host seed:@[Tab(@"/a.pdf"),Tab(@"/b.md"),Tab(@"/c.pdf"),Tab(@"/d.md")]];
         NSDictionary* state=Run(host,@{@"action":@"list-groups"});

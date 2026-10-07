@@ -1306,7 +1306,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                     NSString* path = [tab[@"path"] isKindOfClass:NSString.class] ? tab[@"path"] : nil;
                     if (path.length > 0) [tabs addObject:tab];
                 }
-                if (tabs.count == 0) continue;
+                if (tabs.count == 0 && !SPDFSessionHasEmptyTabGroups(copy)) continue;
                 copy[@"tabs"] = tabs;
                 [windows addObject:copy];
             }
@@ -1622,7 +1622,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 - (void)writeSessionStateForCurrentWindow {
     if (_suppressSessionWriteOnTerminate) return;
     [self rememberActiveTabState];
-    if (_tabs.count == 0) {
+    if (_tabs.count == 0 && ![self emptyTabGroups].count) {
         [self removeSessionStateForCurrentWindow];
         return;
     }
@@ -2631,7 +2631,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
     _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), kTabStripHeight)];
     _tabStrip.reader = self;
-    _tabStrip.tabs = _tabs;
+    _tabStrip.emptyGroups = [self emptyTabGroups]; _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
     _tabStrip.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:_tabStrip];
@@ -6925,7 +6925,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (void)updateTabStrip {
     [self normalizeTabGroups];
-    _tabStrip.tabs = _tabs;
+    _tabStrip.emptyGroups = [self emptyTabGroups]; _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
     [self updateTabStripFrame];
 }
@@ -8678,7 +8678,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (!closingActive && index < _selectedTabIndex) _selectedTabIndex--;
 
     if (_tabs.count == 0) {
-        BOOL shouldCloseThisWindow = [self hasOtherShenzhenWindows];
+        BOOL shouldCloseThisWindow = ![self emptyTabGroups].count && [self hasOtherShenzhenWindows];
         [self clearToolbarFieldFocusForTabSwitch];
         _selectedTabIndex = -1;
         [self cancelInactiveTabPreloads];
@@ -8750,9 +8750,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self savePersistentState];
 }
 
-- (void)newTabRequested:(id)sender {
-    [self openDocument:sender];
-}
+- (void)newTabRequested:(id)sender { [self openDocument:sender]; }
 
 - (void)openRecentDocument:(id)sender {
     if (![sender isKindOfClass:NSMenuItem.class]) return;
@@ -9867,7 +9865,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                             title:@"Map"
                            active:_minimapVisible
                           tooltip:_minimapVisible ? @"Hide the minimap" : @"Show the minimap"];
-    _tabStrip.tabs = _tabs;
+    _tabStrip.emptyGroups = [self emptyTabGroups]; _tabStrip.tabs = _tabs;
     _tabStrip.selectedIndex = _selectedTabIndex;
     [self updateToolbarOverflow];
 }
@@ -14983,7 +14981,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(paste:))
         return !_presentationMode && (SPDFClipboardHasDocument(NSPasteboard.generalPasteboard) ||
                (hasDoc && [NSPasteboard.generalPasteboard canReadObjectForClasses:@[ NSString.class ] options:@{}]));
-    if (action == @selector(openDocument:) || action == @selector(openPathPrompt:) ||
+    if (action == @selector(openDocument:) || action == @selector(openPathPrompt:) || action == @selector(newTabRequested:) ||
+        action == NSSelectorFromString(@"createEmptyTabGroupFromPlus:") ||
         action == @selector(toggleFullScreen:) || action == @selector(showFavoritesPalette:) ||
         action == @selector(showFindPalette:) || action == @selector(focusFind:) ||
         action == @selector(setCommentAuthor:) || action == @selector(openRecentDocument:) ||

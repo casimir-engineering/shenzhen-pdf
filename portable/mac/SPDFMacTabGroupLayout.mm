@@ -16,8 +16,30 @@
 @implementation SPDFTabGroupLayout
 @end
 
+static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex, CGFloat height) {
+    SPDFTabGroupLayout* layout = [SPDFTabGroupLayout new];
+    layout.group = group; layout.firstIndex = firstIndex;
+    layout.tabRects = [NSMutableDictionary dictionary]; layout.members = [NSMutableArray array];
+    CGFloat labelWidth = MAX(48.0, MIN(group.collectionBackups ? 196.0 : 160.0,
+        ceil([group.displayName sizeWithAttributes:
+            @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width)
+            + (group.collectionBackups ? 34 : 14)));
+    layout.header = NSMakeRect(0, floor((height-20)/2), labelWidth, 20);
+    return layout;
+}
+
 @implementation SPDFTabStripView (GroupLayout)
-- (BOOL)hasTabGroups { return self.tabs.firstObject.group != nil; }
+- (BOOL)hasTabGroups { return self.tabs.firstObject.group != nil || self.emptyGroups.count > 0; }
+- (NSArray<SPDFTabGroup*>*)orderedTabGroups {
+    NSMutableArray* groups = [NSMutableArray array]; NSMutableSet* seen = [NSMutableSet set];
+    for (SPDFDocumentTab* tab in self.tabs) if (tab.group && ![seen containsObject:tab.group.identifier]) {
+        [groups addObject:tab.group]; [seen addObject:tab.group.identifier];
+    }
+    for (SPDFTabGroup* group in self.emptyGroups) if (![seen containsObject:group.identifier]) {
+        [groups addObject:group]; [seen addObject:group.identifier];
+    }
+    return groups;
+}
 - (NSArray*)groupLayouts {
     if (![self hasTabGroups]) return nil;
     if (_groupLayout && NSEqualRects(_groupLayoutBounds, self.bounds) && _groupLayoutInset == [self leftInset])
@@ -30,19 +52,19 @@
         SPDFDocumentTab* tab = self.tabs[i];
         if (tab.group.hidden) continue;
         if (current.group != tab.group) {
-            current = [[SPDFTabGroupLayout alloc] init];
-            current.group = tab.group;
-            current.firstIndex = i;
-            current.tabRects = [NSMutableDictionary dictionary];
-            current.members = [NSMutableArray array];
-            CGFloat labelWidth = MAX(48.0, MIN(tab.group.collectionBackups ? 196.0 : 160.0,
-                ceil([tab.group.displayName sizeWithAttributes:
-                    @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width)
-                    + (tab.group.collectionBackups ? 34 : 14)));
-            current.header = NSMakeRect(0, floor((NSHeight(self.bounds)-20)/2), labelWidth, 20);
+            current = EmptyLayout(tab.group, i, NSHeight(self.bounds));
             [groups addObject:current];
         }
         if (!tab.group.collapsed) [current.members addObject:@(i)];
+    }
+    if (self.emptyGroups.count) {
+        NSMutableSet* populated = [NSMutableSet set];
+        for (SPDFDocumentTab* tab in self.tabs) if (tab.group) [populated addObject:tab.group.identifier];
+        for (SPDFTabGroup* group in self.emptyGroups) {
+            if (group.hidden || [populated containsObject:group.identifier]) continue;
+            [groups addObject:EmptyLayout(group,self.tabs.count,NSHeight(self.bounds))];
+            [populated addObject:group.identifier];
+        }
     }
     // Keep every non-hidden group in document order. Clipping belongs to the
     // viewport, not admission: scrolling must never silently remove a group.
@@ -67,7 +89,7 @@
     CGFloat available = MAX(0,[self tabAreaRightWithOverflow:YES]-[self leftInset]);
     CGFloat collapsedWidth = 0; NSInteger expandedCount=0; SPDFTabGroupLayout* expanded = nil;
     for (SPDFTabGroupLayout* layout in groups) {
-        if (layout.group.collapsed) collapsedWidth += NSWidth(layout.frame)+8;
+        if (layout.group.collapsed || !layout.members.count) collapsedWidth += NSWidth(layout.frame)+8;
         else { expanded = layout; ++expandedCount; }
     }
     _tabPinnedViewport = NSZeroRect;
