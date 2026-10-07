@@ -3,9 +3,12 @@
 #import "SPDFMacTabGroups.h"
 
 #import "SPDFMacGroupManagementTable.h"
+#import "SPDFMacGroupSearchControls.h"
 @interface SPDFGroupSearchField : NSSearchField
 @end
 @implementation SPDFGroupSearchField
++ (Class)cellClass { return SPDFGroupSearchCell.class; }
+- (void)setFrameSize:(NSSize)size { [super setFrameSize:size]; SPDFUpdateGroupSearchPlaceholder(self); }
 - (NSRect)focusRingMaskBounds { return NSInsetRect(self.bounds,.5,.5); }
 - (void)drawFocusRingMask {
     [[NSBezierPath bezierPathWithRoundedRect:self.focusRingMaskBounds xRadius:MIN(14,NSHeight(self.bounds)/2)
@@ -214,7 +217,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     BOOL anyExpanded = NO;
     for (NSDictionary* row in rows) if (row[@"document"]) { anyExpanded = YES; break; }
     NSString* help = anyExpanded ? @"Collapse all groups" : @"Expand all groups";
-    _expandAll.image = [NSImage imageWithSystemSymbolName:anyExpanded ? @"rectangle.compress.vertical" : @"rectangle.expand.vertical" accessibilityDescription:help];
+    _expandAll.image = SPDFGroupExpansionImage(anyExpanded);
     _expandAll.toolTip = help; _expandAll.accessibilityLabel = help; _expandAll.enabled = rows.count > 0;
     _summary.stringValue = _search.stringValue.length ? [NSString stringWithFormat:@"%lu of %lu groups",matched,_groups.count] :
         [NSString stringWithFormat:@"%lu %@ · %lu hidden",_groups.count,_groups.count==1 ? @"group" : @"groups",hidden];
@@ -252,6 +255,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 }
 - (void)viewDidLayout {
     [super viewDidLayout];
+    SPDFUpdateGroupSearchPlaceholder(_search);
     CGFloat width = NSWidth(_scroll.contentView.bounds);
     if (width > 0) {
         _table.tableColumns.firstObject.width = width;
@@ -429,6 +433,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 }
 - (void)controlTextDidChange:(NSNotification*)notification {
     if (notification.object != _search) return;
+    SPDFUpdateGroupSearchPlaceholder(_search);
     _searchCollapsed = NO; _savedScroll = 0; [self rebuildRows]; [_scroll.contentView scrollToPoint:NSZeroPoint]; [self publishState];
 }
 - (void)scrolled:(NSNotification*)notification {
