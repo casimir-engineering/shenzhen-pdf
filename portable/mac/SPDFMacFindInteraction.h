@@ -3,4 +3,5 @@
 @interface ShenzhenMacDelegate (SPDFMacFindInteraction)
 - (void)rememberPanelBeforeFind;
 - (void)dismissWorkspaceFind;
+- (void)dismissSidebarFilterField;
 @end

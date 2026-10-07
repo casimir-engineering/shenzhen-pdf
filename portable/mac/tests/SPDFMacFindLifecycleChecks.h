@@ -1,5 +1,6 @@
 #import "SPDFMacFindFailure.h"
 #import "SPDFMacFindInteraction.h"
+#import "SPDFMacPanelSearchChecks.h"
 @implementation WorkspaceReaderProbe (FindLifecycle)
 - (void)waitForFindCheck {
     NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:15];
@@ -24,6 +25,8 @@
     NSUInteger expected=_findMatches.count;
     Check([_searchField.stringValue isEqual:query] && expected>0,@"native typed query returns matches");
     fprintf(stdout,"Typed %s: %lu matches\n",query.UTF8String,(unsigned long)expected);
+    [self checkPanelSearchTransitions:query matches:expected];
+    _searchField.stringValue=query;
     // Superseded operations must not replace the last query's results.
     for (NSUInteger i=0;i<30;i++) {
         _searchField.stringValue=i%2 ? query : @"definitely-absent-query";

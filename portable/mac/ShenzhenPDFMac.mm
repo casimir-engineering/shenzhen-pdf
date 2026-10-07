@@ -11716,11 +11716,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     if (url) [NSWorkspace.sharedWorkspace openURL:url];
 }
 
-- (void)clearFindFieldFocus {
-    if (_window.firstResponder == _searchField || _window.firstResponder == _searchField.currentEditor)
-        [_window makeFirstResponder:[self activeDocumentKeyView]];
-}
-
 - (void)clearPageFieldFocus {
     if (_window.firstResponder == _pageField || _window.firstResponder == _pageField.currentEditor ||
         _pageField.currentEditor)
@@ -14757,6 +14752,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
 - (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)commandSelector {
     (void)textView;
+    if (control == _sidebarFilterField && commandSelector == @selector(cancelOperation:)) {
+        [self dismissSidebarFilterField]; return YES;
+    }
     if (control == _searchField) {
         if (commandSelector == @selector(cancelOperation:)) {
             [self dismissWorkspaceFind];

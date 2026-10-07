@@ -3,6 +3,8 @@
 
 #import "SPDFMacSidebarModeControl.h"
 #import "SPDFMacSidebarOutline.h"
+#import "SPDFMacGroupActionButton.h"
+#import "SPDFMacPanelExpansionImage.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "markdown/SPDFTextDocumentFormats.h"
@@ -203,15 +205,16 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
 
     // Borderless so the triangle reads as a disclosure control rather than a
     // button, and small so it sits inside a 25pt row.
-    NSButton* triangle = [NSButton buttonWithImage:SPDFChapterTriangleImage(YES)
-                                            target:self
-                                            action:@selector(disclosureTriangleClicked:)];
+    NSButton* triangle = [SPDFGroupActionButton new];
+    triangle.image=SPDFChapterTriangleImage(YES); triangle.target=self;
+    triangle.action=@selector(disclosureTriangleClicked:);
     triangle.bezelStyle = NSBezelStyleInline;
     triangle.bordered = NO;
     triangle.imagePosition = NSImageOnly;
     triangle.tag = kSPDFTriangleTag;
     triangle.translatesAutoresizingMaskIntoConstraints = NO;
     [triangle.widthAnchor constraintEqualToConstant:kSPDFChapterTriangleWidth].active = YES;
+    [triangle.heightAnchor constraintEqualToConstant:20].active = YES;
     [cell addSubview:triangle];
 
     NSTextField* field = [NSTextField labelWithString:@""];
@@ -292,22 +295,14 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
 // arrows opening out when everything is already collapsed. A single control
 // beats a labelled pair here -- it costs the list no height at all, and the
 // state it would otherwise spell out is already visible in the rows.
-static const CGFloat kSPDFOutlineToggleWidth = 22.0;
+static const CGFloat kSPDFOutlineToggleWidth = 26.0;
 static const CGFloat kSPDFOutlineToggleGap = 4.0;
-static const CGFloat kSPDFSidebarEdgeInset = 12.0;
-
-static NSImage* SPDFOutlineToggleImage(BOOL collapses) {
-    NSString* symbol = collapses ? @"arrow.down.right.and.arrow.up.left" : @"arrow.up.left.and.arrow.down.right";
-    NSImage* image = [NSImage imageWithSystemSymbolName:symbol
-                               accessibilityDescription:collapses ? @"Collapse All" : @"Expand All"];
-    NSImageSymbolConfiguration* configuration =
-        [NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightMedium];
-    return [image imageWithSymbolConfiguration:configuration] ?: image;
-}
+static const CGFloat kSPDFSidebarEdgeInset = 8.0;
 
 static NSButton* SPDFOutlineToggleControl(ShenzhenMacDelegate* self, SEL action) {
-    NSButton* button = [NSButton buttonWithImage:SPDFOutlineToggleImage(YES) target:self action:action];
-    button.bezelStyle = NSBezelStyleRecessed;
+    NSButton* button = [SPDFGroupActionButton new];
+    button.image=SPDFGroupExpansionImage(YES); button.target=self; button.action=action;
+    button.bordered = NO; button.ignoresMultiClick = NO;
     button.showsBorderOnlyWhileMouseInside = YES;
     button.controlSize = NSControlSizeSmall;
     button.imagePosition = NSImageOnly;
@@ -358,7 +353,8 @@ static NSLayoutConstraint* SPDFFilterTrailingConstraint(NSView* container) {
         [toggle.trailingAnchor constraintEqualToAnchor:_sidebarContainer.trailingAnchor
                                               constant:-kSPDFSidebarEdgeInset],
         [toggle.centerYAnchor constraintEqualToAnchor:_sidebarFilterField.centerYAnchor],
-        [toggle.widthAnchor constraintEqualToConstant:kSPDFOutlineToggleWidth]
+        [toggle.widthAnchor constraintEqualToConstant:kSPDFOutlineToggleWidth],
+        [toggle.heightAnchor constraintEqualToConstant:26]
     ]];
 }
 
@@ -376,7 +372,7 @@ static NSLayoutConstraint* SPDFFilterTrailingConstraint(NSView* container) {
     NSMutableSet<NSString*>* open = [collapsible mutableCopy];
     [open minusSet:[self collapsedChapterKeys]];
     BOOL collapses = open.count > 0;
-    toggle.image = SPDFOutlineToggleImage(collapses);
+    toggle.image = SPDFGroupExpansionImage(collapses);
     toggle.toolTip = collapses ? @"Collapse All" : @"Expand All";
 }
 
