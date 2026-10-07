@@ -228,6 +228,13 @@ supported `colors`. Each group includes its persisted `id`, custom `name`,
 `position`, and ordered document `paths`. Each tab includes its one-based
 `index`, `path`, `title`, `groupID`, `selected`, `readOnly`, and `missingFile`.
 Ungrouped tabs have `groupID: null`; the General group's stable ID is `general`.
+Empty groups created with the tab-strip **+ → New Group…** appear in `groups`
+with an empty `paths` array. They accept the existing update, visibility and
+move-tab commands. Their metadata and pending next-open destination persist in
+`sidebar.emptyGroups` and `sidebar.pendingNewGroupID` in the window's session
+YAML; filling one transfers its metadata to the usual per-tab group codec.
+They are never represented as placeholder documents.
+
 Listing does not modify the session or create groups. Hidden groups remain in
 these results even though their headers and tabs are absent from the top strip.
 The response also reports `newDocumentsInGeneral`, the persisted window routing

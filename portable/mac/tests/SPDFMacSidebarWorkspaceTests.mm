@@ -167,10 +167,32 @@ static void BenchmarkWorkspace(void) {
         }
     }
 }
+static void CheckEmptyGroupPersistence(void) {
+    WorkspaceProbe* reader=[WorkspaceProbe new]; [reader seed:@[Tab(@"Current.pdf")]];
+    SPDFTabGroup* group=[reader createEmptyTabGroup]; [reader renameTabGroup:group name:@"Next project"];
+    NSDictionary* saved=YAML([reader sidebarWorkspaceSnapshot]);
+    Check(SPDFSessionHasEmptyTabGroups(@{@"sidebar":saved}),@"session keeps windows containing only empty groups");
+    Check(!SPDFSessionHasEmptyTabGroups(@{@"sidebar":@[@1]}) &&
+        !SPDFSessionHasEmptyTabGroups(@{@"sidebar":@{@"emptyGroups":@[@1,@{}]}}),@"invalid session groups do not keep empty windows");
+    WorkspaceProbe* restored=[WorkspaceProbe new]; [restored seed:@[Tab(@"Current.pdf")]];
+    [restored restoreSidebarWorkspaceState:saved];
+    SPDFTabGroup* empty=[restored emptyTabGroups].firstObject;
+    Check([empty.identifier isEqual:group.identifier] && [empty.name isEqual:@"Next project"],@"YAML preserves empty group identity/name");
+    Check([restored pendingNewDocumentGroup]==empty,@"YAML preserves next-open destination");
+    NSArray* rows=[restored sidebarGroupSnapshots];
+    Check(rows.count==2 && [rows.lastObject[@"documents"] count]==0,@"manager displays empty group with no placeholder document");
+    [restored performSidebarGroupAction:@"visibility" identifier:empty.identifier value:@""];
+    Check(empty.hidden,@"manager actions resolve empty groups");
+    SPDFDocumentTab* next=Tab(@"Next.pdf"); [restored appendNewTabToActiveGroup:next]; [restored normalizeTabGroups];
+    Check(next.group==empty && !empty.hidden && ![restored emptyTabGroups].count,@"restored pending group receives new document");
+    [restored restoreSidebarWorkspaceState:@{@"emptyGroups":@[@1,@{},@{@"id":@"general"}],@"pendingNewGroupID":@3}];
+    Check(![restored emptyTabGroups].count && ![restored pendingNewDocumentGroup],@"invalid/reserved empty groups rejected");
+}
 int main(int argc, const char* argv[]) {
     @autoreleasepool {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         if (argc>1 && strcmp(argv[1],"--benchmark")==0) { BenchmarkWorkspace(); return 0; }
+        CheckEmptyGroupPersistence();
         CheckDocumentMoveIntegration();
         CheckTabScrollPersistence();
         WorkspaceProbe* reader = [WorkspaceProbe new]; [reader seed:@[Tab(@"Alpha.pdf"),Tab(@"Beta.md")]];

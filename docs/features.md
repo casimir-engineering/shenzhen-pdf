@@ -118,6 +118,11 @@ does not re-trigger the macOS access prompt.
   ending visible with a middle ellipsis; hovering reveals the close button without moving the title.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
   **reattach**. A detached tab keeps its page, zoom, scroll and search.
+- **New tab or empty group** — the tab-strip **+** opens a compact menu. **New Group…**
+  creates a named empty group without changing the document you are reading;
+  the next newly opened document (or batch of documents) goes into it. Its name
+  starts selected in the popup. Empty groups and the next-open destination survive
+  relaunch in session YAML and remain manageable from the tab strip and Groups panel.
 - **Group controls** — hover a group name for the hide eye; right-click **Rename Group…**
   opens the name popup anchored to the group. The All Groups
   picker has an eye toggle for showing or hiding each group without closing documents.

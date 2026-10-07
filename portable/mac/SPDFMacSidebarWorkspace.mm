@@ -21,6 +21,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
     return state;
 }
 - (NSDictionary*)sidebarWorkspaceSnapshot {
+    [self syncEmptyTabGroups];
     NSMutableDictionary* state = [[self sidebarWorkspaceState] mutableCopy];
     if (_sidebarModeControl) state[@"mode"] = @(_sidebarModeControl.spdf_selectedSidebarMode);
     if (_tabStrip && _tabStrip.tabScrollDidChange) state[@"tabStripScroll"] = @(_tabStrip.tabScrollOffset);
@@ -35,6 +36,15 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
         id tabScroll=value[@"tabStripScroll"];
         if ([tabScroll isKindOfClass:NSNumber.class] && isfinite([tabScroll doubleValue]) && [tabScroll doubleValue]>=0)
             state[@"tabStripScroll"]=tabScroll;
+        if ([value[@"emptyGroups"] isKindOfClass:NSArray.class]) {
+            NSMutableArray* groups=[NSMutableArray array];
+            for (id raw in value[@"emptyGroups"]) {
+                SPDFTabGroup* group=[SPDFTabGroup fromDictionary:raw];
+                if (group && !group.general && !group.collectionBackups) [groups addObject:group.dictionary];
+            }
+            if (groups.count) state[@"emptyGroups"]=groups;
+        }
+        if ([value[@"pendingNewGroupID"] isKindOfClass:NSString.class]) state[@"pendingNewGroupID"]=value[@"pendingNewGroupID"];
         if ([value[@"groupQuery"] isKindOfClass:NSString.class]) state[@"groupQuery"] = value[@"groupQuery"];
         if ([@[@"sidebar",@"map"] containsObject:value[@"compactPanel"] ?: @""]) state[@"compactPanel"] = value[@"compactPanel"];
         NSMutableArray* expanded = [NSMutableArray array];
@@ -43,6 +53,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
         state[@"expandedGroups"] = expanded;
     }
     objc_setAssociatedObject(self,&stateKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [self resetEmptyTabGroups];
     double width = [state[@"width"] doubleValue];
     if (isfinite(width) && width >= 160 && width <= 800) _sidebarWidth = width;
     if (state[@"visible"]) _sidebarPreferredVisible = [state[@"visible"] boolValue];
@@ -98,11 +109,16 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
         BOOL selected = tab == [self selectedTab]; if (selected) row[@"selected"] = @YES;
         [row[@"documents"] addObject:@{@"path":tab.path ?: @"",@"title":tab.title ?: tab.path.lastPathComponent ?: @"Document",@"selected":@(selected)}];
     }
+    for (SPDFTabGroup* group in [self emptyTabGroups]) if (!lookup[group.identifier])
+        [groups addObject:@{@"id":group.identifier,@"name":group.displayName,@"color":group.colorName,
+            @"collapsed":@(group.collapsed),@"hidden":@(group.hidden),@"selected":@NO,@"documents":@[]}];
     return groups;
 }
 - (void)performSidebarGroupAction:(NSString*)action identifier:(NSString*)identifier value:(NSString*)value {
     SPDFTabGroup* group = nil;
     for (SPDFDocumentTab* tab in _tabs) if ([tab.group.identifier isEqual:identifier]) { group = tab.group; break; }
+    if (!group) for (SPDFTabGroup* empty in [self emptyTabGroups])
+        if ([empty.identifier isEqual:identifier]) { group=empty; break; }
     if (!group && [identifier isEqual:@"general"]) group = [self ensureGeneralTabGroup];
     if (!group) return;
     if ([action isEqual:@"collapse"]) [self toggleTabGroup:group];

@@ -83,6 +83,15 @@
     _tabScrollOffset=isfinite(offset) ? MAX(0,offset) : 0;
     _groupLayout=nil; _revealSelectedTab=NO; [self setNeedsDisplay:YES];
 }
+- (void)setEmptyGroups:(NSArray<SPDFTabGroup*>*)groups {
+    if (!_emptyGroups.count && !groups.count) return;
+    _emptyGroups = [groups copy];
+    _groupLayout = nil;
+    _accessibilityChildrenSnapshot = nil;
+    NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
+    [self setNeedsDisplay:YES];
+}
+
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
     _groupLayout = nil;
     _preferredTabWidths = nil;
@@ -305,7 +314,7 @@
     _mouseDownInsideTab = NO;
 
     if (NSPointInRect(point, spdf_tab_strip_control_interaction_rect([self plusRect]))) {
-        [self.reader newTabRequested:self];
+        [self showNewTabOrGroupMenu];
         return;
     }
     if (NSPointInRect(point, spdf_tab_strip_control_interaction_rect([self overflowRect]))) {

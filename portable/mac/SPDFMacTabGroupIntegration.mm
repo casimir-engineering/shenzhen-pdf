@@ -2,6 +2,19 @@
 #import "SPDFMacTabGroupIntegration.h"
 #import "SPDFMacTabDetach.h"
 #import "SPDFMacSidebarWorkspace.h"
+#import <objc/runtime.h>
+
+static char emptyGroupsKey;
+BOOL SPDFSessionHasEmptyTabGroups(id windowState) {
+    id sidebar=[windowState isKindOfClass:NSDictionary.class] ? windowState[@"sidebar"] : nil;
+    id groups=[sidebar isKindOfClass:NSDictionary.class] ? sidebar[@"emptyGroups"] : nil;
+    if (![groups isKindOfClass:NSArray.class]) return NO;
+    for (id raw in groups) {
+        SPDFTabGroup* group=[SPDFTabGroup fromDictionary:raw];
+        if (group && !group.general && !group.collectionBackups) return YES;
+    }
+    return NO;
+}
 
 @interface ShenzhenMacDelegate (SPDFMacTabGroupPrivate)
 - (void)rememberActiveTabState;
@@ -17,6 +30,55 @@
 @end
 
 @implementation ShenzhenMacDelegate (SPDFMacTabGroupIntegration)
+- (NSArray<SPDFTabGroup*>*)emptyTabGroups {
+    NSMutableArray* groups=objc_getAssociatedObject(self,&emptyGroupsKey);
+    // No registry allocation for ordinary sessions. Decode only saved empty groups.
+    if (!groups && [[self sidebarWorkspaceState][@"emptyGroups"] count]) {
+        groups=[NSMutableArray array];
+        NSMutableSet* ids=[NSMutableSet set];
+        for (id value in [self sidebarWorkspaceState][@"emptyGroups"]) {
+            SPDFTabGroup* group=[SPDFTabGroup fromDictionary:value];
+            if (!group || group.general || group.collectionBackups || [ids containsObject:group.identifier]) continue;
+            [groups addObject:group]; [ids addObject:group.identifier];
+        }
+        objc_setAssociatedObject(self,&emptyGroupsKey,groups,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return groups;
+}
+- (void)resetEmptyTabGroups { objc_setAssociatedObject(self,&emptyGroupsKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+- (void)syncEmptyTabGroups {
+    NSMutableArray* groups=(id)[self emptyTabGroups];
+    if (!groups) return;
+    // Once populated, the existing per-tab codec owns this group's state.
+    NSIndexSet* populated=[groups indexesOfObjectsPassingTest:^BOOL(SPDFTabGroup* group, NSUInteger i, BOOL* stop) {
+        (void)i; (void)stop; return spdf_tab_group_members(self->_tabs,group).count>0;
+    }];
+    [groups removeObjectsAtIndexes:populated];
+    NSMutableArray* values=[NSMutableArray arrayWithCapacity:groups.count];
+    for (SPDFTabGroup* group in groups) [values addObject:group.dictionary];
+    if (values.count) [self sidebarWorkspaceState][@"emptyGroups"]=values;
+    else { [[self sidebarWorkspaceState] removeObjectForKey:@"emptyGroups"]; [self resetEmptyTabGroups]; }
+}
+- (SPDFTabGroup*)createEmptyTabGroup {
+    NSMutableArray* groups=[([self emptyTabGroups] ?: @[]) mutableCopy];
+    NSMutableArray* colors=[spdf_tab_group_colors() mutableCopy];
+    for (SPDFDocumentTab* tab in _tabs) [colors removeObject:tab.group.colorName ?: @""];
+    for (SPDFTabGroup* group in groups) [colors removeObject:group.colorName];
+    SPDFTabGroup* group=[SPDFTabGroup groupWithColor:colors.count ? colors.firstObject : spdf_tab_group_unused_color(_tabs)];
+    group.collapsed=YES; [groups addObject:group];
+    objc_setAssociatedObject(self,&emptyGroupsKey,groups,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [self sidebarWorkspaceState][@"pendingNewGroupID"]=group.identifier;
+    [self finishTabGroupChange];
+    return group;
+}
+- (SPDFTabGroup*)pendingNewDocumentGroup {
+    NSString* identifier=[self sidebarWorkspaceState][@"pendingNewGroupID"];
+    if (!identifier.length) return nil;
+    for (SPDFTabGroup* group in [self emptyTabGroups]) if ([group.identifier isEqual:identifier]) return group;
+    for (SPDFDocumentTab* tab in _tabs) if ([tab.group.identifier isEqual:identifier]) return tab.group;
+    [[self sidebarWorkspaceState] removeObjectForKey:@"pendingNewGroupID"];
+    return nil;
+}
 - (SPDFTabGroup*)ensureGeneralTabGroup {
     SPDFTabGroup* general=nil;
     for (SPDFDocumentTab* tab in _tabs) if (tab.group.general) { general=tab.group; break; }
@@ -28,14 +90,21 @@
     return general;
 }
 - (void)setTabGroup:(SPDFTabGroup*)group hidden:(BOOL)hidden {
-    if (!group || !spdf_tab_group_members(_tabs,group).count) return;
+    if (!group) return;
     group.hidden=hidden;
     if (group.general) group.explicitGeneral=YES;
     // Visibility is independent of selection: hiding the active group leaves its document open.
     [self finishTabGroupChange];
 }
 - (void)jumpTabGroup:(SPDFTabGroup*)group {
-    NSArray* members=spdf_tab_group_members(_tabs,group); if (!members.count) return;
+    NSArray* members=spdf_tab_group_members(_tabs,group);
+    if (!members.count) {
+        if ([[self emptyTabGroups] containsObject:group]) {
+            group.hidden=NO; [self sidebarWorkspaceState][@"pendingNewGroupID"]=group.identifier;
+            [self finishTabGroupChange];
+        }
+        return;
+    }
     SPDFDocumentTab* target=members.firstObject;
     for (SPDFDocumentTab* tab in members) if ([tab.path isEqual:group.lastUsedPath]) { target=tab; break; }
     group.hidden=NO;
@@ -58,18 +127,25 @@
         tab.group=general;
     }
     spdf_tab_groups_normalize(_tabs);
+    [self syncEmptyTabGroups];
     if (selected) _selectedTabIndex = [_tabs indexOfObjectIdenticalTo:selected];
 }
 - (void)activateSelectedTabGroup {
-    if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count)
-        spdf_tab_groups_activate(_tabs, _tabs[(NSUInteger)_selectedTabIndex]);
+    if (_selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count) {
+        SPDFDocumentTab* selected=_tabs[(NSUInteger)_selectedTabIndex];
+        spdf_tab_groups_activate(_tabs,selected);
+        if ([selected.group.identifier isEqual:[self sidebarWorkspaceState][@"pendingNewGroupID"]])
+            [[self sidebarWorkspaceState] removeObjectForKey:@"pendingNewGroupID"];
+    }
 }
 - (NSInteger)appendNewTabToActiveGroup:(SPDFDocumentTab*)tab {
     SPDFTabGroup* group = _selectedTabIndex >= 0 && _selectedTabIndex < (NSInteger)_tabs.count
         ? _tabs[(NSUInteger)_selectedTabIndex].group : nil;
+    SPDFTabGroup* pending=[self pendingNewDocumentGroup];
+    if (pending) group=pending;
     // Backups is a reserved destination for immutable Collection copies. Opening
     // an original from it must not inherit that group; archived opens route explicitly.
-    if ([[self sidebarWorkspaceState][@"newDocumentsInGeneral"] boolValue] || group.hidden || group.collectionBackups) {
+    if (!pending && ([[self sidebarWorkspaceState][@"newDocumentsInGeneral"] boolValue] || group.hidden || group.collectionBackups)) {
         group=nil;
         for (SPDFDocumentTab* existing in _tabs) if (existing.group.general) { group=existing.group; break; }
         if (!group) group=SPDFTabGroup.generalGroup;
@@ -169,6 +245,7 @@
 }
 - (void)ungroupTabs:(SPDFTabGroup*)group {
     if (!group || group.general) return;
+    if ([[self emptyTabGroups] containsObject:group]) { [self closeTabGroup:group]; return; }
     for (SPDFDocumentTab* tab in spdf_tab_group_members(_tabs, group)) tab.group = nil;
     [self finishTabGroupChange];
 }
@@ -178,7 +255,7 @@
 }
 - (void)requestCloseTabGroup:(SPDFTabGroup*)group {
     NSUInteger count=spdf_tab_group_members(_tabs,group).count;
-    if (!count || _window.attachedSheet) return;
+    if ((!count && ![[self emptyTabGroups] containsObject:group]) || _window.attachedSheet) return;
     NSAlert* alert=[NSAlert new]; alert.alertStyle=NSAlertStyleWarning;
     alert.messageText=[NSString stringWithFormat:@"Close group “%@”?",group.displayName];
     alert.informativeText=[NSString stringWithFormat:@"This closes %lu %@ in this group. Files and Collection history are not deleted.",
@@ -189,6 +266,13 @@
     }];
 }
 - (void)closeTabGroup:(SPDFTabGroup*)group {
+    NSMutableArray* empty=(id)[self emptyTabGroups];
+    if ([empty containsObject:group]) {
+        [empty removeObject:group];
+        if ([group.identifier isEqual:[self sidebarWorkspaceState][@"pendingNewGroupID"]])
+            [[self sidebarWorkspaceState] removeObjectForKey:@"pendingNewGroupID"];
+        [self finishTabGroupChange]; return;
+    }
     NSArray* members = spdf_tab_group_members(_tabs, group);
     void (^closeMembers)(void) = ^{
         for (SPDFDocumentTab* tab in [members reverseObjectEnumerator]) {

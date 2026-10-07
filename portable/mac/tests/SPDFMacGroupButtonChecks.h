@@ -1,4 +1,5 @@
 #import "SPDFMacSidebarWorkspace.h"
+#import "SPDFMacEmptyGroupReaderChecks.h"
 static NSButton* GroupProbeButton(NSView* view,NSString* label) {
     if ([view isKindOfClass:NSButton.class] && [view.accessibilityLabel isEqual:label]) return (id)view;
     for(NSView* child in view.subviews) { NSButton* found=GroupProbeButton(child,label); if(found) return found; }
@@ -6,6 +7,7 @@ static NSButton* GroupProbeButton(NSView* view,NSString* label) {
 }
 @implementation WorkspaceReaderProbe (GroupButtons)
 - (void)checkGroupButtons {
+    [self checkEmptyGroupAction];
     _sidebarModeControl.spdf_selectedSidebarMode=SPDFSidebarModeGroups;
     [self sidebarModeChanged:_sidebarModeControl]; [_window.contentView layoutSubtreeIfNeeded];
     [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];

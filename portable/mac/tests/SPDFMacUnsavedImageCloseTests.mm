@@ -11,6 +11,7 @@ static void Check(BOOL value, NSString* message) { if (!value) { NSLog(@"FAIL: %
 @property SPDFDocumentTab* savingTab;
 @end
 @implementation CloseHost
+- (NSMutableDictionary*)sidebarWorkspaceState { return nil; }
 - (NSMutableArray*)testTabs { return _tabs; }
 - (void)setTestTabs:(NSMutableArray*)tabs { _tabs = tabs; }
 - (NSModalResponse)promptToCloseUnsavedImage:(SPDFDocumentTab*)tab {

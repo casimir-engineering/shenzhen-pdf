@@ -6,6 +6,7 @@
 @interface SPDFTabStripView : NSView <NSDraggingSource, NSDraggingDestination>
 @property(nonatomic, weak) id<SPDFMacUIReader> reader;
 @property(nonatomic, copy) NSArray<SPDFDocumentTab*>* tabs;
+@property(nonatomic, copy) NSArray<SPDFTabGroup*>* emptyGroups;
 @property(nonatomic) NSInteger selectedIndex;
 @property(nonatomic) CGFloat reservedLeadingInset;
 @property(nonatomic) CGFloat tabScrollOffset;
@@ -31,4 +32,9 @@
 
 @interface SPDFTabStripView (PickerDismissal)
 - (BOOL)dismissGroupPickerIfShown;
+@end
+
+@interface SPDFTabStripView (GroupCreation)
+- (void)revealTabGroup:(SPDFTabGroup*)group;
+- (void)promptForGroup:(SPDFTabGroup*)group creating:(BOOL)creating;
 @end

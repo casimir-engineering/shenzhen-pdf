@@ -136,7 +136,10 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (void)showOverflowMenuForAccessibility;
 - (void)showContextMenuForTabAtIndex:(NSInteger)index;
 - (void)showContextMenuForGroup:(SPDFTabGroup*)group;
+- (NSMenu*)newTabOrGroupMenu;
+- (void)showNewTabOrGroupMenu;
 - (NSMenu*)overflowMenu;
+- (void)browseGroupFromMenu:(NSMenuItem*)sender;
 - (void)overflowTabMenuItemSelected:(NSMenuItem*)sender;
 - (void)tabContextShowInFolder:(NSMenuItem*)sender;
 - (void)tabContextCopyFile:(NSMenuItem*)sender;
@@ -183,6 +186,7 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (void)fadeTabScrollEdges;
 - (NSRect)groupHideRect:(NSRect)header;
 - (BOOL)hasTabGroups;
+- (NSArray<SPDFTabGroup*>*)orderedTabGroups;
 - (NSArray*)groupLayouts;
 - (NSInteger)groupInsertionIndexForPoint:(NSPoint)point;
 - (CGFloat)groupInsertionBoundaryForPoint:(NSPoint)point;

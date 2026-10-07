@@ -11,6 +11,7 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
 @implementation ShenzhenMacDelegate (SPDFMacAgentGroups)
 - (SPDFTabGroup*)agentGroupWithID:(NSString*)identifier {
     for (SPDFDocumentTab* tab in _tabs) if ([tab.group.identifier isEqual:identifier]) return tab.group;
+    for (SPDFTabGroup* group in [self emptyTabGroups]) if ([group.identifier isEqual:identifier]) return group;
     return nil;
 }
 - (SPDFDocumentTab*)agentTabWithPath:(NSString*)path {
@@ -35,6 +36,10 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
             row[@"position"]=@(groups.count+1); byID[group.identifier]=row; [groups addObject:row];
         }
         [row[@"paths"] addObject:tab.path ?: @""];
+    }
+    for (SPDFTabGroup* group in [self emptyTabGroups]) if (!byID[group.identifier]) {
+        NSMutableDictionary* row=[group.dictionary mutableCopy]; row[@"displayName"]=group.displayName;
+        row[@"general"]=@NO; row[@"paths"]=@[]; row[@"position"]=@(groups.count+1); [groups addObject:row];
     }
     return @{@"windowSessionID":_windowSessionID ?: @"",@"groups":groups,@"tabs":tabs,
              @"colors":spdf_tab_group_colors(),
@@ -67,7 +72,7 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
         if (before) {
             BOOL survives=NO;
             for (SPDFDocumentTab* tab in _tabs) if (tab.group==before && ![members containsObject:tab]) survives=YES;
-            if (!survives) return GroupError(@"The destination group would be emptied by this creation. Choose another destination.");
+            if (!survives && ![[self emptyTabGroups] containsObject:before]) return GroupError(@"The destination group would be emptied by this creation. Choose another destination.");
         }
         // A batch must not open/render every member or serialize the session
         // once per tab. Keep the normal final-selection behavior, with one commit.
@@ -79,6 +84,7 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
         for (SPDFDocumentTab* tab in members) tab.group=group;
         [_tabs removeObjectsInArray:members];
         NSUInteger position=before ? [_tabs indexOfObjectIdenticalTo:spdf_tab_group_members(_tabs,before).firstObject] : _tabs.count;
+        if (position==NSNotFound) position=_tabs.count;
         [_tabs insertObjects:members atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(position,members.count)]];
         if (active) _selectedTabIndex=[_tabs indexOfObjectIdenticalTo:active];
         [self normalizeTabGroups];
@@ -99,7 +105,7 @@ static NSDictionary* GroupError(NSString* message) { return @{@"error":message};
             return GroupError(@"beforePath must identify an open tab in the destination group.");
         NSArray* members=spdf_tab_group_members(_tabs,group);
         NSInteger destination=beforeTab ? [_tabs indexOfObjectIdenticalTo:beforeTab] :
-            [_tabs indexOfObjectIdenticalTo:members.lastObject]+1;
+            (members.count ? [_tabs indexOfObjectIdenticalTo:members.lastObject]+1 : _tabs.count);
         [self moveTabAtIndex:[_tabs indexOfObjectIdenticalTo:tab] toGroup:group atIndex:destination];
         affected=group.identifier;
     } else if ([action isEqual:@"move-group"]) {
