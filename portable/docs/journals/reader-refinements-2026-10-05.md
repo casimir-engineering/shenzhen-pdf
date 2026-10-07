@@ -392,3 +392,26 @@ placeholder sizing remains separate. The headless field-editor test inserts
 300 characters, completes the otherwise display-driven layout, and checks
 horizontal movement to the end and back to the beginning without losing text.
 Group management tests pass; no user app is launched.
+
+
+## 2026-10-07 — Intermittent type-to-search investigation
+
+The reported schematic contains searchable text: core literal and regex searches
+both find two Audio matches per page across five pages. Native type-to-search
+through the field editor also finds all ten; 30 rapidly superseded queries retain
+the newest results. The original incident remains unreproduced.
+
+Code inspection found a confirmed misleading failure path: search reopens a
+separate document on its worker queue. A failed reopen discarded its error and
+rebuilt an empty result list as “No matches”; engine/regex errors went only to the
+removed status bar. Added lazy, per-reader failure state displayed in the visible
+sidebar and counter. It is cleared on retry, query change, dismissal and tab
+reset; existing generation guards protect it from stale operations. No additional
+file reads or work on launch. Extracted counter/control methods into a focused
+file and lowered the coordinator's exact size cap.
+
+The headless actual-reader lifecycle probe verifies typed input, rapid queries,
+injected reopen failure, error visibility, successful retry and malformed regex.
+It accepts an optional external PDF path without embedding private files in the
+repository; its normal fixture uses generated reader text. The injected failure
+reproduces the incorrect empty-result behavior, not proof of the user's incident.

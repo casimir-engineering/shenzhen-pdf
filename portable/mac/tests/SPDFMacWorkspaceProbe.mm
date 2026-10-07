@@ -432,6 +432,7 @@ static NSURL* Fixture(NSString* root) {
 #import "SPDFMacRestoredFindPanelChecks.h"
 #import "SPDFMacMissingDocumentChecks.h"
 #import "SPDFMacGroupButtonChecks.h"
+#import "SPDFMacFindLifecycleChecks.h"
 int main(int argc,const char* argv[]) {
     setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
@@ -442,11 +443,12 @@ int main(int argc,const char* argv[]) {
         spdf_sidebar_probe_install_order_guard();
         NSString* output=argc>1 ? [NSString stringWithUTF8String:argv[1]] : @"";
         if (output.length) [NSFileManager.defaultManager createDirectoryAtPath:output withIntermediateDirectories:YES attributes:nil error:nil];
-        NSURL* URL=Fixture(root);
+        NSURL* URL=getenv("SPDF_FIND_PROBE_PATH") ? [NSURL fileURLWithPath:[NSString stringWithUTF8String:getenv("SPDF_FIND_PROBE_PATH")]] : Fixture(root);
         NSURL* markdownURL=[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"Project notes.md"]];
         [SPDFReadmeMarkdown() writeToURL:markdownURL atomically:YES encoding:NSUTF8StringEncoding error:nil];
         for (NSNumber* dark in @[@NO,@YES]) {
             WorkspaceReaderProbe* reader=[WorkspaceReaderProbe new]; [reader prepare:URL width:1280 dark:dark.boolValue];
+            if(getenv("SPDF_FIND_ONLY")) { [reader checkFindLifecycle]; return failures ? 1 : 0; }
             if(getenv("SPDF_GROUP_BUTTONS_ONLY")) { [reader checkGroupButtons]; return failures ? 1 : 0; }
             if(getenv("SPDF_REGEX_ONLY")) { [reader setProbeFind:YES]; [reader capture:output.length ? [output stringByAppendingPathComponent:@"regex.png"] : nil width:1280 sidebar:YES map:YES]; return failures ? 1 : 0; }
             if(getenv("SPDF_BATCH_ONLY")) { [reader checkBatchChanges]; return failures ? 1 : 0; }
@@ -460,15 +462,13 @@ int main(int argc,const char* argv[]) {
             [reader checkCopyPanelInsets];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-history.png" : @"reader-light-history.png"] : nil
                 width:1280 sidebar:YES map:YES];
-            [reader setProbeHistory:NO];
-            [reader setProbeVersion:YES];
+            [reader setProbeHistory:NO]; [reader setProbeVersion:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-version.png" : @"reader-light-version.png"] : nil
                 width:640 sidebar:YES map:YES];
             [reader setProbeVersion:NO]; [reader setProbeFind:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-find.png" : @"reader-light-find.png"] : nil
                 width:1280 sidebar:YES map:YES];
-            [reader setProbeFind:NO];
-            [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-hidden.png" : @"reader-light-hidden.png"] : nil
+            [reader setProbeFind:NO]; [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-hidden.png" : @"reader-light-hidden.png"] : nil
                 width:1280 sidebar:NO map:NO];
             [reader setProbePresentation:YES];
             [reader capture:output.length ? [output stringByAppendingPathComponent:dark.boolValue ? @"reader-dark-presentation.png" : @"reader-light-presentation.png"] : nil

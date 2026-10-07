@@ -9,6 +9,7 @@
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacWorkspaceChrome.h"
 #import "SPDFMacFindInteraction.h"
+#import "SPDFMacFindFailure.h"
 #import "SPDFMacWorkspacePanels.h"
 #import "SPDFMacCollectionCompanion.h"
 #import "SPDFMacSidebarWorkspace.h"
@@ -9164,6 +9165,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         }];
         return;
     }
+    if (self.findFailureMessage.length) {
+        [_sidebarItems addObject:@{@"kind":@"findStatus",@"page":@(-1),@"title":self.findFailureMessage}];
+        if (!_findMatches.count) return;
+    }
     if (_findMatches.count == 0) {
         NSString* title =
             query.length ? [NSString stringWithFormat:@"No matches for \"%@\"", query] : @"No search results";
@@ -9979,33 +9984,8 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     _updatingSelection = NO;
 }
 
-- (void)updateFindCountLabel {
-    if (!_findCountLabel) return;
-    if (![self hasActiveDocument] || _searchField.stringValue.length == 0) {
-        _findCountLabel.stringValue = @"";
-    } else if (_findSearchInProgress) {
-        _findCountLabel.stringValue = @"...";
-    } else if (_findMatches.count == 0) {
-        _findCountLabel.stringValue = @"0 / 0";
-    } else {
-        NSInteger current = _findMatchIndex >= 0 ? _findMatchIndex + 1 : 1;
-        _findCountLabel.stringValue =
-            [NSString stringWithFormat:@"%ld / %ld", (long)current, (long)_findMatches.count];
-    }
-}
-
-- (void)updateFindControls {
-    BOOL hasMatches = _findMatches.count > 0;
-    BOOL hasQuery = _searchField.stringValue.length > 0;
-    _findSegments.hidden = !hasQuery;
-    _findCountLabel.hidden = !hasQuery;
-    [_findSegments setEnabled:hasMatches forSegment:0];
-    [_findSegments setEnabled:hasMatches forSegment:1];
-    [self updateFindCountLabel];
-    [self invalidateFindMarkers];
-}
-
 - (void)clearFindResults {
+    [self setFindFailureMessage:nil];
     [_findQueue cancelAllOperations];
     _findGeneration++;
     [_findFlashTimer invalidate];
@@ -10125,6 +10105,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
     [_findQueue cancelAllOperations];
     _findGeneration++;
     NSUInteger generation = _findGeneration;
+    [self setFindFailureMessage:nil];
     [_findHighlights removeAllObjects];
     [_findMatches removeAllObjects];
     _findMatchIndex = -1;
@@ -10162,9 +10143,11 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                                                       error:openErr
                                                 errorLength:sizeof(openErr)];
           if (!doc) {
+              NSString* failure=[NSString stringWithUTF8String:openErr[0] ? openErr : "Could not read the document."];
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 if (generation != self->_findGeneration) return;
                 self->_findSearchInProgress = NO;
+                [self setFindFailureMessage:[NSString stringWithFormat:@"Search unavailable. Press Enter to retry.\n%@",failure]];
                 [self updateFindControls];
                 [self rebuildSidebar];
               }];
@@ -10228,6 +10211,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                 preferredMatch = [self nearestFindMatchIndexToCurrentViewport];
             self->_findMatchIndex = preferredMatch >= 0 ? preferredMatch : (self->_findMatches.count > 0 ? 0 : -1);
             self->_findSearchInProgress = NO;
+            [self setFindFailureMessage:searchError.length ? [NSString stringWithFormat:@"Search failed: %@",searchError] : nil];
             [self rememberActiveTabFindState];
             [self applySearchHighlightsToCurrentPage];
             [self updateFindControls];
