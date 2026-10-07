@@ -5,6 +5,13 @@
     if (!self.stringValue.length) rect.size.width=MAX(0,NSMaxX(bounds)-8-NSMinX(rect));
     return rect;
 }
+- (NSRect)drawingRectForBounds:(NSRect)bounds {
+    // Layer-backed native fields clip their text layer to this rectangle,
+    // independently of searchTextRectForBounds:. Keep the empty placeholder's
+    // drawing area consistent with the space reclaimed from the clear button.
+    return self.stringValue.length ? [super drawingRectForBounds:bounds]
+                                   : [self searchTextRectForBounds:bounds];
+}
 - (void)drawFocusRingMaskWithFrame:(NSRect)frame inView:(NSView*)view {
     (void)view;
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(frame,.5,.5)

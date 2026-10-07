@@ -514,3 +514,25 @@ also pass. The native symbol orientation remains identical to the existing
 controls. Group scrolling measured about 0.56 ms per input with 1,000 tabs in the
 headless fixture. The rebuilt dist app passes deep/strict signature validation;
 file-size and whitespace checks pass. This is a local build, not a release.
+
+## 2026-10-07 — Native search placeholder clipping
+
+Reproduced the reported “Search groups and doc” clipping in a layer-backed
+188-point field. `searchTextRectForBounds:` returned an expanded 158-point text
+area, while AppKit's `drawingRectForBounds:` still returned 140.5 points. Native
+text-layer clipping used the latter. A direct cell render showed the whole word,
+which explains why the previous geometry-only tests missed the bug.
+
+The shared panel search cell now uses the expanded rectangle for both measurement
+and drawing when empty. Nonempty fields retain AppKit's native rectangle and
+clear-button space. No custom placeholder drawing or extra layout work is added.
+
+The new `mac-panel-search-rendering-tests` compares actual native-layer text pixels
+with the full placeholder's typographic extent at five widths, in light and dark appearances, before
+and after entering/clearing a query. It also checks clear-button clearance while
+typing. The previous implementation fails this rendered comparison; the new one
+passes, along with group management tests. Validation uses an offscreen fixture;
+the user's app was not launched, restarted, or captured.
+The baseline test exits 1 with four clipped-suffix failures (188-point width,
+both appearances, before and after clearing); the fixed version exits 0. The
+dist app rebuild, deep/strict signature verification, and file-size checks pass.
