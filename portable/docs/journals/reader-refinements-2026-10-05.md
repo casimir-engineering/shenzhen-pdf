@@ -561,3 +561,39 @@ app was launched, quit, or captured.
 The updated `dist/ShenzhenPDF.app` builds successfully and passes deep/strict
 signature verification. File-size and whitespace checks pass. This is a local
 build; no release was published for this change.
+
+### Correction — Release routing and gap feedback
+
+The first fix tested group membership and insertion geometry separately; it
+missed the release event's routing. Both local `mouseUp:` and native
+`performDragOperation:` consumed the previously armed group target before
+checking the final position. A tab could pass over a group, then be dropped in
+a gap and still join the earlier group. This reproduces the reported behavior.
+
+Final drops now recompute the target from the release coordinates. An explicit
+gap target, shared by preview and both drop routes, takes priority over group
+edges, cancels earlier grouping dwell, and shows a centered insertion marker.
+The existing 8-point spacing is unchanged; drag-only tolerance extends four
+points into each neighboring edge. Click, rename, hide and reorder targets keep
+their existing geometry. The same gap detector supplies the destination group
+and insertion index, including in the pinned, horizontally scrolled strip.
+
+`mac-tab-gap-drop-tests` combines the real strip with production group mutations
+and the session codec. Only file loading, disk writes and popups are replaced.
+It sends actual local mouse events and native pasteboard drops, checking the
+resulting order, membership, visibility and reading state. The 240 scenarios
+cover same-window, reattached and cross-window tabs, an existing hidden General,
+expanded/collapsed boundaries, scrolled overflow, gap edges, and a release after
+hovering a different group without a final drag-update event. The previous
+production sources fail with 162 incorrect destinations (120 after stale hover)
+and exit 1; the corrected sources pass all 240 scenarios with exit 0.
+
+The integration reader fixture is shared rather than duplicated. All new
+geometry work runs during drag/drop, with no launch-time registration or state
+schema change. Validation remains headless and leaves the user's app untouched.
+
+The group/model, integration, group interaction, tab strip interaction and tab
+geometry regression suites also pass. The corrected `dist/ShenzhenPDF.app` builds
+and passes deep/strict signature verification; file-size and whitespace checks
+pass. The bundle identity and updater configuration are unchanged. No release
+was published.

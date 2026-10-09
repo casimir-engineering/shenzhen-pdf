@@ -293,6 +293,11 @@ mac-tab-group-interaction-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripScrolling.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(BUILD)/SPDFMacTabGroupInteractionTests"
 	"$(BUILD)/SPDFMacTabGroupInteractionTests"
 
+.PHONY: mac-tab-gap-drop-tests
+mac-tab-gap-drop-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGapDropTests.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroupIntegration.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripScrolling.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacTabGapDropTests"
+	"$(BUILD)/SPDFMacTabGapDropTests"
+
 .PHONY: mac-agent-pdf-inspection-tests
 mac-agent-pdf-inspection-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacAgentPDFInspectionTests.mm mac/SPDFMacAgentPDFInspection.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -framework CoreText -framework CoreGraphics -framework ImageIO -lm -o "$(BUILD)/SPDFMacAgentPDFInspectionTests"

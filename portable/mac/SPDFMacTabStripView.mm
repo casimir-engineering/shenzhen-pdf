@@ -224,6 +224,8 @@
 }
 
 - (NSInteger)dropIndexForPoint:(NSPoint)point {
+    NSInteger gap=[self tabGroupGapInsertionIndexForPoint:point boundary:NULL];
+    if (gap!=NSNotFound) return gap;
     // Collapsed groups have no document rectangles. Use their group boundary
     // for gap drops rather than accidentally inserting inside a visible group.
     if ([self hasTabGroups] && ![self groupAtPoint:point headerOnly:NO])
@@ -385,7 +387,7 @@
         [self resetTabDragTracking]; return;
     }
     if (_draggingTab && !_detachedTabDrag && [self hasTabGroups] && _dragSourceTabIndex >= 0) {
-        SPDFTabGroup* destination = [self groupAtPoint:point headerOnly:NO];
+        SPDFTabGroup* destination = [self tabDropGroupAtPoint:point];
         [self.groupReader moveTabAtIndex:_dragSourceTabIndex toGroup:destination atIndex:[self dropIndexForPoint:point]];
         [self resetTabDragTracking];
         return;
