@@ -823,3 +823,18 @@ mac-image-rotation-integration-tests: | $(BUILD)
 mac-document-rename-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacDocumentRenameTests.mm -framework Foundation -o "$(BUILD)/SPDFMacDocumentRenameTests"
 	"$(BUILD)/SPDFMacDocumentRenameTests"
+
+.PHONY: mac-ai-transport-tests mac-ai-chat-tests mac-unified-settings-tests
+mac-ai-transport-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAITransportTests.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICredentials.mm mac/SPDFMacAISettings.mm mac/SPDFMacAIOpenRouterAuth.mm -framework Foundation -framework Security -framework LocalAuthentication -o "$(BUILD)/SPDFMacAITransportTests"
+	"$(BUILD)/SPDFMacAITransportTests"
+mac-ai-chat-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatSessionTests.mm mac/SPDFMacAIChatSession.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacAITransport.mm -framework Foundation -o "$(BUILD)/SPDFMacAIChatSessionTests"
+	"$(BUILD)/SPDFMacAIChatSessionTests"
+mac-unified-settings-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacUnifiedSettingsTests.mm mac/SPDFMacUnifiedSettings.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm -framework Cocoa -o "$(BUILD)/SPDFMacUnifiedSettingsTests"
+	"$(BUILD)/SPDFMacUnifiedSettingsTests"
+.PHONY: mac-ai-model-tests
+mac-ai-model-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIModelCatalogTests.mm mac/SPDFMacAIModelCatalog.mm -framework Foundation -o "$(BUILD)/SPDFMacAIModelCatalogTests"
+	"$(BUILD)/SPDFMacAIModelCatalogTests"
