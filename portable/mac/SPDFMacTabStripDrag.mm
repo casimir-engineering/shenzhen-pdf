@@ -245,14 +245,14 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         if (sourceIndex < 0) {
             // The live tab vanished mid-drag; fall back to inserting the
             // pasteboard snapshot so the drop still lands.
-            tab.group = [self groupAtPoint:point headerOnly:NO];
+            tab.group = [self tabDropGroupAtPoint:point];
             if (!tab.group && [self hasTabGroups])
                 insertionIndex = spdf_tab_group_prepare_gap_drop(self.tabs, tab, insertionIndex);
             [self.reader insertDraggedTab:tab atIndex:insertionIndex];
             return YES;
         }
         if ([self hasTabGroups]) {
-            [self.groupReader moveTabAtIndex:sourceIndex toGroup:[self groupAtPoint:point headerOnly:NO]
+            [self.groupReader moveTabAtIndex:sourceIndex toGroup:[self tabDropGroupAtPoint:point]
                                     atIndex:insertionIndex];
             return YES;
         }
@@ -260,7 +260,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
         if (targetIndex != sourceIndex) [self.reader moveTabFromIndex:sourceIndex toIndex:targetIndex];
         return YES;
     }
-    tab.group = [self groupAtPoint:point headerOnly:NO];
+    tab.group = [self tabDropGroupAtPoint:point];
     if (!tab.group && [self hasTabGroups])
         insertionIndex = spdf_tab_group_prepare_gap_drop(self.tabs, tab, insertionIndex);
     [self.reader insertDraggedTab:tab atIndex:insertionIndex];

@@ -190,6 +190,8 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (NSArray*)groupLayouts;
 - (NSInteger)groupInsertionIndexForPoint:(NSPoint)point;
 - (CGFloat)groupInsertionBoundaryForPoint:(NSPoint)point;
+- (NSInteger)tabGroupGapInsertionIndexForPoint:(NSPoint)point boundary:(CGFloat*)boundary;
+- (SPDFTabGroup*)tabDropGroupAtPoint:(NSPoint)point;
 - (NSRect)groupedRectForTabAtIndex:(NSInteger)index;
 - (NSArray<NSNumber*>*)groupedVisibleTabIndexes;
 - (BOOL)groupedHasOverflow;

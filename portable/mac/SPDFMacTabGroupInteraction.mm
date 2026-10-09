@@ -210,6 +210,13 @@
     return YES;
 }
 - (void)updateGroupDropForPoint:(NSPoint)point sourceIndex:(NSInteger)source {
+    CGFloat boundary=NAN;
+    if ([self tabGroupGapInsertionIndexForPoint:point boundary:&boundary]!=NSNotFound) {
+        _groupDropGroup=nil; _groupDropTabIndex=-1; _groupHoverIndex=-1;
+        _groupDropBoundaryX=boundary; _groupPreviewColor=nil; _dropIndicatorSlot=-1;
+        [self setNeedsDisplay:YES]; return;
+    }
+    _groupDropBoundaryX=NAN;
     _groupDropGroup = [self groupAtPoint:point headerOnly:YES];
     NSInteger target = [self tabIndexAtPoint:point];
     SPDFTabGroup* sourceGroup = source >= 0 && source < (NSInteger)self.tabs.count
@@ -249,6 +256,9 @@
     [self setNeedsDisplay:YES];
 }
 - (BOOL)performGroupDropWithTab:(SPDFDocumentTab*)tab sourceIndex:(NSInteger)source atPoint:(NSPoint)point {
+    // Mouse-up/native-drop can arrive at a new position without an intervening
+    // drag update. Never consume a target armed at an earlier mouse position.
+    [self updateGroupDropForPoint:point sourceIndex:source];
     if (!_groupDropGroup && _groupDropTabIndex < 0) return NO;
     SPDFTabGroup* destination = _groupDropGroup;
     SPDFDocumentTab* target = _groupDropTabIndex >= 0 ? self.tabs[(NSUInteger)_groupDropTabIndex] : nil;

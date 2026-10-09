@@ -12,3 +12,5 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
   created at the drop position; an existing General keeps its position and is
   revealed if hidden. This also works between collapsed groups and when moving
   a tab from another window. Membership and order persist across relaunches.
+  Gap drops show an insertion marker and use the final mouse position, preventing
+  a previously hovered group from capturing the drop.

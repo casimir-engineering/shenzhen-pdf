@@ -184,6 +184,33 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
         if (NSPointInRect(point, headerOnly ? layout.header : layout.frame)) return layout.group;
     return nil;
 }
+- (NSInteger)tabGroupGapInsertionIndexForPoint:(NSPoint)point boundary:(CGFloat*)boundary {
+    if (![self hasTabGroups] || !NSPointInRect(point,self.bounds) ||
+        point.x<[self leftInset] || point.x>[self tabAreaRightWithOverflow:YES]) return NSNotFound;
+    CGFloat previousEnd=NAN;
+    for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
+        NSRect frame=layout.frame;
+        if (NSIsEmptyRect(frame)) continue;
+        // Four points into each neighboring edge makes the 8pt visual gap a
+        // usable drop target without changing click targets or layout spacing.
+        CGFloat left=isnan(previousEnd) ? [self leftInset] : previousEnd-4;
+        CGFloat right=NSMinX(frame)+4;
+        if (point.x>=left && point.x<=right) {
+            if (boundary) *boundary=isnan(previousEnd) ? NSMinX(frame) : (previousEnd+NSMinX(frame))/2;
+            return layout.firstIndex;
+        }
+        previousEnd=NSMaxX(frame);
+    }
+    if (!isnan(previousEnd) && point.x>=previousEnd-4) {
+        if (boundary) *boundary=MIN(previousEnd+4,[self tabAreaRightWithOverflow:YES]);
+        return self.tabs.count;
+    }
+    return NSNotFound;
+}
+- (SPDFTabGroup*)tabDropGroupAtPoint:(NSPoint)point {
+    return [self tabGroupGapInsertionIndexForPoint:point boundary:NULL]!=NSNotFound
+        ? nil : [self groupAtPoint:point headerOnly:NO];
+}
 - (void)drawTabGroups {
     for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
         if (NSIsEmptyRect(layout.frame)) continue;
