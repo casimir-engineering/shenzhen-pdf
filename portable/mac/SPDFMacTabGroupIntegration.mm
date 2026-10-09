@@ -306,7 +306,8 @@ BOOL SPDFSessionHasEmptyTabGroups(id windowState) {
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     SPDFDocumentTab* tab = _tabs[(NSUInteger)index];
     SPDFDocumentTab* selected = _selectedTabIndex >= 0 ? _tabs[(NSUInteger)_selectedTabIndex] : nil;
-    tab.group = group;
+    if (group) tab.group = group;
+    else destination = spdf_tab_group_prepare_gap_drop(_tabs, tab, destination);
     [_tabs removeObjectAtIndex:index];
     if (destination > index) --destination;
     destination = MAX(0, MIN(destination, (NSInteger)_tabs.count));
