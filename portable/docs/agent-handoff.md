@@ -294,6 +294,11 @@ The script blocks on nothing — if it seems hung, the shell is (see traps). Pol
 - **A reported bug is a fix request.** Diagnose, fix, test, then report — do not
   stop at the diagnosis. If you cannot reproduce, say so with the evidence and
   what you ruled out; do not guess a fix.
+- **Validate chrome in its real host.** Reuse the reader’s existing toolbar space
+  and button styling before adding rows or surfaces. Check alignment, clipping,
+  narrow widths, both appearances and full-bounds clicks in the production
+  workspace probe; an isolated control preview is insufficient. Keep the user’s
+  app untouched: use offscreen probe renders, not app screenshots.
 - **Stage explicit paths, never `git add -A`.** Other agents share the worktree.
   Commit each tested change set with a message that explains the failure and the
   fix; end with `Co-Authored-By`.

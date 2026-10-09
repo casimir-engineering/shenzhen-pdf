@@ -30,6 +30,7 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
   Collection relocation and are protected from automatic storage-cap cleanup.
 - Recovery also handles originals whose metadata is visible but whose contents
   cannot be read (including restricted Safari temporary PDFs), and damaged sources.
-  The red status and Locate button receive space in the real toolbar. Recovery
+  The red status and a rounded Locate button sit centered in the existing toolbar,
+  with a compact layout for narrow windows. Recovery
   reuses the original tab when its Collection copy is already open and supports
   repeated loss of access after a source is restored.

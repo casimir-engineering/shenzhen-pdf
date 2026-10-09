@@ -38,6 +38,8 @@ static char chromeKey;
 @property NSStackView* toolsRow;
 @property NSArray<NSView*>* tools;
 @property BOOL wrapped;
+@property NSLayoutConstraint* statusSpace;
+@property NSArray<NSLayoutConstraint*>* wrappedWidths;
 @end
 @implementation SPDFWorkspaceChromeState
 @end
@@ -188,6 +190,9 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     counter.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     counter.alignment = NSLayoutAttributeFirstBaseline; counter.spacing = 2;
     state.primaryRow = [NSStackView stackViewWithViews:@[_sidebarToggleButton,state.previous,counter,state.next,_fitModePopup,_zoomSegments,_markdownFontSizeSegments,_toolbarSpacer]];
+    [_toolbarSpacer.heightAnchor constraintEqualToConstant:28].active=YES;
+    state.statusSpace=[_toolbarSpacer.widthAnchor constraintGreaterThanOrEqualToConstant:0];
+    state.statusSpace.active=YES;
     state.imageColors=Icon(@"photo",@"Invert image colors · ⇧⌘I",self,@selector(toggleDarkThemePreservesImages:));
     state.tools = @[state.collection,_readingThemeButton,state.imageColors,_ocrButton,_translateButton,state.print];
     state.toolsRow = [NSStackView stackViewWithViews:state.tools];
@@ -204,6 +209,8 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     [_toolbar addArrangedSubview:state.headerRow];
     state.headerWidth = [state.headerRow.widthAnchor constraintEqualToAnchor:_toolbar.widthAnchor constant:-16];
     state.headerWidth.active = YES;
+    state.wrappedWidths=@[[state.primaryRow.widthAnchor constraintEqualToAnchor:state.headerRow.widthAnchor],
+                          [state.toolsRow.widthAnchor constraintEqualToAnchor:state.headerRow.widthAnchor]];
     _toolbar.orientation = NSUserInterfaceLayoutOrientationVertical; _toolbar.alignment = NSLayoutAttributeLeading;
     [state.primaryRow setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     [state.toolsRow setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -304,16 +311,20 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     state.command.hidden = _presentationMode;
     _markdownFontSizeSegments.hidden = ![self isMarkdownActive];
     state.headerWidth.constant = _minimapVisible ? -16 : -48;
-    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds)-(_minimapVisible ? 0 : 32) < ([self isMarkdownActive] ? 632 : 564);
+    state.statusSpace.constant=saved ? 154 : 0;
+    BOOL wrapped = NSWidth(_toolbar.bounds) > 0 && NSWidth(_toolbar.bounds)-(_minimapVisible ? 0 : 32) < ([self isMarkdownActive] ? 632 : 564)+(saved ? 154 : 0);
     if (state.wrapped != wrapped) {
+        [NSLayoutConstraint deactivateConstraints:state.wrappedWidths];
+        NSStackView* oldHost=state.wrapped ? state.toolsRow : state.primaryRow;
+        [oldHost removeArrangedSubview:_toolbarSpacer]; [_toolbarSpacer removeFromSuperview];
+        if (wrapped) [state.toolsRow insertArrangedSubview:_toolbarSpacer atIndex:0];
+        else [state.primaryRow addArrangedSubview:_toolbarSpacer];
         state.wrapped = wrapped;
         state.headerRow.orientation = wrapped ? NSUserInterfaceLayoutOrientationVertical : NSUserInterfaceLayoutOrientationHorizontal;
         state.headerRow.alignment = wrapped ? NSLayoutAttributeLeading : NSLayoutAttributeCenterY;
+        if (wrapped) [NSLayoutConstraint activateConstraints:state.wrappedWidths];
     }
-    BOOL revision = NO;
-    for (NSView* view in _toolbar.arrangedSubviews)
-        if (([view.identifier isEqualToString:@"CollectionVersionIndicator"] || [view.identifier isEqualToString:@"CollectionVersionStatusRow"]) && !view.hidden) revision = YES;
-    _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 68 : 36) + (revision ? 28 : 0);
+    _toolbarHeightConstraint.constant = _presentationMode ? 0 : (wrapped ? 68 : 36);
     _toolbar.edgeInsets = NSEdgeInsetsMake(4,_sidebarVisible ? 8 : 8-_splitView.dividerThickness,4,8);
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _presentationMode;
