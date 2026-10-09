@@ -286,7 +286,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     BOOL saved = [self collectionTabIsSavedVersion:tab];
     BOOL copy = saved || tab.readOnly || SPDFPathIsUnsavedPastedImage(tab.path);
     state.sourcePill.hidden = !copy || _presentationMode;
-    state.sourceStatus.stringValue = saved ? @"Collection copy · Read-only" :
+    state.sourceStatus.stringValue = saved ? @"Collection document" :
         tab.readOnly ? @"Working copy · Read-only" : @"Unsaved image";
     state.sourceStatus.toolTip = state.sourceStatus.stringValue;
     state.outlineSummary.hidden = !chapters || copy;

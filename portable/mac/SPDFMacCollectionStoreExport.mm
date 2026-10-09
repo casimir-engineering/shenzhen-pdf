@@ -1,6 +1,8 @@
 #import "SPDFMacCollectionStorePrivate.h"
 @implementation SPDFMacCollectionStore (Export)
 - (NSDictionary*)archiveInfoForPath:(NSString*)path {
+    NSDictionary* editable=[self editableInfoForPath:path];
+    if (editable) return editable;
     NSString* resolved=path.stringByResolvingSymlinksInPath;
     NSString* previews=[[self.rootURL URLByAppendingPathComponent:@"previews"].path stringByResolvingSymlinksInPath];
     if (![resolved hasPrefix:[previews stringByAppendingString:@"/"]]) return nil;

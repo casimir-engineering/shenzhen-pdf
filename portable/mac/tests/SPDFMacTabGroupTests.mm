@@ -60,34 +60,18 @@ int main(void) {
         Expect(@"ordinary tabs do not serialize copy metadata",!spdf_dictionary_from_tab(source,0)[@"roCopyBinding"]);
         NSMutableArray* backupTabs = [@[source,saved] mutableCopy];
         spdf_tab_group_collection_copy(backupTabs,saved);
-        Expect(@"opening a copy creates the special group while originals stay in General",
-            saved.group.collectionBackups && [saved.group.displayName isEqual:@"Collection Backups"] && source.group.general);
-        SPDFDocumentTab* nextCopy = Tab(@"/archive/v2.md"); nextCopy.readOnly = YES;
-        [backupTabs addObject:nextCopy];
-        spdf_tab_group_collection_copy(backupTabs,nextCopy);
-        Expect(@"more copies reuse one group",saved.group == nextCopy.group);
-        saved.group.hidden = YES; saved.group.collapsed = YES;
-        NSArray* restoredCopies = RoundTrip(backupTabs);
-        SPDFDocumentTab* restoredSaved = restoredCopies[1];
-        Expect(@"backup identity name visibility order and read-only survive session persistence",
-            restoredSaved.group.collectionBackups && restoredSaved.group.hidden && restoredSaved.group.collapsed &&
-            restoredSaved.readOnly && [restoredSaved.path isEqual:saved.path] &&
-            [restoredSaved.group.displayName isEqual:@"Collection Backups"] &&
-            restoredSaved.group == ((SPDFDocumentTab*)restoredCopies[2]).group);
-        saved.group.colorName = @"Blue";
-        Expect(@"backup color cannot be changed by setters",[saved.group.colorName isEqual:@"Orange"] &&
-            [saved.group.dictionary[@"color"] isEqual:@"Orange"]);
-        SPDFTabGroup* oldBackup = [SPDFTabGroup fromDictionary:@{@"id":@"collection-backups",@"color":@"Slate"}];
-        Expect(@"old and edited config colors normalize to Orange",[oldBackup.colorName isEqual:@"Orange"]);
-        saved.collectionVersionLabel = @"Collection copy · Read-only";
-        saved.group = source.group;
-        spdf_tab_group_collection_copy(backupTabs,saved);
-        Expect(@"moving a known backup into General survives another open",saved.group.general && SPDFTabIsCollectionCopy(saved));
-        NSArray* moved = RoundTrip(backupTabs);
-        SPDFDocumentTab* movedCopy = moved[1];
-        NSMutableArray* reloaded = [moved mutableCopy]; spdf_tab_group_collection_copy(reloaded,movedCopy);
-        Expect(@"moved copy provenance and group survive session restore",movedCopy.group.general &&
-            movedCopy.readOnly && SPDFTabIsCollectionCopy(movedCopy));
+        Expect(@"opening a copy creates no special group", !saved.group && !source.group);
+        SPDFTabGroup* project=[SPDFTabGroup groupWithColor:@"Blue"];
+        source.group=project; source.collectionHistoryDocumentID=@"same-document";
+        saved.group=SPDFTabGroup.collectionBackupsGroup; saved.collectionHistoryDocumentID=@"same-document";
+        spdf_tab_groups_normalize(backupTabs);
+        Expect(@"legacy backup rejoins its original group",saved.group==project);
+        NSArray* restoredCopies=RoundTrip(backupTabs);
+        Expect(@"migrated group persists without backup metadata",!((SPDFDocumentTab*)restoredCopies[1]).group.collectionBackups &&
+            [((SPDFDocumentTab*)restoredCopies[1]).group.identifier isEqual:project.identifier]);
+        SPDFDocumentTab* orphan=Tab(@"/archive/orphan.md"); orphan.group=SPDFTabGroup.collectionBackupsGroup;
+        [backupTabs addObject:orphan]; spdf_tab_groups_normalize(backupTabs);
+        Expect(@"unmatched legacy backup joins General",orphan.group.general);
         SPDFTabGroup* purple = [SPDFTabGroup groupWithColor:@"Purple"];
         purple.name = @"Research";
         purple.lastUsedPath = @"/c.md";

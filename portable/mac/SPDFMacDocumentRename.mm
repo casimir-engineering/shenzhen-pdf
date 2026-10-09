@@ -1,6 +1,7 @@
 #import "SPDFMacDocumentRename.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacCollectionIntegration.h"
+#import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacCollectionTabIdentity.h"
 #import "SPDFMacTabGroups.h"
@@ -27,7 +28,7 @@
         NSDictionary* attributes=[self fileAttributesForPath:destination];
         if (attributes) [self recordFileAttributes:attributes forTab:open];
     }
-    if ([_path isEqual:source]) { _path=[destination copy]; if (copy) _workingPath=[destination copy]; }
+    if ([_path isEqual:source]) { _path=[destination copy]; if (copy || [_workingPath isEqual:source]) _workingPath=[destination copy]; }
     [_recentlyOpenedPaths removeObject:source]; [self rememberRecentlyOpenedPath:destination];
     [self repointActiveFileWatcher]; [self updateTabStrip]; [self updateControls]; [self savePersistentState];
 }
@@ -76,13 +77,16 @@
     NSInteger index=source ? [self indexOfTabForPath:source] : -1;
     if (index<0) return;
     SPDFDocumentTab* tab=_tabs[(NSUInteger)index];
-    if (tab.missingFile || tab.unsavedPastedImage || SPDFTabIsCollectionCopy(tab)) return;
+    if (tab.missingFile || tab.unsavedPastedImage) return;
+    BOOL collection = [source.pathComponents containsObject:@"editable"] &&
+        [SPDFMacCollectionStore.defaultStore editableInfoForPath:source] != nil;
     if (tab.readOnly || ![NSFileManager.defaultManager isWritableFileAtPath:source] ||
         ![NSFileManager.defaultManager isWritableFileAtPath:source.stringByDeletingLastPathComponent]) {
         [self offerRenameSaveAsForPath:source proposedName:nil]; return;
     }
     NSAlert* alert=[NSAlert new]; alert.messageText=@"Rename Document";
     alert.informativeText=@"The file will be renamed in its current folder. Its format and version history will be preserved.";
+    if (collection) { alert.messageText=@"Rename in Collection"; alert.informativeText=@"Rename this Collection document. Its history and original source reference will be preserved."; }
     [alert addButtonWithTitle:@"Rename"]; [alert addButtonWithTitle:@"Cancel"];
     NSTextField* field=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,360,24)];
     field.stringValue=source.lastPathComponent.stringByDeletingPathExtension;
@@ -94,6 +98,13 @@
         if ([source isEqual:destination]) return;
         if ([self indexOfTabForPath:source]<0) return;
         NSError* error=nil;
+        if (collection) {
+            NSURL* renamed=[SPDFMacCollectionStore.defaultStore renameEditablePath:source filename:destination.lastPathComponent error:&error];
+            if (!renamed) { [self showError:@"Could not rename document" detail:error.localizedDescription]; return; }
+            [self adoptRenamedDocumentFrom:source to:renamed.path replacingReadOnly:NO];
+            [self collectionSetVersionInfo:[SPDFMacCollectionStore.defaultStore editableInfoForPath:renamed.path] forTab:tab];
+            [self collectionRefreshHistory]; return;
+        }
         if (!SPDFRenameDocumentFile(source,destination,&error)) {
             NSError* cause=error.userInfo[NSUnderlyingErrorKey];
             if (error.code==NSFileWriteNoPermissionError ||

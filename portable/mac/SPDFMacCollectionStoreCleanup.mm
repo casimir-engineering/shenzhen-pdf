@@ -33,6 +33,7 @@ static NSString* ReviewToken(NSDictionary* manifest) {
     return token;
 }
 static BOOL Protected(NSDictionary* doc) {
+    if ([doc[@"editableCopies"] count]) return YES; // These files may be the user's only editable originals.
     for (NSDictionary* v in doc[@"versions"]) if ([v[@"keep"] boolValue]) return YES;
     return NO;
 }
@@ -72,6 +73,14 @@ static void RemoveVersion(NSMutableDictionary* manifest,NSString* documentID,NSS
             if (lstat(URL.fileSystemRepresentation,&info)==0 && S_ISREG(info.st_mode)) size=(unsigned long long)info.st_size;
             else if ([folder isEqual:@"objects"]) size=[entries[filename] unsignedLongLongValue];
             sizes[relative]=@(size);
+        }
+    }
+    for (NSDictionary* doc in [manifest[@"documents"] allValues]) if ([doc[@"editableCopies"] count]) {
+        NSURL* directory=[[self.rootURL URLByAppendingPathComponent:@"editable"] URLByAppendingPathComponent:doc[@"id"]];
+        for (NSURL* URL in [NSFileManager.defaultManager enumeratorAtURL:directory includingPropertiesForKeys:nil options:0 errorHandler:nil]) {
+            struct stat info={};
+            if (lstat(URL.fileSystemRepresentation,&info)==0 && S_ISREG(info.st_mode))
+                sizes[[URL.path substringFromIndex:self.rootURL.path.length+1]]=@((unsigned long long)info.st_size);
         }
     }
     return sizes;
@@ -157,6 +166,9 @@ static void RemoveVersion(NSMutableDictionary* manifest,NSString* documentID,NSS
         }
     }
     NSURL* previews=[self.rootURL URLByAppendingPathComponent:@"previews"];
+    NSURL* editable=[self.rootURL URLByAppendingPathComponent:@"editable"];
+    for (NSURL* docURL in [fm contentsOfDirectoryAtURL:editable includingPropertiesForKeys:nil options:0 error:nil])
+        if (!manifest[@"documents"][docURL.lastPathComponent]) [fm removeItemAtURL:docURL error:nil];
     for (NSURL* docURL in [fm contentsOfDirectoryAtURL:previews includingPropertiesForKeys:nil options:0 error:nil]) {
         NSDictionary* doc=manifest[@"documents"][docURL.lastPathComponent];
         if (!doc) { [fm removeItemAtURL:docURL error:nil]; continue; }

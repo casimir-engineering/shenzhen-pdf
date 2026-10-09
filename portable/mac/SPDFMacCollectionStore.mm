@@ -161,6 +161,8 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
     }];
 }
 - (NSDictionary*)documentForPath:(NSString*)path {
+    NSDictionary* editable=[self editableInfoForPath:path];
+    if (editable) return editable[@"document"];
     path = SPDFCollectionPath(path);
     NSArray* rows=[self documents];
     for (NSDictionary* row in rows)
@@ -201,6 +203,7 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
     return [self retainedBytesInManifest:[self readManifest]];
 }
 - (BOOL)isArchivePath:(NSString*)path {
+    if ([self editableInfoForPath:path]) return NO;
     NSString* root = self.rootURL.path.stringByResolvingSymlinksInPath;
     NSString* resolved = path.stringByResolvingSymlinksInPath;
     NSString* original=self.originalRootURL.path.stringByResolvingSymlinksInPath;

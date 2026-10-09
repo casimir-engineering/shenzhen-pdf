@@ -63,7 +63,7 @@
     _title.identifier = @"HistoryDocumentTitle";
     _title.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
     _title.lineBreakMode = NSLineBreakByTruncatingMiddle; _title.hidden = !_showsDocumentTitle;
-    _status = [NSTextField wrappingLabelWithString:@"Saved versions are read-only."];
+    _status = [NSTextField wrappingLabelWithString:@"Open a version to read or edit it."];
     _status.font = [NSFont systemFontOfSize:11];
     _status.textColor = NSColor.secondaryLabelColor;
     _table = [NSTableView new]; _table.headerView = nil; _table.rowHeight = 56;
@@ -181,7 +181,7 @@
             self->_missingSource = found != nil && !available;
             self->_recoveryActions.hidden = available || !versions.count;
             self->_status.stringValue = !versions.count ? @"No saved versions yet" :
-                available ? @"Original available · saved versions are read-only" :
+                available ? @"Original available · edits retain version history" :
                 @"Original missing · saved versions available";
             self->_restoringSelection = YES;
             [self->_table reloadData];
@@ -271,24 +271,24 @@
         BOOL original = SPDFCollectionVersionIsLatest(current,version) && SPDFCollectionOriginalAvailable(current);
         NSError* error = nil;
         NSURL* URL = original ? [NSURL fileURLWithPath:current[@"path"]] :
-            [self->_store materializeVersionID:version[@"id"] documentID:self->_documentID error:&error];
+            [self->_store editableVersionID:version[@"id"] documentID:self->_documentID error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation != self->_previewGeneration) return;
             self->_document = current; self->_recoveryActions.hidden = SPDFCollectionOriginalAvailable(current);
             self->_status.stringValue = error.localizedDescription ?: (SPDFCollectionOriginalAvailable(current) ?
-                @"Original available · saved versions are read-only" : @"Original missing · saved versions available");
+                @"Original available · edits retain version history" : @"Original missing · saved versions available");
             if (self->_missingSource == SPDFCollectionOriginalAvailable(current)) [self reload];
             if (URL) self->_open(URL.path,!original);
         });
     });
 }
 - (void)materialize:(NSDictionary*)version completion:(void (^)(NSURL*))completion {
-    _status.stringValue = @"Preparing read-only preview…";
+    _status.stringValue = @"Opening Collection document…";
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError* error = nil;
         NSURL* URL = [self->_store materializeVersionID:version[@"id"] documentID:self->_documentID error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
-            self->_status.stringValue = error.localizedDescription ?: @"Archived copy · read-only";
+            self->_status.stringValue = error.localizedDescription ?: @"Collection document";
             if (URL) completion(URL);
         });
     });

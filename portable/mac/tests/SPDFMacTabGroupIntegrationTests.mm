@@ -231,9 +231,9 @@ static void CheckOpeningOriginalFromBackups(void) {
     GroupReaderProbe* restored = [GroupReaderProbe new]; [restored seed:restoredTabs selected:0];
     SPDFDocumentTab* afterRestart = Tab(@"/documents/after-restart.txt");
     [restored appendNewTabToActiveGroup:afterRestart];
-    Expect(@"reserved routing survives session restoration",afterRestart.group.general &&
-        [spdf_tab_group_members(restored.tabs,afterRestart.group) count] == 3 &&
-        ((SPDFDocumentTab*)restored.tabs[0]).group.collectionBackups);
+    Expect(@"legacy Backups joins ordinary General on restoration",afterRestart.group.general &&
+        [spdf_tab_group_members(restored.tabs,afterRestart.group) count] == 4 &&
+        !((SPDFDocumentTab*)restored.tabs[0]).group.collectionBackups);
 }
 static void CheckEmptyGroups(void) {
     GroupReaderProbe* reader=[GroupReaderProbe new];

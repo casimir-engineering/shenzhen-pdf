@@ -43,6 +43,7 @@
 - (NSArray*)tabs { return _tabs; }
 - (NSInteger)selectedIndex { return _selectedTabIndex; }
 - (void)rememberActiveTabState {}
+- (void)collectionRememberGroups {}
 - (NSMutableDictionary*)sidebarWorkspaceState { if (!self.workspace) self.workspace=[NSMutableDictionary dictionary]; return self.workspace; }
 - (void)writeStateObject:(id)object toFile:(NSString*)name {
     (void)object; (void)name; self.handoffWriteCount++;

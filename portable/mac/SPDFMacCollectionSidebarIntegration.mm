@@ -84,6 +84,9 @@ static char historyControllerKey, historyWrapperKey, historyDocumentKey, history
                 if (index == reader->_selectedTabIndex) [reader loadSelectedTab]; else [reader selectTabAtIndex:index];
                 [reader savePersistentState];
             } else if (missing) {
+                [reader discardCachedRuntimeForTab:missing];
+                [reader collectionSetVersionInfo:nil forTab:missing];
+                missing.workingPath=nil; missing.collectionVersionLabel=nil;
                 missing.path = restoredPath; missing.title = restoredPath.lastPathComponent.stringByDeletingPathExtension;
                 missing.missingFile = NO; missing.missingMessage = @""; missing.readOnly = NO;
                 NSInteger index = [reader->_tabs indexOfObjectIdenticalTo:missing];

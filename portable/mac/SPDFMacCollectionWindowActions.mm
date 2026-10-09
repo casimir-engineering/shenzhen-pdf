@@ -11,10 +11,10 @@
 - (void)preview:(id)sender {
     (void)sender; NSDictionary* doc = [self selectedDocument], *version = [self selectedVersion];
     if (!doc || !version[@"id"]) return;
-    self.details.stringValue = @"Preparing read-only preview…";
+    self.details.stringValue = @"Opening Collection document…";
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError* error = nil;
-        NSURL* URL = [self.store materializeVersionID:version[@"id"] documentID:doc[@"id"] error:&error];
+        NSURL* URL = [self.store editableVersionID:version[@"id"] documentID:doc[@"id"] error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (URL) self.openHandler(URL.path, YES); else [self showError:error];
             [self updateDetails];

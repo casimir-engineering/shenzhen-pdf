@@ -56,5 +56,5 @@ NSInteger spdf_tab_group_prepare_gap_drop(NSArray<SPDFDocumentTab*>* tabs,
 - (void)detachTabGroup:(SPDFTabGroup*)group atScreenPoint:(NSPoint)point;
 @end
 
-// Called only for an opened archive; ordinary documents create no special group.
+// Legacy compatibility entry point; copies remain in ordinary groups.
 void spdf_tab_group_collection_copy(NSMutableArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* tab);

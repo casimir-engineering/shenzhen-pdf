@@ -123,6 +123,14 @@ NSInteger spdf_tab_group_prepare_gap_drop(NSArray<SPDFDocumentTab*>* tabs,
     return last >= 0 ? last + 1 : MAX(0, MIN(insertionIndex, (NSInteger)tabs.count));
 }
 void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs) {
+    // Legacy Backups groups are retired without any filesystem work at launch.
+    for (SPDFDocumentTab* tab in tabs) if (tab.group.collectionBackups) {
+        SPDFTabGroup* original=nil;
+        for (SPDFDocumentTab* other in tabs)
+            if (!other.group.collectionBackups && tab.collectionHistoryDocumentID.length &&
+                [other.collectionHistoryDocumentID isEqual:tab.collectionHistoryDocumentID]) { original=other.group; break; }
+        tab.group=original;
+    }
     BOOL hasCustom = NO;
     BOOL hasAny = NO;
     BOOL retainGeneral = NO;
@@ -179,12 +187,6 @@ void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* 
 }
 
 void spdf_tab_group_collection_copy(NSMutableArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* tab) {
-    // Only first discovery chooses Backups. A known copy may have been moved by
-    // the reader; its saved membership must survive reopen, restore and reload.
-    if (!tab || SPDFTabIsCollectionCopy(tab) || tab.group.collectionBackups || ![tabs containsObject:tab]) return;
-    SPDFTabGroup* group = nil;
-    for (SPDFDocumentTab* candidate in tabs)
-        if (candidate.group.collectionBackups) { group = candidate.group; break; }
-    tab.group = group ?: SPDFTabGroup.collectionBackupsGroup;
-    spdf_tab_groups_normalize(tabs);
+    // Compatibility entry point: copies now remain ordinary group members.
+    if (tab && [tabs containsObject:tab]) spdf_tab_groups_normalize(tabs);
 }

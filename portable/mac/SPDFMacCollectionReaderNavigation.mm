@@ -6,8 +6,9 @@
 #import "SPDFMacCollectionStyle.h"
 #import <objc/runtime.h>
 
-static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
+static char versionInfoKey, versionIndicatorKey, versionIndicatorRowKey, versionLocateKey, navigationGenerationKey;
 @interface SPDFCollectionVersionPill : NSButton
+@property BOOL missing;
 @end
 @implementation SPDFCollectionVersionPill
 - (NSSize)intrinsicContentSize {
@@ -17,8 +18,9 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
     (void)dirty;
     NSRect bounds = NSInsetRect(self.bounds,.5,.5);
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:NSHeight(bounds)/2 yRadius:NSHeight(bounds)/2];
-    [[NSColor.controlAccentColor colorWithAlphaComponent:self.highlighted ? .22 : .10] setFill]; [shape fill];
-    [[NSColor.controlAccentColor colorWithAlphaComponent:.45] setStroke]; [shape stroke];
+    NSColor* accent=self.missing ? NSColor.systemRedColor : NSColor.controlAccentColor;
+    [[accent colorWithAlphaComponent:self.highlighted ? .25 : .14] setFill]; [shape fill];
+    [[accent colorWithAlphaComponent:.55] setStroke]; [shape stroke];
     NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
     style.alignment = NSTextAlignmentCenter; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
     NSDictionary* attributes = @{NSFontAttributeName:self.font,NSForegroundColorAttributeName:NSColor.labelColor,
@@ -43,12 +45,12 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
         for (NSDictionary* candidate in document[@"versions"])
             if ([candidate[@"id"] isEqual:document[@"latestVersionID"]]) { version = candidate; break; }
     }
-    // Latest is always the live document. Earlier indexed matches retain their immutable copy.
+    // Latest uses the live source when available; saved revisions open independent editable files.
     BOOL original = (history || SPDFCollectionVersionIsLatest(document,version)) && SPDFCollectionOriginalAvailable(document);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError* error = nil;
         NSURL* URL = original ? [NSURL fileURLWithPath:document[@"path"]] :
-            [store materializeVersionID:version[@"id"] documentID:document[@"id"] error:&error];
+            [store editableVersionID:version[@"id"] documentID:document[@"id"] error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([objc_getAssociatedObject(self,&navigationGenerationKey) unsignedIntegerValue] != generation) return;
             if (!URL) { if (error) [self->_window presentError:error]; return; }
@@ -83,8 +85,9 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
 }
 - (void)collectionUpdateVersionIndicator {
     NSDictionary* info = objc_getAssociatedObject([self selectedTab],&versionInfoKey);
-    NSButton* pill = objc_getAssociatedObject(self,&versionIndicatorKey);
-    if (!info || !_toolbar || !_findRegexCheckbox) { pill.hidden = YES; return; }
+    SPDFCollectionVersionPill* pill = objc_getAssociatedObject(self,&versionIndicatorKey);
+    NSStackView* row = objc_getAssociatedObject(self,&versionIndicatorRowKey);
+    if (!info || !_toolbar || !_findRegexCheckbox) { pill.hidden = YES; row.hidden = YES; return; }
     if (!pill) {
         pill = [SPDFCollectionVersionPill new]; pill.bordered = NO;
         pill.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
@@ -95,8 +98,13 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
         pill.lineBreakMode = NSLineBreakByTruncatingMiddle;
         // The compact reader gives archival status its own line, so a long
         // date/recovery label never squeezes page navigation or document tools.
-        [_toolbar addArrangedSubview:pill];
-        [pill.widthAnchor constraintLessThanOrEqualToAnchor:_toolbar.widthAnchor constant:-16].active = YES;
+        NSButton* locate=SPDFCollectionButton(@"Locate…",self,@selector(collectionLocateFromIndicator:),@"secondary");
+        locate.identifier=@"CollectionLocateDocument"; locate.toolTip=@"Find the missing original automatically or choose it manually";
+        row=[NSStackView stackViewWithViews:@[pill,locate]]; row.spacing=6;
+        [_toolbar addArrangedSubview:row];
+        [row.widthAnchor constraintLessThanOrEqualToAnchor:_toolbar.widthAnchor constant:-16].active = YES;
+        objc_setAssociatedObject(self,&versionIndicatorRowKey,row,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self,&versionLocateKey,locate,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(self,&versionIndicatorKey,pill,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     NSDictionary* doc = info[@"document"], *version = info[@"version"];
@@ -106,25 +114,19 @@ static char versionInfoKey, versionIndicatorKey, navigationGenerationKey;
     format.dateFormat = @"yyyy.MM.dd";
     NSString* date = [version[@"capturedAt"] isKindOfClass:NSNumber.class] ?
         [format stringFromDate:[NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]]] : @"date unavailable";
-    NSString* title = older ? [@"Older version — " stringByAppendingString:date] : @"Collected copy";
+    NSString* title = older ? [@"Older version — " stringByAppendingString:date] : @"Collection document";
     if (missing) title = [title stringByAppendingString:@" · Original missing"];
     pill.title = title; [pill invalidateIntrinsicContentSize]; pill.accessibilityLabel = title; pill.hidden = NO;
+    pill.missing=missing; pill.needsDisplay=YES; row.hidden=NO;
+    [objc_getAssociatedObject(self,&versionLocateKey) setHidden:!missing];
     pill.enabled = missing;
-    pill.toolTip = missing ? @"This saved copy has no available original. Click to locate it." : @"Read-only saved version";
+    pill.toolTip = missing ? @"This saved copy has no available original. Click to locate it." : @"Editable Collection document; previous versions remain in History";
 }
 - (void)collectionLocateFromIndicator:(id)sender {
     (void)sender;
     NSDictionary* info = objc_getAssociatedObject([self selectedTab],&versionInfoKey);
     NSDictionary* doc = info[@"document"];
     if (!doc || SPDFCollectionOriginalAvailable(doc)) return;
-    SPDFMacCollectionStore* store = SPDFMacCollectionStore.defaultStore;
-    SPDFDocumentTab* tab = [self selectedTab];
-    SPDFMacLocateCollectionOriginal(store,doc[@"id"],_window, ^(NSString* path) {
-        [self collectionOpenPath:path archived:NO];
-    }, ^(NSString* path) {
-        NSDictionary* updated = [store documentForPath:path];
-        if (updated) [self collectionSetVersionInfo:@{@"document":updated,@"version":info[@"version"]} forTab:tab];
-        [self collectionRefreshHistory];
-    });
+    [self showCollectionRecovery:nil];
 }
 @end
