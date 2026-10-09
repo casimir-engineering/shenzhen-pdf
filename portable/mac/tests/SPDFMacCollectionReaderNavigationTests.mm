@@ -2,6 +2,7 @@
 #import "SPDFMacCollectionPalette.h"
 #import "SPDFMacCollectionRestoreTab.h"
 #import "SPDFMacCollectionStore.h"
+#import "SPDFMacTabGroups.h"
 #import "SPDFMacCollectionWindow.h"
 #import <objc/runtime.h>
 #pragma clang diagnostic push
@@ -49,6 +50,7 @@ void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* id
 }
 - (SPDFDocumentTab*)selectedTab { return _tabs.firstObject; }
 - (void)collectionOpenPath:(NSString*)path archived:(BOOL)archived { self.opened = path; self.archived = archived; self.opens++; [self selectedTab].path = path; }
+- (void)showCollectionRecovery:(id)sender { (void)sender; locatedID=[SPDFMacCollectionStore.defaultStore documentForPath:self.opened][@"id"]; }
 - (void)showCollectionHistory:(id)sender { (void)sender; self.histories++; }
 - (void)collectionNavigateResult:(NSDictionary*)result path:(NSString*)path attempts:(NSInteger)attempts {
     (void)path; (void)attempts; self.result = result;
@@ -70,10 +72,25 @@ void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* id
         writeToFile:path atomically:YES];
 }
 - (NSButton*)indicator {
-    for (NSView* view in _toolbar.arrangedSubviews)
-        if ([view.identifier isEqual:@"CollectionVersionIndicator"]) return (NSButton*)view;
+    for (NSView* row in _toolbar.arrangedSubviews)
+        for (NSView* view in row.subviews)
+            if ([view.identifier isEqual:@"CollectionVersionIndicator"]) return (NSButton*)view;
     return nil;
 }
+@end
+@interface RecoveryProbe : NavigationProbe
+@property NSUInteger loads;
+- (void)restoreChecksPath:(NSString*)path;
+@end
+@implementation RecoveryProbe
+- (void)restoreChecksPath:(NSString*)path { [self selectedTab].path=path; [self selectedTab].missingFile=YES; }
+- (void)loadSelectedTab { self.loads++; _path=[self selectedTab].path; }
+- (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab { (void)tab; }
+- (void)showEmptyDocumentViewWithMessage:(NSString*)message { (void)message; }
+- (void)updateTabStrip {}
+- (void)savePersistentState {}
+- (NSInteger)indexOfTabForPath:(NSString*)path { return [[self selectedTab].path isEqual:path] ? 0 : -1; }
+- (void)openPath:(NSString*)path { [self selectedTab].path=path; }
 @end
 static int failures, storeInitializations;
 static IMP oldInit;
@@ -118,7 +135,7 @@ int main(void) {
             NSEqualPoints(preview.scrollOrigin,missing.scrollOrigin) && [unrelated.path isEqual:@"/old.md"],
             "deduplicated recovery transfers reading position and leaves unrelated tab alone");
         NavigationProbe* reader = [NavigationProbe new]; [reader seed];
-        for (NSUInteger i=0;i<10;i++) [reader collectionUpdateVersionIndicator];
+        for (NSUInteger i=0;i<10;i++) { [reader collectionUpdateVersionIndicator]; [reader collectionRememberGroups]; }
         Expect(storeInitializations == 0,"ordinary toolbar never constructs Collection store");
         Expect(!reader.indicator,"ordinary toolbar creates no Collection pill");
         SPDFMacCollectionStore* store = SPDFMacCollectionStore.defaultStore;
@@ -177,6 +194,13 @@ int main(void) {
         Expect([reader.indicator.title containsString:@"Original missing"],"lost source is stated on pill");
         NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_TOOLBAR_EVIDENCE"];
         if (evidence.length) Expect([reader writeToolbarEvidence:evidence],"toolbar evidence renders without showing window");
+        Expect([[reader.indicator valueForKey:@"missing"] boolValue],"missing source pill has red status styling");
+        NSButton* locate=nil;
+        for (NSView* sibling in reader.indicator.superview.subviews)
+            if ([sibling.identifier isEqual:@"CollectionLocateDocument"]) locate=(NSButton*)sibling;
+        Expect(locate && !locate.hidden && locate.enabled,"missing source has an explicit enabled Locate button");
+        [locate performClick:nil];
+        Expect([locatedID isEqual:doc[@"id"]],"Locate button routes to recovery");
         [reader.indicator performClick:nil];
         Expect([locatedID isEqual:doc[@"id"]],"lost-source pill routes to Locate prompt");
         NSDictionary* latest = [doc[@"versions"] lastObject];
@@ -195,6 +219,33 @@ int main(void) {
             ![reader.indicator.title containsString:@"Older version"],"relink refresh clears stale missing and latest metadata");
         [reader collectionSetVersionInfo:nil forTab:reader.selectedTab];
         Expect(reader.indicator.hidden,"switching to ordinary document hides pill");
+        [NSFileManager.defaultManager removeItemAtPath:recovered error:nil];
+        RecoveryProbe* recovery=[RecoveryProbe new]; [recovery seed]; [recovery restoreChecksPath:recovered];
+        SPDFDocumentTab* restoredTab=recovery.selectedTab;
+        SPDFTabGroup* project=[SPDFTabGroup groupWithColor:@"Green"]; project.name=@"Project";
+        restoredTab.group=project; restoredTab.pageIndex=8; restoredTab.zoom=1.6;
+        restoredTab.scrollOrigin=NSMakePoint(0,540); restoredTab.hasScrollOrigin=YES;
+        Expect([recovery collectionRestoreMissingTab:restoredTab path:recovered],"missing source schedules saved document recovery");
+        Expect([recovery collectionRestoreMissingTab:restoredTab path:recovered],"revisiting a pending recovery does not fall through to an empty placeholder");
+        Expect(Await(^BOOL { return recovery.loads==1; }),"missing source recovery loads the Collection document");
+        Expect(restoredTab==recovery.selectedTab && restoredTab.group==project && restoredTab.pageIndex==8 &&
+            restoredTab.zoom==1.6 && restoredTab.scrollOrigin.y==540,"recovery keeps the same tab, group and reading position");
+        Expect(!restoredTab.readOnly && !restoredTab.missingFile && [store editableInfoForPath:restoredTab.path],
+            "recovered document is an editable working file");
+        Expect([recovery.indicator.title containsString:@"Original missing"],"recovered tab retains missing original toolbar status");
+        [recovery collectionRememberGroups];
+        Expect(Await(^BOOL { return [[store documentForPath:restoredTab.path][@"tabGroup"][@"name"] isEqual:@"Project"]; }),
+            "group mutations persist source membership for later Collection opening");
+        RecoveryProbe* alreadyPrepared=[RecoveryProbe new]; [alreadyPrepared seed]; [alreadyPrepared restoreChecksPath:recovered];
+        alreadyPrepared.selectedTab.group=project; alreadyPrepared.selectedTab.pageIndex=6;
+        [alreadyPrepared collectionPresentEditablePath:restoredTab.path info:[store editableInfoForPath:restoredTab.path]];
+        Expect(alreadyPrepared.loads==1 && alreadyPrepared.selectedTab.pageIndex==6 && alreadyPrepared.selectedTab.group==project,
+            "opening a prepared Collection document replaces its missing placeholder synchronously without resetting position");
+        RecoveryProbe* stale=[RecoveryProbe new]; [stale seed]; [stale restoreChecksPath:recovered];
+        [stale collectionRestoreMissingTab:stale.selectedTab path:recovered]; stale.selectedTab.path=@"/another-document.md";
+        NSDate* drained=[NSDate dateWithTimeIntervalSinceNow:.2];
+        while(drained.timeIntervalSinceNow>0) [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:drained];
+        Expect(stale.loads==0 && [stale.selectedTab.path isEqual:@"/another-document.md"],"late recovery never replaces a changed tab");
         method_setImplementation(init,oldInit);
         [NSFileManager.defaultManager removeItemAtPath:root error:nil];
         if (!failures) puts("SPDFMacCollectionReaderNavigationTests passed");

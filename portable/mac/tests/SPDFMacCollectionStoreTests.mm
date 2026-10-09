@@ -21,6 +21,7 @@ static NSDictionary* Capture(SPDFMacCollectionStore* store,NSString* path,NSStri
 }
 #include "SPDFMacCollectionRelinkChecks.h"
 #include "SPDFMacCollectionHistoryDeletionChecks.h"
+#include "SPDFMacCollectionEditableChecks.h"
 
 int main(int argc,const char* argv[]) {
     @autoreleasepool {
@@ -30,6 +31,7 @@ int main(int argc,const char* argv[]) {
         }
         CheckAutomaticRelink();
         CheckHistoryDeletion();
+        CheckEditableCollection();
         NSString* sandbox=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [NSFileManager.defaultManager createDirectoryAtPath:sandbox withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL* root=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"Collection"]];

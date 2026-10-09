@@ -239,6 +239,7 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
     path = SPDFCollectionPath(path);
     if (![self captureRequestIsCurrentForPath:path]) return nil;
     if (![self isEnabled] || [self isArchivePath:path] || [[self documentForPath:path][@"excluded"] boolValue]) return nil;
+    if ([self editableInfoForPath:path]) return [self captureEditablePath:path reason:reason error:error];
     NSDictionary* existing=[self documentForPath:path];
     if (![self captureEpochIsCurrentForPath:path document:existing]) return nil;
     if (![self captureUserOpenCountForPath:path] && (!documentID.length || [existing[@"id"] isEqual:documentID]) &&
@@ -304,8 +305,10 @@ static BOOL InstallTextIndex(NSDictionary* index, NSMutableDictionary* version, 
     // the source write is allowed to begin, including a reused protected copy.
     return [self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
         NSMutableDictionary* current=manifest[@"documents"][protectedDocument[@"id"]];
-        if ([current[@"sourceReplaced"] boolValue] ||
-            ![current[@"sourceFingerprint"] isEqual:SPDFCollectionFingerprint(path)]) {
+        NSDictionary* editable=[self editableInfoForPath:path];
+        NSDictionary* fingerprint=editable ? current[@"editableCopies"][editable[@"copyID"]][@"fingerprint"] : current[@"sourceFingerprint"];
+        if ((!editable && [current[@"sourceReplaced"] boolValue]) ||
+            ![fingerprint isEqual:SPDFCollectionFingerprint(path)]) {
             if (failure) *failure=SPDFCollectionSourceUnavailable(@"Source changed before edit protection completed. Retry.");
             return NO;
         }

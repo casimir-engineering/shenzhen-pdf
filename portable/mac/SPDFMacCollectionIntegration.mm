@@ -8,19 +8,10 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import <objc/runtime.h>
 #import "SPDFMacTabGroups.h"
-static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported, kCollectionRecoveryPath, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
+static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionIntegration)
 - (void)collectionAllowImportRetryAfterFailure {
     objc_setAssociatedObject(self,&kCollectionImported,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
-- (void)collectionGroupBackupTab:(SPDFDocumentTab*)tab {
-    SPDFDocumentTab* selected = [self selectedTab];
-    spdf_tab_group_collection_copy(_tabs,tab);
-    _selectedTabIndex = selected ? [_tabs indexOfObjectIdenticalTo:selected] : -1;
-    if (selected == tab) {
-        tab.group.hidden = NO;
-        spdf_tab_groups_activate(_tabs,tab);
-    }
 }
 - (void)collectionObserveSettings {
     if (objc_getAssociatedObject(self, &kCollectionSettingsObserver)) return;
@@ -82,23 +73,13 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
         SPDFMacCollectionStore* store = [SPDFMacCollectionStore defaultStore];
         if ([store isArchivePath:source]) {
             NSDictionary* info = [store archiveInfoForPath:source];
-            NSInteger index = [self indexOfTabForPath:source];
-            if (index >= 0) {
-                SPDFDocumentTab* tab = self->_tabs[(NSUInteger)index]; tab.readOnly = YES;
-                [self collectionGroupBackupTab:tab];
-                [self collectionSetVersionInfo:info forTab:tab];
-                NSNumber* capturedAt = info[@"version"][@"capturedAt"];
-                NSString* label = capturedAt ? [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:capturedAt.doubleValue]
-                    dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle] : @"date unavailable";
-                tab.collectionVersionLabel = [NSString stringWithFormat:@"Archived · %@ · %@ · Read-only", label, source.lastPathComponent.stringByDeletingPathExtension];
-                tab.title = tab.collectionVersionLabel;
-                [self updateTabStrip]; [self savePersistentState]; [self collectionRefreshHistory];
-                if (tab == [self selectedTab]) {
-                    self->_window.title = [tab.collectionVersionLabel stringByAppendingString:@" - Shenzhen PDF"];
-                    self->_statusLabel.stringValue = [NSString stringWithFormat:@"Archived copy · Read-only · %@", label];
-                }
-            }
+            if (openedTab && info) [self collectionConvertTab:openedTab path:source info:info];
             return;
+        }
+        NSDictionary* openedEditable=[store editableInfoForPath:source];
+        if (openedEditable && [openedTab.path isEqual:source]) {
+            openedTab.readOnly=NO; openedTab.collectionVersionLabel=nil;
+            [self collectionSetVersionInfo:openedEditable forTab:openedTab];
         }
         NSString* choice = [store settings][@"choice"];
         if ([choice isEqual:@"unset"] || !choice.length) {
@@ -145,8 +126,17 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
             // Reading succeeded even when capture was excluded or could not save a new version.
             if (!userOpenCountRecorded)
                 [self collectionRecordUserOpenCount:userOpenCount document:doc ?: [store documentForPath:source]];
+            NSDictionary* editable = [store editableInfoForPath:source];
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (doc) [self collectionRememberPasswordForPath:source];
+                if (editable && [openedTab.path isEqual:source]) {
+                    openedTab.readOnly = NO; openedTab.collectionVersionLabel = nil;
+                    [self collectionSetVersionInfo:editable forTab:openedTab];
+                }
+                if (doc) {
+                    if ([openedTab.path isEqual:source]) openedTab.collectionHistoryDocumentID=doc[@"id"];
+                    [self collectionRememberGroups];
+                    [self collectionRememberPasswordForPath:source];
+                }
                 [self collectionRefreshVersionInfoForDocument:doc];
                 if (![self->_path isEqual:source]) return;
                 [self collectionRefreshHistory];
@@ -232,24 +222,24 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     });
 }
 - (void)collectionOpenPath:(NSString*)path archived:(BOOL)archived {
-    [self openPath:path];
-    [_window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
-    if (archived && [[self selectedTab].path isEqual:path]) {
-        SPDFDocumentTab* tab = [self selectedTab]; tab.readOnly = YES;
-        [self collectionGroupBackupTab:tab];
-        if (!tab.collectionVersionLabel.length) tab.collectionVersionLabel = @"Collection copy · Read-only";
-        tab.title = [NSString stringWithFormat:@"%@ · Collection copy", path.lastPathComponent.stringByDeletingPathExtension];
-        [self updateTabStrip]; [self savePersistentState];
-        _statusLabel.stringValue = @"Read-only Collection copy · the original document is unchanged";
+    SPDFMacCollectionStore* store = SPDFMacCollectionStore.defaultStore;
+    NSDictionary* info = archived ? [store archiveInfoForPath:path] : nil;
+    if (info && ![info[@"editable"] boolValue]) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+            NSError* error=nil;
+            NSURL* URL=[store editableVersionID:info[@"version"][@"id"] documentID:info[@"document"][@"id"] error:&error];
+            NSDictionary* editable=URL ? [store editableInfoForPath:URL.path] : nil;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (URL) [self collectionPresentEditablePath:URL.path info:editable];
+                else if (error) [self->_window presentError:error];
+            });
+        });
+        return;
     }
+    [self collectionPresentEditablePath:path info:info];
 }
 - (BOOL)collectionPresentMissingPath:(NSString*)path {
-    if (![[SPDFMacCollectionStore defaultStore] documentForPath:path]) return NO;
-    if ([objc_getAssociatedObject(self, &kCollectionRecoveryPath) isEqual:path]) return YES;
-    objc_setAssociatedObject(self, &kCollectionRecoveryPath, path, OBJC_ASSOCIATION_COPY_NONATOMIC);
-    dispatch_async(dispatch_get_main_queue(), ^{ if ([self->_path isEqual:path]) [self showCollectionHistory:nil]; });
-    return YES;
+    return [[SPDFMacCollectionStore defaultStore] documentForPath:path] != nil;
 }
 - (void)showCollectionRecovery:(id)sender {
     NSString* path=[self collectionPathForSender:sender];
@@ -264,8 +254,11 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
     }, ^(NSString* restored) {
         ShenzhenMacDelegate* reader=weakSelf; if (!reader) return;
         SPDFDocumentTab* missing=nil;
-        for (SPDFDocumentTab* tab in reader->_tabs) if (tab.missingFile && [tab.path isEqual:original]) { missing=tab; break; }
+        for (SPDFDocumentTab* tab in reader->_tabs) if ((tab.missingFile && [tab.path isEqual:original]) || [tab.path isEqual:path]) { missing=tab; break; }
         if (missing) {
+            [reader discardCachedRuntimeForTab:missing];
+            [reader collectionSetVersionInfo:nil forTab:missing];
+            missing.workingPath=nil; missing.readOnly=NO; missing.collectionVersionLabel=nil;
             missing.path=restored; missing.title=restored.lastPathComponent.stringByDeletingPathExtension;
             missing.missingFile=NO; missing.missingMessage=@"";
             NSInteger index=[reader->_tabs indexOfObjectIdenticalTo:missing];

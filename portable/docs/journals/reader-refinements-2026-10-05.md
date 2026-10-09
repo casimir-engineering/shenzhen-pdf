@@ -597,3 +597,48 @@ geometry regression suites also pass. The corrected `dist/ShenzhenPDF.app` build
 and passes deep/strict signature verification; file-size and whitespace checks
 pass. The bundle identity and updater configuration are unchanged. No release
 was published.
+
+## 9 October: editable Collection documents and missing-source continuity
+
+Changed the Collection model following the new request: a missing original now
+loads a writable Collection document into its existing tab and group, retaining
+page, zoom and scroll position. The reader shows a red status pill and a separate
+Locate button. Rename updates the Collection filename/title while preserving the
+original source reference for later recovery. Existing versions remain available.
+
+Opening saved documents no longer routes them to Collection Backups. Opening from
+Collection or History chooses the original tab's group, or the last recorded group
+when that source tab is closed. Legacy Backups tabs migrate using matching history
+identities, falling back to General without reading storage during normalization.
+
+Writable files live separately from deduplicated history objects. Editing cannot
+change retained snapshot bytes; capture rejoins the same history without rebasing
+its missing source onto the working file. Merely opening an older version does not
+promote it to latest. Editable files retain permissions and identity across storage
+relocation, including rename through an old session path. Automatic cleanup excludes
+these documents because the working file may now be the only authoritative copy.
+
+The missing-tab fallback runs only after an actual failed source open. Its asynchronous
+completion checks tab identity/path before adopting the result, so a closed or changed
+tab cannot be replaced. Ordinary toolbar refreshes still create no Collection store;
+ordinary tab normalization allocates no group metadata. Snapshot materialization and
+capture stay off the UI thread for normal opening.
+
+Offscreen native control render (fixture window never shown; not an app screenshot):
+
+![Missing original toolbar: red pill and Locate button](reader-refinements-2026-10-05/missing-collection-toolbar.png)
+
+Validation covers writable-file isolation, edit protection, unchanged-byte deduplication,
+older-version consultation, missing-source rename, original-reference preservation,
+cleanup protection, relocation, in-place recovery and reading position, stale completion
+rejection, explicit Locate routing, legacy group migration and session persistence.
+Collection integrity, cleanup, asset, search, reader navigation, tab-group, rename and
+updater suites pass. The updater retains its 32-case test coverage.
+
+Additional regression checks exercise real PDF rotation and PNG pixel edits in
+Collection, then reopen the original to verify that working-copy fingerprints
+cannot incorrectly satisfy the original's capture cache. Group membership writes
+are ordered on a background serial queue and store only identity/name/color;
+ordinary tabs with no Collection identity never construct the store. The existing
+240 between-group drag/drop scenarios still pass, along with workspace-panel and
+launch-work policy checks. No source-size cap was raised; the updater is unchanged.

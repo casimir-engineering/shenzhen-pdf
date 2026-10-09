@@ -177,7 +177,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         doc[@"title"],doc[@"path"],doc[@"status"] ?: @"Protected",(unsigned long)[doc[@"versions"] count],
         date(version[@"capturedAt"]),date(version[@"modifiedAt"]),
         [NSByteCountFormatter stringFromByteCount:[version[@"size"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile],
-        [version[@"keep"] boolValue] ? @"Kept version" : version[@"id"] ? @"Read-only archive" : @"No archived version",
+        [version[@"keep"] boolValue] ? @"Kept version" : version[@"id"] ? @"Collection document" : @"No archived version",
         [doc[@"excluded"] boolValue] ? @"Saving new versions is paused" : @"Saving new versions is enabled",
         [version[@"encrypted"] boolValue] ? @"\nEncrypted · no text index" : @"",
         warnings.length ? [@"\nAssets incomplete:\n" stringByAppendingString:warnings] : @""]

@@ -1,6 +1,7 @@
 #import "SPDFMacDelegatePrivate.h"
 @interface ShenzhenMacDelegate (SPDFMacCollectionHost)
 - (void)loadSelectedTab;
+- (void)discardCachedRuntimeForTab:(SPDFDocumentTab*)tab;
 @end
 @interface ShenzhenMacDelegate (SPDFMacCollectionAPI)
 - (void)collectionPrepareForTabPath:(NSString*)path;
@@ -26,6 +27,10 @@
 - (void)showCollectionHistory:(id)sender;
 - (void)showCollectionPreviousVersion:(id)sender;
 - (void)showCollectionRecovery:(id)sender;
+- (void)collectionRememberGroups;
+- (BOOL)collectionRestoreMissingTab:(SPDFDocumentTab*)tab path:(NSString*)path;
+- (void)collectionConvertTab:(SPDFDocumentTab*)tab path:(NSString*)path info:(NSDictionary*)info;
+- (void)collectionPresentEditablePath:(NSString*)path info:(NSDictionary*)info;
 - (BOOL)collectionPresentMissingPath:(NSString*)path;
 - (void)collectionOpenPath:(NSString*)path archived:(BOOL)archived;
 - (BOOL)openCollectionPaletteResult:(NSDictionary*)result;

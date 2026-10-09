@@ -5,7 +5,8 @@
 static inline SPDFDocumentTab* SPDFCollectionMissingTab(NSArray<SPDFDocumentTab*>* tabs,
     NSString* identifier, NSString* previousPath) {
     for (SPDFDocumentTab* tab in tabs)
-        if (tab.missingFile && [tab.collectionHistoryDocumentID isEqual:identifier] && [tab.path isEqual:previousPath]) return tab;
+        if ([tab.collectionHistoryDocumentID isEqual:identifier] &&
+            ((tab.missingFile && [tab.path isEqual:previousPath]) || [tab.path.pathComponents containsObject:@"editable"])) return tab;
     return nil;
 }
 static inline SPDFDocumentTab* SPDFCollectionExistingRestoredTab(NSArray<SPDFDocumentTab*>* tabs, NSString* path) {

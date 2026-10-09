@@ -22,6 +22,14 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 - (unsigned long long)storageUsedBytes;
 - (BOOL)isArchivePath:(NSString*)path;
 @end
+@interface SPDFMacCollectionStore (EditableDocuments)
+- (nullable NSDictionary*)editableInfoForPath:(NSString*)path;
+- (nullable NSURL*)editableVersionID:(nullable NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error;
+- (nullable NSDictionary*)captureEditablePath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;
+- (nullable NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename error:(NSError**)error;
+- (void)rememberGroup:(NSDictionary*)group documentID:(NSString*)documentID;
+- (void)rememberGroups:(NSDictionary<NSString*,NSDictionary*>*)groups;
+@end
 @interface SPDFMacCollectionStore (Capture)
 - (nullable NSDictionary*)capturePath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;
 // Only observed live-watch/app-save continuity may supply an existing document ID.

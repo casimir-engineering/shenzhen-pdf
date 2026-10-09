@@ -18,6 +18,7 @@ BOOL SPDFSessionHasEmptyTabGroups(id windowState) {
 
 @interface ShenzhenMacDelegate (SPDFMacTabGroupPrivate)
 - (void)rememberActiveTabState;
+- (void)collectionRememberGroups;
 - (NSString*)pathForStateFile:(NSString*)name;
 - (id)stateObjectFromFile:(NSString*)name;
 - (void)writeStateObject:(id)object toFile:(NSString*)name;
@@ -164,6 +165,7 @@ BOOL SPDFSessionHasEmptyTabGroups(id windowState) {
 }
 - (void)finishTabGroupChange {
     [self normalizeTabGroups];
+    [self collectionRememberGroups];
     [self updateTabStrip];
     [self savePersistentState];
     [self refreshSidebarWorkspacePanel];

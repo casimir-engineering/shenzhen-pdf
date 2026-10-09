@@ -58,7 +58,8 @@ NSDictionary* SPDFCollectionFingerprintFromStat(const struct stat* value) {
     NSDictionary* source=SPDFCollectionFingerprint(path);
     if (!source.count || ![source isEqual:doc[@"sourceFingerprint"]]) return NO;
     NSDictionary* dependencies=doc[@"dependencyFingerprints"]; NSDictionary* objects=doc[@"objectFingerprints"];
-    if (!objects.count || dependencies.count!=[version[@"assets"] count]) return NO;
+    if (!objects[version[@"hash"]] || dependencies.count!=[version[@"assets"] count]) return NO;
+    for (NSDictionary* asset in version[@"assets"]) if (!objects[asset[@"hash"]]) return NO;
     for (NSString* relative in dependencies) {
         NSString* assetPath=[path.stringByDeletingLastPathComponent stringByAppendingPathComponent:relative];
         if (![SPDFCollectionFingerprint(assetPath) isEqual:dependencies[relative]]) return NO;

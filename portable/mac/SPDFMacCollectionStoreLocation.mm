@@ -30,7 +30,7 @@
             if ([values[NSURLIsDirectoryKey] boolValue]) { if(!SPDFCollectionMakeDirectory(target,e))return NO; continue; }
             NSData* bytes=[NSData dataWithContentsOfURL:item options:0 error:e];
             if (!bytes || !SPDFCollectionMakeDirectory(target.URLByDeletingLastPathComponent,e) ||
-                !SPDFCollectionAtomicData(bytes,target,0400,e)) return NO;
+                !SPDFCollectionAtomicData(bytes,target,[relative hasPrefix:@"editable/"] ? 0600 : 0400,e)) return NO;
             if (![SPDFCollectionHashURL(item,e) isEqual:SPDFCollectionHashURL(target,e)]) {
                 if(e)*e=SPDFCollectionError(3,@"Collection move failed integrity verification; original storage is unchanged."); return NO;
             }
@@ -44,6 +44,10 @@
         [NSFileManager.defaultManager removeItemAtURL:previews error:nil];
         [NSFileManager.defaultManager createSymbolicLinkAtURL:previews withDestinationURL:
             [URL URLByAppendingPathComponent:@"previews"] error:nil];
+        NSURL* editable=[old URLByAppendingPathComponent:@"editable"];
+        [NSFileManager.defaultManager removeItemAtURL:editable error:nil];
+        [NSFileManager.defaultManager createSymbolicLinkAtURL:editable withDestinationURL:
+            [URL URLByAppendingPathComponent:@"editable"] error:nil];
         [NSFileManager.defaultManager removeItemAtURL:[old URLByAppendingPathComponent:@"objects"] error:nil];
         [NSFileManager.defaultManager removeItemAtURL:[old URLByAppendingPathComponent:@"manifest.json"] error:nil];
         return YES;
