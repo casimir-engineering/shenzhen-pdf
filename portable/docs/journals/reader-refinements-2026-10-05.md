@@ -676,3 +676,34 @@ actual PDF. No user app is launched, quit, displayed or screenshotted; user Coll
 files are read only for diagnosis and all failure injection uses temporary fixtures.
 
 ![Actual reader toolbar rendered offscreen after recovery](reader-refinements-2026-10-05/recovery-toolbar-native.png)
+
+
+## 2026-10-09 — Collection status belongs in the reader toolbar
+
+The separate recovery row wasted the existing toolbar gap and Locate looked like
+plain text. The status and action now form one centered cluster between navigation
+and document tools. Locate uses a quiet rounded surface, a 12-point label and the
+shared full-bounds button tracking. Both controls align vertically with zoom and
+page navigation. At narrow widths, the existing toolbar wraps; the cluster shares
+its tools row, uses a shorter status label, and retains the full accessible label.
+There is no dedicated status row or added status-row height.
+
+The production-reader probe checks 560–1280-point windows, containment, alignment,
+centering, non-overlap and three real mouse targets per Locate button, then checks
+that a restored original returns to ordinary toolbar sizing. Native offscreen
+renders cover both appearances and compact layout. Navigation tests retain the
+zero-store-initialization check for ordinary documents. Verification uses isolated
+test windows; the user's running app is untouched.
+
+![Centered recovery controls in the actual dark reader toolbar](reader-refinements-2026-10-05/recovery-toolbar-inline-dark.png)
+![The same native toolbar in light appearance](reader-refinements-2026-10-05/recovery-toolbar-inline-light.png)
+![Compact toolbar reuses its tools row](reader-refinements-2026-10-05/recovery-toolbar-inline-compact.png)
+
+Validation: targeted production recovery/layout/click checks, Collection navigation,
+workspace panels, launch-work policy and all 32 updater cases pass. The full workspace
+probe reports the same 23 assertions on both this change and a separately linked
+unchanged-HEAD toolbar: five disabled-glyph contrast assertions and 18 Regex click
+assertions. They are pre-existing failures, not counted as passes. The app builds;
+file-size checks and bundle signature verification pass. The handoff now explicitly
+requires checking new chrome in the complete production host rather than isolated
+control previews.

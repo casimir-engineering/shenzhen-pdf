@@ -46,7 +46,10 @@ void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* id
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     _window.releasedWhenClosed = NO;
     _findRegexCheckbox = [NSButton checkboxWithTitle:@"Regex" target:nil action:nil];
-    _toolbar = (id)[NSStackView stackViewWithViews:@[_findRegexCheckbox]];
+    _toolbarSpacer=[NSView new]; _toolbarSpacer.translatesAutoresizingMaskIntoConstraints=NO;
+    [_toolbarSpacer.widthAnchor constraintEqualToConstant:450].active=YES;
+    [_toolbarSpacer.heightAnchor constraintEqualToConstant:28].active=YES;
+    _toolbar = (id)[NSStackView stackViewWithViews:@[_findRegexCheckbox,_toolbarSpacer]];
 }
 - (SPDFDocumentTab*)selectedTab { return _tabs.firstObject; }
 - (void)collectionOpenPath:(NSString*)path archived:(BOOL)archived { self.opened = path; self.archived = archived; self.opens++; [self selectedTab].path = path; }
@@ -72,7 +75,7 @@ void SPDFMacLocateCollectionOriginal(SPDFMacCollectionStore* store, NSString* id
         writeToFile:path atomically:YES];
 }
 - (NSButton*)indicator {
-    for (NSView* row in _toolbar.arrangedSubviews)
+    for (NSView* row in _toolbarSpacer.subviews)
         for (NSView* view in row.subviews)
             if ([view.identifier isEqual:@"CollectionVersionIndicator"]) return (NSButton*)view;
     return nil;

@@ -653,7 +653,7 @@ mac-collection-palette-tests: | $(BUILD)
 
 .PHONY: mac-collection-reader-navigation-tests
 mac-collection-reader-navigation-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionReaderNavigationTests.mm mac/SPDFMacCollectionReaderNavigation.mm mac/SPDFMacCollectionEditableIntegration.mm mac/SPDFMacTabGroups.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionReaderNavigationTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-incomplete-implementation -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacCollectionReaderNavigationTests.mm mac/SPDFMacCollectionReaderNavigation.mm mac/SPDFMacGroupActionButton.mm mac/SPDFMacCollectionEditableIntegration.mm mac/SPDFMacTabGroups.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacCollectionStore*.mm mac/SPDFMacSearchFileCache.mm $(MAC_COLLECTION_PARSER_SRCS) $(MAC_COLLECTION_PARSER_LIBS) -framework Cocoa -framework PDFKit -framework ImageIO -o "$(BUILD)/SPDFMacCollectionReaderNavigationTests"
 	"$(BUILD)/SPDFMacCollectionReaderNavigationTests"
 
 .PHONY: mac-collection-companion-tests
