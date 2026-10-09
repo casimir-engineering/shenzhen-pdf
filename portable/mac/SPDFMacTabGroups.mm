@@ -108,6 +108,20 @@ NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tab
         if ([tab.group.identifier isEqualToString:group.identifier]) [members addObject:tab];
     return members;
 }
+NSInteger spdf_tab_group_prepare_gap_drop(NSArray<SPDFDocumentTab*>* tabs,
+    SPDFDocumentTab* tab, NSInteger insertionIndex) {
+    SPDFTabGroup* general = nil;
+    NSInteger last = -1;
+    for (NSUInteger i = 0; i < tabs.count; ++i) if (tabs[i].group.general) {
+        if (!general) general = tabs[i].group;
+        last = (NSInteger)i;
+    }
+    general = general ?: SPDFTabGroup.generalGroup;
+    general.explicitGeneral = YES;
+    general.hidden = NO;
+    tab.group = general;
+    return last >= 0 ? last + 1 : MAX(0, MIN(insertionIndex, (NSInteger)tabs.count));
+}
 void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs) {
     BOOL hasCustom = NO;
     BOOL hasAny = NO;

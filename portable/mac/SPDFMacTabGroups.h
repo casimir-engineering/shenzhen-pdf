@@ -32,6 +32,10 @@ NSString* spdf_tab_group_unused_color(NSArray<SPDFDocumentTab*>* tabs);
 void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs);
 void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* selected);
 NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tabs, SPDFTabGroup* group);
+// A drop outside group spans joins General without relocating it. When absent,
+// General is created at the supplied insertion boundary. Called only on drop.
+NSInteger spdf_tab_group_prepare_gap_drop(NSArray<SPDFDocumentTab*>* tabs,
+    SPDFDocumentTab* tab, NSInteger insertionIndex);
 
 @protocol SPDFTabGroupReader <NSObject>
 - (void)createGroupForTabAtIndex:(NSInteger)index withTabAtIndex:(NSInteger)other color:(NSString*)color;

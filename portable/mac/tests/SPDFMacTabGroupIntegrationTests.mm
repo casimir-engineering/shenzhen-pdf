@@ -1,4 +1,5 @@
 #import "SPDFMacTabGroupIntegration.h"
+#include <initializer_list>
 
 // Link the production category onto a headless delegate. Its document loading
 // and disk boundary are replaced; group mutations and codec paths are real.
@@ -110,6 +111,60 @@ static void CheckCreationPlacement(BOOL before, BOOL explicitPlacement) {
     Expect(@"created side and document order survive session restore",
         [[restored valueForKey:@"path"] isEqual:[reader.tabs valueForKey:@"path"]] &&
         ((SPDFDocumentTab*)(before ? restored.lastObject : restored.firstObject)).group.general);
+}
+static void CheckGapDrops(void) {
+    for (NSInteger boundary : {0, 2, 4}) {
+        GroupReaderProbe* reader = [GroupReaderProbe new];
+        SPDFDocumentTab* a = Tab(@"/gap-a.pdf"), *b = Tab(@"/gap-b.pdf");
+        SPDFDocumentTab* c = Tab(@"/gap-c.md"), *d = Tab(@"/gap-d.md");
+        a.group = b.group = [SPDFTabGroup groupWithColor:@"Blue"];
+        c.group = d.group = [SPDFTabGroup groupWithColor:@"Green"];
+        a.pageIndex = 7;
+        [reader seed:@[a,b,c,d] selected:2];
+        [reader moveTabAtIndex:0 toGroup:nil atIndex:boundary];
+        NSInteger expected = boundary > 0 ? boundary - 1 : 0;
+        Expect(@"gap drop creates General at the requested boundary",
+            reader.tabs[expected] == a && a.group.general && a.group.explicitGeneral);
+        Expect(@"gap drop preserves every document and selects the moved document",
+            reader.tabs.count == 4 && reader.selectedIndex == expected &&
+            [reader.activePath isEqual:a.path] && a.pageIndex == 7 && b.group != a.group);
+        NSMutableArray* restored = [NSMutableArray array];
+        for (NSDictionary* encoded in reader.savedTabs) [restored addObject:spdf_tab_from_dictionary(encoded)];
+        spdf_tab_groups_normalize(restored);
+        Expect(@"General gap placement persists through the session codec",
+            [[restored valueForKey:@"path"] isEqual:[reader.tabs valueForKey:@"path"]] &&
+            ((SPDFDocumentTab*)restored[expected]).group.general);
+    }
+    for (BOOL generalFirst : {YES, NO}) {
+        GroupReaderProbe* reader = [GroupReaderProbe new];
+        SPDFDocumentTab* a = Tab(@"/join-a.pdf"), *b = Tab(@"/join-b.pdf");
+        SPDFDocumentTab* g = Tab(@"/join-general.pdf"), *h = Tab(@"/join-general-2.pdf");
+        a.group = b.group = [SPDFTabGroup groupWithColor:@"Blue"];
+        g.group = h.group = SPDFTabGroup.generalGroup;
+        g.group.hidden = YES;
+        [reader seed:generalFirst ? @[g,h,a,b] : @[a,b,g,h] selected:generalFirst ? 2 : 0];
+        [reader moveTabAtIndex:reader.selectedIndex toGroup:nil atIndex:generalFirst ? 4 : 0];
+        Expect(@"joining General at a remote gap preserves its existing position",
+            [reader.tabs isEqual:generalFirst ? @[g,h,a,b] : @[b,g,h,a]] && a.group == g.group);
+        Expect(@"gap drop reveals and expands a hidden General instead of losing the tab",
+            !g.group.hidden && !g.group.collapsed);
+        [reader moveTabAtIndex:[reader.tabs indexOfObjectIdenticalTo:g] toGroup:nil atIndex:0];
+        Expect(@"moving General's own member never duplicates the group",
+            spdf_tab_group_members(reader.tabs,g.group).count == 3 && reader.tabs.count == 4);
+    }
+    // Cross-window insertion uses the same resolver before the tab is added.
+    SPDFDocumentTab* a = Tab(@"/external-a.pdf"), *incoming = Tab(@"/incoming.pdf");
+    a.group = [SPDFTabGroup groupWithColor:@"Blue"];
+    NSMutableArray* tabs = [@[a] mutableCopy];
+    NSInteger index = spdf_tab_group_prepare_gap_drop(tabs,incoming,0);
+    [tabs insertObject:incoming atIndex:index]; spdf_tab_groups_normalize(tabs);
+    Expect(@"incoming gap drop creates General before the neighboring group",
+        tabs.firstObject == incoming && incoming.group.general);
+    SPDFDocumentTab* second = Tab(@"/incoming-2.pdf");
+    index = spdf_tab_group_prepare_gap_drop(tabs,second,tabs.count);
+    [tabs insertObject:second atIndex:index]; spdf_tab_groups_normalize(tabs);
+    Expect(@"incoming gap drop joins existing General without moving it",
+        [tabs isEqual:@[incoming,second,a]] && second.group == incoming.group);
 }
 static void CheckFreshGeneral(void) {
     GroupReaderProbe* reader=[GroupReaderProbe new];
@@ -296,6 +351,7 @@ int main(void) {
         CheckEmptyGroups();
         CheckOpeningOriginalFromBackups();
         CheckFreshGeneral();
+        CheckGapDrops();
         CheckCollapsedGroupRestore();
         CheckGroupManagement();
         CheckCreationPlacement(YES,NO); CheckCreationPlacement(NO,NO);

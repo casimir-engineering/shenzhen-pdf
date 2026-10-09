@@ -8,4 +8,7 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
-Nothing yet.
+- Dropping a tab between groups joins General. If General does not exist, it is
+  created at the drop position; an existing General keeps its position and is
+  revealed if hidden. This also works between collapsed groups and when moving
+  a tab from another window. Membership and order persist across relaunches.

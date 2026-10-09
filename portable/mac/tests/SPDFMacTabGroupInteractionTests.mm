@@ -170,6 +170,21 @@ int main(void) {
         check_collection_copy_outline();
         check_hidden_groups();
         check_group_creation_side();
+        // With every group collapsed, gaps still resolve to their model
+        // boundaries despite there being no visible document rectangles.
+        SPDFGroupTestStrip* gapStrip = [[SPDFGroupTestStrip alloc] initWithFrame:NSMakeRect(0,0,900,42)];
+        SPDFTabGroup* gapA = [SPDFTabGroup groupWithColor:@"Blue"];
+        SPDFTabGroup* gapB = [SPDFTabGroup groupWithColor:@"Green"];
+        SPDFTabGroup* gapC = [SPDFTabGroup groupWithColor:@"Purple"];
+        gapA.collapsed = gapB.collapsed = gapC.collapsed = YES;
+        gapStrip.tabs = (id)@[tab(@"A1",gapA),tab(@"A2",gapA),tab(@"B1",gapB),tab(@"C1",gapC)];
+        for (SPDFTabGroup* group in @[gapB,gapC]) {
+            NSRect frame = [[layout_for_group(gapStrip,group) valueForKey:@"frame"] rectValue];
+            NSPoint gap = NSMakePoint(NSMinX(frame)-4,NSMidY(frame));
+            expect(![gapStrip groupAtPoint:gap headerOnly:NO],@"fixture targets space between groups");
+            expect([gapStrip dropIndexForPoint:gap] == (group == gapB ? 2 : 3),
+                @"collapsed-group gap uses its group boundary rather than appending at the end");
+        }
         NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 900, 42)
                                                        styleMask:NSWindowStyleMaskBorderless
                                                          backing:NSBackingStoreBuffered defer:NO];

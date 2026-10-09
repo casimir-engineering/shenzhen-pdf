@@ -536,3 +536,28 @@ the user's app was not launched, restarted, or captured.
 The baseline test exits 1 with four clipped-suffix failures (188-point width,
 both appearances, before and after clearing); the fixed version exits 0. The
 dist app rebuild, deep/strict signature verification, and file-size checks pass.
+
+## 2026-10-09 — Tab drops between groups
+
+Gap drops previously assigned nil membership and relied on normalization to
+choose General. This could relocate an existing General to the dropped tab's
+first occurrence. The insertion geometry also ignored collapsed groups because
+they have no visible document rectangles, sending some gap drops to the end.
+
+Drops now explicitly resolve General before mutation. Existing General is reused
+at its current position and revealed if hidden; absent General is created at the
+requested group boundary. The same resolver serves local moves, cross-window
+insertion, and the snapshot fallback when a dragged live tab disappears. Gap
+geometry uses group spans even when every group is collapsed. These changes run
+only during drag/drop, with no new launch work or state format.
+
+Headless group/model, integration, strip, and interaction suites pass. Added
+checks cover left/middle/right placement, an existing General on either side,
+hidden General, moving General's own members, incoming tabs, collapsed-group
+geometry, and the production session codec. Existing allocation checks still
+prove ordinary normalization/save/restore allocates zero group objects. No user
+app was launched, quit, or captured.
+
+The updated `dist/ShenzhenPDF.app` builds successfully and passes deep/strict
+signature verification. File-size and whitespace checks pass. This is a local
+build; no release was published for this change.

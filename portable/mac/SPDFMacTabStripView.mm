@@ -224,6 +224,10 @@
 }
 
 - (NSInteger)dropIndexForPoint:(NSPoint)point {
+    // Collapsed groups have no document rectangles. Use their group boundary
+    // for gap drops rather than accidentally inserting inside a visible group.
+    if ([self hasTabGroups] && ![self groupAtPoint:point headerOnly:NO])
+        return [self groupInsertionIndexForPoint:point];
     CGFloat minXs[kMaxVisibleTabGeometry], midXs[kMaxVisibleTabGeometry], maxXs[kMaxVisibleTabGeometry];
     NSInteger arrayIndexes[kMaxVisibleTabGeometry];
     NSInteger visibleCount = [self collectVisibleTabGeometryMinXs:minXs midXs:midXs maxXs:maxXs

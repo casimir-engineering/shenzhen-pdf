@@ -118,6 +118,9 @@ does not re-trigger the macOS access prompt.
   ending visible with a middle ellipsis; hovering reveals the close button without moving the title.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
   **reattach**. A detached tab keeps its page, zoom, scroll and search.
+  Dropping a tab between groups joins the existing General group, revealing it
+  if hidden. If General is absent, it is created at that drop position. The
+  resulting group membership and order are saved with the session.
 - **New tab or empty group** — the tab-strip **+** opens a compact menu. **New Group…**
   creates a named empty group without changing the document you are reading;
   the next newly opened document (or batch of documents) goes into it. Its name
