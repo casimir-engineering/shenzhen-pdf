@@ -28,3 +28,8 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
   Existing snapshots remain intact, saved edits join the same history, and
   unchanged bytes do not add a revision. Managed editable documents survive
   Collection relocation and are protected from automatic storage-cap cleanup.
+- Recovery also handles originals whose metadata is visible but whose contents
+  cannot be read (including restricted Safari temporary PDFs), and damaged sources.
+  The red status and Locate button receive space in the real toolbar. Recovery
+  reuses the original tab when its Collection copy is already open and supports
+  repeated loss of access after a source is restored.

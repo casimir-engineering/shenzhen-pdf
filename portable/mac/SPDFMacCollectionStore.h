@@ -23,6 +23,7 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 - (BOOL)isArchivePath:(NSString*)path;
 @end
 @interface SPDFMacCollectionStore (EditableDocuments)
+- (void)recordUnavailableSourcePath:(NSString*)path documentID:(NSString*)documentID;
 - (nullable NSDictionary*)editableInfoForPath:(NSString*)path;
 - (nullable NSURL*)editableVersionID:(nullable NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error;
 - (nullable NSDictionary*)captureEditablePath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;

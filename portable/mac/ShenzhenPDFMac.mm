@@ -6872,7 +6872,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                            message:(NSString*)message
                      showOpenError:(BOOL)showOpenError
                              error:(const char*)err {
-    if (tab.missingFile && [self collectionRestoreMissingTab:tab path:path]) return;
+    if ([self collectionRestoreMissingTab:tab path:path]) return;
     [self discardCachedRuntimeForTab:tab];
     _doc = NULL;
     [self clearActiveMetadata];

@@ -21,12 +21,13 @@ static char conversionPathKey, conversionPendingKey;
     dispatch_async(groupWrites, ^{ [SPDFMacCollectionStore.defaultStore rememberGroups:groups]; });
 }
 - (BOOL)collectionRestoreMissingTab:(SPDFDocumentTab*)tab path:(NSString*)path {
-    // Reached only after a consulted source fails to open; no launch-wide scan.
+    // Covers absent, unreadable and damaged sources after a real open fails.
     if ([objc_getAssociatedObject(tab,&conversionPathKey) isEqual:path])
         return [objc_getAssociatedObject(tab,&conversionPendingKey) boolValue];
     NSDictionary* doc=[SPDFMacCollectionStore.defaultStore documentForPath:path];
     if (![doc[@"versions"] count]) return NO;
-    [self collectionConvertTab:tab path:path info:@{@"document":doc}];
+    tab.missingFile=YES;
+    [self collectionConvertTab:tab path:path info:@{@"document":doc,@"sourceReadFailed":@YES}];
     return YES;
 }
 - (void)collectionConvertTab:(SPDFDocumentTab*)tab path:(NSString*)path info:(NSDictionary*)info {
@@ -37,7 +38,11 @@ static char conversionPathKey, conversionPendingKey;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         SPDFMacCollectionStore* store=SPDFMacCollectionStore.defaultStore;
         NSError* error=nil;
+        if ([info[@"sourceReadFailed"] boolValue]) [store recordUnavailableSourcePath:path documentID:info[@"document"][@"id"]];
         NSURL* URL=[store editableVersionID:info[@"version"][@"id"] documentID:info[@"document"][@"id"] error:&error];
+        if ([info[@"sourceReadFailed"] boolValue] && [URL.path isEqual:path]) {
+            URL=nil; error=[NSError errorWithDomain:@"SPDFCollection" code:8 userInfo:@{NSLocalizedDescriptionKey:@"The Collection document itself could not be read. Its saved history has been preserved."}];
+        }
         NSDictionary* editable=URL ? [store editableInfoForPath:URL.path] : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (![objc_getAssociatedObject(tab,&conversionPathKey) isEqual:path]) return;
@@ -56,8 +61,15 @@ static char conversionPathKey, conversionPendingKey;
 }
 - (void)collectionAdoptEditablePath:(NSString*)path info:(NSDictionary*)info tab:(SPDFDocumentTab*)tab {
     NSString* previous=tab.path;
+    // A previous History click may already have opened this working file. Keep
+    // the original selected tab/group and close only its inactive duplicate.
+    if (tab==[self selectedTab]) for (SPDFDocumentTab* other in _tabs.copy)
+        if (other!=tab && [other.path isEqual:path] && !other.unsavedPastedImage)
+            [self closeTabAtIndex:[_tabs indexOfObjectIdenticalTo:other]];
     [self discardCachedRuntimeForTab:tab];
     tab.path=path; tab.title=path.lastPathComponent.stringByDeletingPathExtension;
+    objc_setAssociatedObject(tab,&conversionPathKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(tab,&conversionPendingKey,@NO,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     tab.readOnly=NO; tab.workingPath=nil; tab.readOnlyCopyBinding=nil;
     tab.collectionVersionLabel=nil; tab.missingFile=NO; tab.missingMessage=@"";
     tab.collectionHistoryDocumentID=info[@"document"][@"id"];
@@ -72,7 +84,7 @@ static char conversionPathKey, conversionPendingKey;
             if ([candidate.path isEqual:doc[@"path"]] ||
                 (candidate.collectionHistoryDocumentID.length && [candidate.collectionHistoryDocumentID isEqual:doc[@"id"]])) {
                 group=candidate.group; foundGroup=YES;
-                if (candidate.missingFile && [candidate.path isEqual:doc[@"path"]]) {
+                if ((candidate.missingFile || candidate.missingMessage.length) && [candidate.path isEqual:doc[@"path"]]) {
                     [self collectionAdoptEditablePath:path info:info tab:candidate];
                     if (candidate==[self selectedTab]) [self loadSelectedTab];
                     else [self selectTabAtIndex:[_tabs indexOfObjectIdenticalTo:candidate]];

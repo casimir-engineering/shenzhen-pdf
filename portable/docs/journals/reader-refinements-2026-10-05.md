@@ -642,3 +642,37 @@ are ordered on a background serial queue and store only identity/name/color;
 ordinary tabs with no Collection identity never construct the store. The existing
 240 between-group drag/drop scenarios still pass, along with workspace-panel and
 launch-work policy checks. No source-size cap was raised; the updater is unchanged.
+
+## 9 October correction: metadata exists but document reads fail
+
+The user reported that a saved Safari PDF still showed “Could not open document”.
+Inspection confirmed that its original pathname could be statted, but reading its
+contents returned EPERM. The previous fallback was gated on `missingFile`, which
+was false for this case. The Collection object and editable file had matching
+SHA-256 hashes and intact PDF bytes.
+
+The other defect was layout: the new pill/button row was not recognized by the
+real workspace toolbar's height calculation, which still checked only the old
+standalone pill identifier. The simplified navigation fixture missed both issues
+because it replaced actual document loading and toolbar layout with test doubles.
+
+Recovery now runs after actual source-open failures, including access denial and
+invalid bytes, while password-required responses retain their unlock flow. Failed
+source availability is recorded on the recovery worker, so a successful metadata
+lookup cannot dismiss the red status or disable Locate. Successful source captures
+and relinking clear that unavailable state. The native toolbar reserves space for
+the complete status row. When History has already opened the same working file,
+recovery retains the selected original tab/group and closes the inactive duplicate.
+Successful recovery clears its attempt guard; a later access loss on that same tab
+can recover again. An unreadable working file cannot retry itself indefinitely.
+
+Added a production-reader regression in `SPDFMacCollectionFailedReadChecks.h`,
+linked through the workspace probe. It creates a real PDF and saved history, leaves
+stat available while denying reads, then exercises `loadSelectedTab`, MuPDF opening,
+native toolbar layout and recovered-page rendering. Before the correction it failed
+four checks; afterward it passes. Separate runs cover deleted and corrupt originals,
+a duplicate saved-copy tab, repeated access loss, and an isolated copy of the user's
+actual PDF. No user app is launched, quit, displayed or screenshotted; user Collection
+files are read only for diagnosis and all failure injection uses temporary fixtures.
+
+![Actual reader toolbar rendered offscreen after recovery](reader-refinements-2026-10-05/recovery-toolbar-native.png)
