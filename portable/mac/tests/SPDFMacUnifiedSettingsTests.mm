@@ -19,10 +19,15 @@ static NSView* Find(NSView* view,NSString* identifier) {
 static void Inspect(NSView* view) {
     if([view isKindOfClass:NSButton.class] && !view.hidden) {
         Check(NSWidth(view.frame)>15 && NSHeight(view.frame)>15,[@"button has a real target " stringByAppendingString:view.identifier ?: @""]);
-        if([view.identifier isEqual:@"done"] || [view.identifier isEqual:@"connect"]) {
+        if([NSStringFromClass(view.class) isEqual:@"SPDFSettingsButton"]) {
+            NSView* root=view.window.contentView;
             for(NSValue* point in @[[NSValue valueWithPoint:NSMakePoint(2,2)],
-                [NSValue valueWithPoint:NSMakePoint(NSWidth(view.bounds)-2,NSHeight(view.bounds)-2)]])
-                Check([view hitTest:[view convertPoint:point.pointValue toView:view.superview]]==view,@"action hit target covers corners");
+                [NSValue valueWithPoint:NSMakePoint(NSWidth(view.bounds)-2,NSHeight(view.bounds)-2)]]) {
+                if(!NSPointInRect(point.pointValue,view.visibleRect)) continue;
+                NSPoint windowPoint=[view convertPoint:point.pointValue toView:nil];
+                Check([root hitTest:[root.superview convertPoint:windowPoint fromView:nil]]==view,
+                    [@"settings action visible corners are unobstructed: " stringByAppendingString:view.identifier]);
+            }
         }
     }
     for(NSView* child in view.subviews) Inspect(child);
@@ -41,7 +46,7 @@ int main(void) { @autoreleasepool {
     controller.settingsChanged=^(NSDictionary* value){change=value;};
     controller.actionHandler=^(NSString* value){action=value;};
     controller.credentialHandler=^(NSString* value){credential=value;};
-    for(NSValue* size in @[[NSValue valueWithSize:NSMakeSize(760,612)],[NSValue valueWithSize:NSMakeSize(680,520)]]) {
+    for(NSValue* size in @[[NSValue valueWithSize:NSMakeSize(760,612)],[NSValue valueWithSize:NSMakeSize(650,520)]]) {
         [controller.window setContentSize:size.sizeValue];
         for(NSString* section in @[@"overview",@"ai",@"collection",@"reading"]) {
             [controller selectSection:section]; [controller.window.contentView layoutSubtreeIfNeeded];
@@ -64,6 +69,23 @@ int main(void) { @autoreleasepool {
         }
     }
     [controller selectSection:@"ai"];
+    NSTextField* editingModel=(id)Find(controller.window.contentView,@"model");
+    [controller.window makeFirstResponder:editingModel]; [editingModel selectText:nil];
+    NSTextView* modelEditor=(NSTextView*)editingModel.currentEditor;
+    Check(modelEditor!=nil,@"model uses a native active field editor");
+    modelEditor.string=@"deepseek/unfinished-draft"; modelEditor.selectedRange=NSMakeRange(9,5);
+    [controller updateState:@{@"modelStatus":@"Model checked",@"model":@"deepseek/previously-saved"}];
+    Check(Find(controller.window.contentView,@"model")==editingModel && editingModel.currentEditor==modelEditor &&
+        [modelEditor.string isEqual:@"deepseek/unfinished-draft"] && NSEqualRanges(modelEditor.selectedRange,NSMakeRange(9,5)),
+        @"model metadata callback preserves active draft, selection and editor");
+    NSSecureTextField* editingKey=[controller valueForKey:@"secret"];
+    editingKey.stringValue=@"local-test-draft"; [controller.window makeFirstResponder:editingKey]; [editingKey selectText:nil];
+    NSTextView* keyEditor=(NSTextView*)editingKey.currentEditor; keyEditor.selectedRange=NSMakeRange(2,4);
+    [controller updateState:@{@"modelStatus":@"Price refreshed",@"connectionStatus":@"Browser sign-in is available"}];
+    Check([controller valueForKey:@"secret"]==editingKey && editingKey.currentEditor==keyEditor &&
+        [editingKey.stringValue isEqual:@"local-test-draft"] && NSEqualRanges(keyEditor.selectedRange,NSMakeRange(2,4)),
+        @"asynchronous status preserves secure draft, selection and focus");
+    [controller.window makeFirstResponder:nil];
     NSButton* connect=(NSButton*)Find(controller.window.contentView,@"connect");
     Method original=class_getInstanceMethod(NSWindow.class,@selector(nextEventMatchingMask:));
     Method injected=class_getInstanceMethod(NSWindow.class,@selector(settingsProbeNextEventMatchingMask:));
@@ -91,10 +113,16 @@ int main(void) { @autoreleasepool {
     [(NSButton*)Find(controller.window.contentView,@"saveCredential") performClick:nil];
     Check([credential isEqual:@"test-only-not-a-key"] && !secret.stringValue.length,@"key delivered separately and immediately cleared");
     Check(![change.allValues containsObject:credential],@"credential never enters preference changes");
+    secret.stringValue=@"keyboard-test-only";
+    Check(secret.target==controller && secret.action==NSSelectorFromString(@"saveCredential:"),@"Return in key field routes to Use key, not Start reading");
+    [NSApp sendAction:secret.action to:secret.target from:secret];
+    Check([credential isEqual:@"keyboard-test-only"] && !secret.stringValue.length,@"key Return action consumes only the credential draft");
     [controller updateState:@{@"connecting":@YES}];
     Check(![(NSButton*)Find(controller.window.contentView,@"connect") isEnabled],@"connection cannot be started twice");
     [controller updateState:@{@"connecting":@NO,@"connected":@YES}];
     Check(Find(controller.window.contentView,@"disconnect")!=nil,@"connected account exposes disconnect");
+    [controller windowWillClose:[NSNotification notificationWithName:NSWindowWillCloseNotification object:controller.window]];
+    Check([action isEqual:@"dismissed"],@"closing Settings never implies Collection consent");
     Check(!controller.window.visible,@"verification never shows a window");
     fprintf(stderr,"Unified settings: %d failures\n",failures); return failures?1:0;
 } }

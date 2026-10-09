@@ -1,0 +1,152 @@
+#import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
+#import "../SPDFMacAIChatView.h"
+#import "../SPDFMacAIChatMarkdown.h"
+static int failures;
+static NSEvent* pendingUp;
+@interface NSWindow (AIChatProbe)
+- (NSEvent*)chatProbeEvent:(NSEventMask)mask;
+@end
+@implementation NSWindow (AIChatProbe)
+- (NSEvent*)chatProbeEvent:(NSEventMask)mask { (void)mask; NSEvent* event=pendingUp; pendingUp=nil; return event; }
+@end
+@interface ChatFixture : NSObject
+@property(nonatomic) NSDictionary* chat;
+@property(nonatomic) NSString* status;
+@property(nonatomic) BOOL running;
+@property(nonatomic) BOOL canUndo;
+@end
+@implementation ChatFixture @end
+static void Check(BOOL yes,NSString* message) { if(!yes) { failures++; fprintf(stderr,"FAIL %s\n",message.UTF8String); } }
+static NSView* Find(NSView* root,NSString* key) {
+    if([root.identifier isEqual:key]) return root;
+    for(NSView* child in root.subviews) { NSView* found=Find(child,key); if(found) return found; } return nil;
+}
+static NSUInteger InspectTargets(NSView* view) {
+    NSUInteger count=0;
+    if([NSStringFromClass(view.class) isEqual:@"SPDFChatButton"] && !view.hidden) {
+        NSView* root=view.window.contentView;
+        for(NSValue* p in @[[NSValue valueWithPoint:NSMakePoint(2,2)],
+            [NSValue valueWithPoint:NSMakePoint(NSWidth(view.bounds)-2,NSHeight(view.bounds)-2)]]) {
+            if(!NSPointInRect(p.pointValue,view.visibleRect)) continue;
+            NSPoint point=[view convertPoint:p.pointValue toView:nil];
+            Check([root hitTest:[root.superview convertPoint:point fromView:nil]]==view,
+                [@"chat action visible corners unobstructed: " stringByAppendingString:view.identifier]); count++;
+        }
+    }
+    for(NSView* child in view.subviews) count+=InspectTargets(child); return count;
+}
+static NSUInteger ImageCount(NSView* view) {
+    NSUInteger count=[view isKindOfClass:NSImageView.class] ? 1 : 0;
+    for(NSView* child in view.subviews) count+=ImageCount(child); return count;
+}
+static void Capture(NSView* view,NSString* name) {
+    [view layoutSubtreeIfNeeded];
+    NSBitmapImageRep* rep=[view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
+    Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[@"/tmp/sz-ai-chat-" stringByAppendingFormat:@"%@.png",name] atomically:YES],@"native state evidence saved");
+}
+static void Click(NSWindow* window,NSButton* button,NSPoint local) {
+    NSPoint point=[button convertPoint:local toView:nil];
+    NSView* root=window.contentView; NSView* hit=[root hitTest:[root.superview convertPoint:point fromView:nil]];
+    Check(hit==button,@"native hierarchy owns full button bounds");
+    NSTimeInterval stamp=NSProcessInfo.processInfo.systemUptime;
+    NSEvent* down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:stamp
+        windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];
+    pendingUp=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:point modifierFlags:0 timestamp:stamp+.01
+        windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];
+    Method original=class_getInstanceMethod(NSWindow.class,@selector(nextEventMatchingMask:));
+    Method injected=class_getInstanceMethod(NSWindow.class,@selector(chatProbeEvent:));
+    method_exchangeImplementations(original,injected); [hit mouseDown:down]; method_exchangeImplementations(original,injected);
+}
+int main(void) { @autoreleasepool {
+    [NSApplication sharedApplication];
+    NSAttributedString* safe=SPDFMacAIChatMarkdown(@"**Evidence** [page](spdf-ai://document?path=test&page=2) [site](https://example.com) [unsafe](file:///tmp/private) ![hidden](file:///tmp/private.png) ![remote](https://example.com/tracker.png)",500,YES);
+    __block NSUInteger links=0,attachments=0;
+    [safe enumerateAttributesInRange:NSMakeRange(0,safe.length) options:0 usingBlock:^(NSDictionary* a,NSRange r,BOOL* stop){
+        (void)r;(void)stop; if(a[NSLinkAttributeName]) { links++; Check(SPDFMacAIChatLinkAllowed(a[NSLinkAttributeName]),@"rendered link is allowed"); }
+        if(a[NSAttachmentAttributeName]) attachments++;
+    }];
+    Check(links==2,@"rich Markdown retains document and HTTPS links"); Check(!attachments,@"model images cannot resolve any resource");
+    Check(!SPDFMacAIChatLinkAllowed([NSURL URLWithString:@"https://user:secret@example.com"]),@"credential URL is not clickable");
+    NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,580) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    SPDFMacAIChatView* view=[[SPDFMacAIChatView alloc] initWithFrame:window.contentView.bounds]; window.contentView=view;
+    ChatFixture* fixture=[ChatFixture new]; fixture.chat=@{@"id":@"test",@"messages":@[
+        @{@"role":@"user",@"content":@"What is the board’s power requirement?"},
+        @{@"role":@"assistant",@"content":@"## Power requirements\nThe board uses **5 V input**. See [the schematic, page 2](spdf-ai://document?path=board.pdf&page=2).\n\n- Peak current: **2 A**\n- Check connector polarity before connecting.\n\n```c\nconst float voltage = 5.0f;\n```\n\nI checked the schematic and assembly notes. The values agree; the assembly guide also recommends a regulated supply. The test fixture intentionally includes a longer paragraph describing evidence quality, connector assumptions, polarity and voltage tolerance. These words must wrap over additional lines in a narrow chat panel while remaining fully selectable and never covering the next message."}
+    ]};
+    [view displaySession:(id)fixture]; [window.contentView layoutSubtreeIfNeeded];
+    NSStackView* messages=[view valueForKey:@"messages"];
+    NSTextView* answer=(id)messages.arrangedSubviews[1]; CGFloat wide=NSHeight(answer.frame);
+    Check([answer.string hasPrefix:@"Power requirements"],@"latest assistant response appears first");
+    [window setContentSize:NSMakeSize(520,580)]; [window.contentView layoutSubtreeIfNeeded];
+    [window.contentView layoutSubtreeIfNeeded];
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]]; [window.contentView layoutSubtreeIfNeeded];
+    Check(NSHeight(answer.frame)>wide,@"message height reflows at narrower width");
+    Check(InspectTargets(view)>=10,@"all narrow chat header controls tested at visible corners");
+    NSScrollView* transcript=[view valueForKey:@"scroll"];
+    NSView* label=messages.arrangedSubviews.firstObject;
+    NSRect labelRect=[label.superview convertRect:[label alignmentRectForFrame:label.frame] toView:transcript.contentView];
+    NSDate* layoutDeadline=[NSDate dateWithTimeIntervalSinceNow:.2];
+    while(!NSContainsRect(transcript.contentView.bounds,labelRect) && layoutDeadline.timeIntervalSinceNow>0) {
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]]; [view layoutSubtreeIfNeeded];
+        labelRect=[label.superview convertRect:[label alignmentRectForFrame:label.frame] toView:transcript.contentView];
+    }
+    Check(NSContainsRect(transcript.contentView.bounds,labelRect),@"first message label fully visible after narrow reflow");
+    Check([NSStringFromClass(view.composer.enclosingScrollView.class) isEqual:@"SPDFChatInputScrollView"],@"composer uses explicit appearance-aware border drawing");
+    Check(![(NSButton*)Find(view,@"undo") isEnabled],@"Undo is disabled without a reversible action");
+    __block NSUInteger accepted=0; view.sendText=^BOOL(NSString* text){(void)text;return NO;};
+    view.composer.string=@"Keep this draft"; NSButton* send=(id)Find(view,@"send"); [send performClick:nil];
+    Check([view.composer.string isEqual:@"Keep this draft"],@"unconfigured account preserves composer text");
+    view.sendText=^BOOL(NSString* text){(void)text;accepted++;return YES;};
+    for(NSValue* p in @[[NSValue valueWithPoint:NSMakePoint(2,2)],[NSValue valueWithPoint:NSMakePoint(NSWidth(send.bounds)-2,NSHeight(send.bounds)-2)]]) {
+        view.composer.string=@"A question"; Click(window,send,p.pointValue);
+        Check(!view.composer.string.length,@"accepted native click clears submitted text");
+    }
+    Check(accepted==2,@"each full-bounds click submits exactly once");
+    fixture.running=YES; fixture.status=@"Reading · Schematic, page 2"; [view displaySession:(id)fixture];
+    Check(!send.enabled && [(NSButton*)Find(view,@"stop") isEnabled],@"active task has explicit stop action");
+    [window setContentSize:NSMakeSize(760,580)];
+    for(NSString* appearance in @[NSAppearanceNameDarkAqua,NSAppearanceNameAqua]) {
+        window.appearance=[NSAppearance appearanceNamed:appearance];
+        [view displayChats:@[]]; [view displaySession:(id)fixture]; [view layoutSubtreeIfNeeded];
+        NSBitmapImageRep* rep=[view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
+        Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-ai-chat-%@.png",appearance] atomically:YES],@"chat native preview saved");
+    }
+    [view displayChats:@[]];
+    Check([(NSButton*)Find(view,@"stop") isEnabled],@"history keeps cancellation available for active tasks");
+    fixture.running=NO; fixture.status=@"Stopped. Completed changes can still be undone."; fixture.canUndo=YES;
+    [view refreshActivityFromSession:(id)fixture];
+    Check(![(NSButton*)Find(view,@"stop") isEnabled] && [(NSButton*)Find(view,@"undo") isEnabled],@"history refreshes task completion and undo state");
+    Check([[(NSTextField*)[view valueForKey:@"status"] stringValue] hasPrefix:@"Stopped"],@"history shows current task status");
+    Check(Find(view,@"current")!=nil,@"history offers return to current conversation");
+    Check(view.composer.enclosingScrollView.hidden && Find(view,@"send").hidden,@"history hides the noneditable composer and Send");
+    Check(![(NSButton*)Find(view,@"deleteAll") isEnabled],@"empty history cannot delete nonexistent chats");
+    Check(InspectTargets(view)>=10,@"history controls remain reachable without composer");
+    Capture(view,@"history-stopped");
+    NSMutableArray* longMessages=[NSMutableArray array];
+    for(NSUInteger i=0;i<45;i++) [longMessages addObject:@{@"role":@"user",@"content":[NSString stringWithFormat:@"Message %lu",(unsigned long)i]}];
+    fixture.chat=@{@"id":@"long",@"messages":longMessages}; [view displaySession:(id)fixture];
+    NSButton* older=(id)Find(view,@"older"); Check(older!=nil,@"long conversations reveal older-message affordance");
+    Capture(view,@"older-messages");
+    [older performClick:nil]; Check(Find(view,@"older")==nil && messages.arrangedSubviews.count==90,@"older messages remain available on demand");
+    NSString* scratch=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+    setenv("SPDF_STATE_DIR",scratch.UTF8String,1);
+    NSString* assets=[scratch stringByAppendingPathComponent:@"Chats/test-assets"];
+    [NSFileManager.defaultManager createDirectoryAtPath:assets withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString* imagePath=[assets stringByAppendingPathComponent:@"page.png"];
+    NSBitmapImageRep* tiny=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nil pixelsWide:2 pixelsHigh:2 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:8 bitsPerPixel:32];
+    memset(tiny.bitmapData,255,16);
+    [[tiny representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:imagePath atomically:YES];
+    fixture.chat=@{@"id":@"preview",@"messages":@[@{@"role":@"preview",@"local":@YES,
+        @"preview":@{@"path":imagePath,@"caption":@"Schematic · Page 2",@"citation":@{@"path":@"board.pdf",@"page":@2}}}]};
+    [view displaySession:(id)fixture]; [view layoutSubtreeIfNeeded];
+    Check(ImageCount(view)==1,@"trusted tool page preview is displayed from chat assets");
+    fixture.chat=@{@"id":@"blocked-preview",@"messages":@[@{@"role":@"preview",@"local":@YES,
+        @"preview":@{@"path":@"/tmp/private.png",@"caption":@"Untrusted path"}}]};
+    [view displaySession:(id)fixture];
+    Check(ImageCount(view)==0,@"preview outside chat assets cannot load a local file");
+    fixture.chat=@{@"id":@"empty",@"messages":@[]}; fixture.status=@""; [view displaySession:(id)fixture]; Capture(view,@"empty");
+    [NSFileManager.defaultManager removeItemAtPath:scratch error:nil];
+        Check(!window.visible,@"probe never shows an app window");
+    fprintf(stderr,"AI chat view: %d failures\n",failures); return failures?1:0;
+} }
