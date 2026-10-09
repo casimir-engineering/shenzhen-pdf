@@ -25,7 +25,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
     NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:5 yRadius:5];
-    [SPDFCollectionColor(self.highlighted || self.state==NSControlStateValueOn ? @"selected" : @"control") setFill];
+    [SPDFCollectionColor(self.highlighted || self.state==NSControlStateValueOn || [self.identifier isEqual:@"done"] ? @"selected" : @"control") setFill];
     [shape fill];
     NSMutableParagraphStyle* style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter;
     NSDictionary* attributes=@{NSFontAttributeName:self.font,NSForegroundColorAttributeName:
@@ -46,6 +46,9 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 @property(nonatomic) NSStackView* navigation;
 @property(nonatomic) NSMutableDictionary<NSString*,NSControl*>* controls;
 @property(nonatomic) NSTextField* status;
+@property(nonatomic) NSTextField* connectionTitle;
+@property(nonatomic) NSTextField* connectionDetail;
+@property(nonatomic) NSTextField* modelDetail;
 @property(nonatomic) NSSecureTextField* secret;
 @property(nonatomic) NSString* section;
 @property(nonatomic) BOOL completing;
@@ -59,7 +62,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     if (!(self=[super initWithWindow:window])) return nil;
     self.state=[state copy] ?: @{}; self.controls=[NSMutableDictionary dictionary];
     window.title=@"ShenzhenPDF Settings"; window.releasedWhenClosed=NO;
-    window.minSize=NSMakeSize(680,540); window.delegate=self;
+    window.minSize=NSMakeSize(650,540); window.delegate=self;
     NSView* root=SPDFCollectionSurface(@"window"); window.contentView=root;
     NSStackView* nav=[NSStackView stackViewWithViews:@[]]; self.navigation=nav;
     nav.spacing=8; nav.translatesAutoresizingMaskIntoConstraints=NO;
@@ -118,7 +121,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (void)heading:(NSString*)title subtitle:(NSString*)subtitle {
     [self text:title size:24 bold:YES secondary:NO]; [self text:subtitle size:13 bold:NO secondary:YES];
 }
-- (void)row:(NSString*)title detail:(NSString*)detail control:(NSView*)control {
+- (NSStackView*)row:(NSString*)title detail:(NSString*)detail control:(NSView*)control {
     NSTextField* name=SPDFCollectionText(title,13,NSFontWeightSemibold,NO);
     NSTextField* help=SPDFCollectionText(detail,12,NSFontWeightRegular,YES);
     help.lineBreakMode=NSLineBreakByWordWrapping; help.maximumNumberOfLines=0; help.cell.wraps=YES;
@@ -129,7 +132,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [words setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     [control setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
     [control setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
-    [help.widthAnchor constraintEqualToAnchor:words.widthAnchor].active=YES; [self add:row];
+    [help.widthAnchor constraintEqualToAnchor:words.widthAnchor].active=YES; [self add:row]; return row;
 }
 - (NSButton*)toggle:(NSString*)key label:(NSString*)label {
     NSButton* button=[NSButton checkboxWithTitle:label target:self action:@selector(toggle:)];
@@ -138,7 +141,9 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     self.controls[key]=button; return button;
 }
 - (void)actionRow:(NSString*)title detail:(NSString*)detail label:(NSString*)label action:(NSString*)action {
-    [self row:title detail:detail control:[self button:label action:@selector(performAction:) key:action]];
+    NSButton* button=[self button:label action:@selector(performAction:) key:action];
+    button.accessibilityLabel=[NSString stringWithFormat:@"%@ — %@",label,title]; self.controls[action]=button;
+    [self row:title detail:detail control:button];
 }
 - (void)divider { [self add:SPDFCollectionDivider()]; }
 - (void)selectSection:(NSString*)section {
@@ -172,16 +177,19 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     BOOL connected=[self.state[@"connected"] boolValue], connecting=[self.state[@"connecting"] boolValue];
     NSButton* connect=[self button:connected ? @"Disconnect" : connecting ? @"Connecting…" : @"Connect OpenRouter"
         action:@selector(performAction:) key:connected ? @"disconnect" : @"connect"];
-    connect.enabled=!connecting;
-    [self row:connected ? @"Connected to OpenRouter" : @"OpenRouter account"
+    connect.enabled=!connecting; self.controls[@"connection"]=connect;
+    NSStackView* connectionRow=[self row:connected ? @"Connected to OpenRouter" : @"OpenRouter account"
         detail:self.state[@"connectionStatus"] ?: @"Sign in in your browser. Your credential stays in macOS Keychain." control:connect];
+    NSStackView* connectionWords=connectionRow.arrangedSubviews.firstObject;
+    self.connectionTitle=connectionWords.arrangedSubviews.firstObject; self.connectionDetail=connectionWords.arrangedSubviews.lastObject;
     [self divider];
     NSTextField* model=[NSTextField new]; model.identifier=@"model"; model.delegate=self;
     model.stringValue=self.state[@"model"] ?: @"deepseek/deepseek-v4.1-flash";
     model.placeholderString=@"provider/model"; model.font=[NSFont systemFontOfSize:13];
     model.accessibilityLabel=@"OpenRouter model identifier"; model.target=self; model.action=@selector(modelChanged:);
     [model.widthAnchor constraintEqualToConstant:300].active=YES; self.controls[@"model"]=model;
-    [self row:@"Model" detail:@"Choose an OpenRouter model ID. Availability and price depend on the provider." control:model];
+    NSStackView* modelRow=[self row:@"Model" detail:[self.state[@"modelStatus"] length] ? self.state[@"modelStatus"] : @"Choose an OpenRouter model ID. Availability and price depend on the provider." control:model];
+    self.modelDetail=[(NSStackView*)modelRow.arrangedSubviews.firstObject arrangedSubviews].lastObject;
     [self add:[self toggle:@"aiEnabled" label:@"Enable document chat"]];
     [self add:[self toggle:@"autoAnalyze" label:@"Prepare summaries, keywords and missing chapters automatically"]];
     [self text:@"Automatic preparation sends document text to OpenRouter and its provider after opening, in the background. It uses paid tokens. Existing chapters stay intact; generated information is cached for unchanged documents." size:12 bold:NO secondary:YES];
@@ -189,6 +197,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [self divider];
     self.secret=[NSSecureTextField new]; self.secret.placeholderString=@"Paste an API key instead";
     self.secret.accessibilityLabel=@"OpenRouter API key"; self.secret.font=[NSFont systemFontOfSize:13];
+    self.secret.target=self; self.secret.action=@selector(saveCredential:);
     NSButton* save=[self button:@"Use key" action:@selector(saveCredential:) key:@"saveCredential"];
     NSStackView* keys=[NSStackView stackViewWithViews:@[self.secret,save]]; keys.spacing=8;
     [self add:keys]; [self text:@"Optional alternative to browser sign-in. The key is never written to settings files or chat history." size:11 bold:NO secondary:YES];
@@ -205,7 +214,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 }
 - (void)buildReading {
     [self heading:@"Comfortable reading. Fewer interruptions." subtitle:@"These choices are optional. Grant only the permissions you need."];
-    [self add:[self toggle:@"keepImageColors" label:@"Keep original image colors in dark theme"]];
+    [self add:[self toggle:@"keepImageColors" label:@"Keep original image colors by default"]];
     [self actionRow:@"Default reader" detail:@"Open PDF files with ShenzhenPDF from Finder and other apps."
         label:@"Make default…" action:@"defaultReader"];
     [self divider];
@@ -243,15 +252,32 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 }
 - (void)updateState:(NSDictionary*)state {
     NSMutableDictionary* merged=[self.state mutableCopy]; [merged addEntriesFromDictionary:state]; self.state=merged;
-    [self selectSection:self.section];
-    [(NSButton*)self.controls[@"showSettingsOnLaunch"] setState:[merged[@"showSettingsOnLaunch"] boolValue]];
+    // Status callbacks must not destroy a field editor or erase an in-progress
+    // API-key draft. Update the existing controls; rebuild only on section changes.
+    for(NSString* key in @[@"showSettingsOnLaunch",@"collectionEnabled",@"keepImageColors",@"aiEnabled",@"autoAnalyze"])
+        if(state[key]) [(NSButton*)self.controls[key] setState:[merged[key] boolValue]];
+    NSButton* overview=(NSButton*)self.controls[@"showAI"];
+    if(overview) overview.title=[merged[@"connected"] boolValue] ? @"AI settings" : @"Connect OpenRouter";
+    if([self.section isEqual:@"ai"]) {
+        BOOL connected=[merged[@"connected"] boolValue], connecting=[merged[@"connecting"] boolValue];
+        NSButton* button=(NSButton*)self.controls[@"connection"];
+        button.title=connected ? @"Disconnect" : connecting ? @"Connecting…" : @"Connect OpenRouter";
+        button.identifier=connected ? @"disconnect" : @"connect"; button.accessibilityLabel=button.title;
+        button.enabled=!connecting; [button invalidateIntrinsicContentSize];
+        self.connectionTitle.stringValue=connected ? @"Connected to OpenRouter" : @"OpenRouter account";
+        self.connectionDetail.stringValue=merged[@"connectionStatus"] ?: @"Sign in in your browser. Your credential stays in macOS Keychain.";
+        self.modelDetail.stringValue=[merged[@"modelStatus"] length] ? merged[@"modelStatus"] : @"Choose an OpenRouter model ID. Availability and price depend on the provider.";
+        NSTextField* model=(NSTextField*)self.controls[@"model"];
+        if(state[@"model"] && !model.currentEditor) model.stringValue=merged[@"model"];
+    }
+    [self.window.contentView layoutSubtreeIfNeeded];
 }
 - (void)finish:(id)sender {
-    (void)sender; [self.window makeFirstResponder:nil]; [self.window close];
+    (void)sender; [self.window makeFirstResponder:nil]; self.completing=YES; [self.window close]; self.completing=NO;
 }
 - (void)windowWillClose:(NSNotification*)note {
     (void)note; self.secret.stringValue=@"";
-    if (self.actionHandler) self.actionHandler(@"done");
+    if (self.actionHandler) self.actionHandler(self.completing ? @"done" : @"dismissed");
 }
 - (void)showForWindow:(NSWindow*)parent {
     (void)parent; [self.window center]; [self showWindow:nil];

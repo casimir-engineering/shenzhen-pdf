@@ -34,7 +34,7 @@ separate preference; the upgrade introduction must not erase a user's settings.
 
 The 760 × 612 native resizable window has 24-point outside margins, 28-point
 buttons and four compact sections across the top: Start here, AI & documents,
-Collection, Reading & access. A minimum size of 680 × 540 keeps action labels
+Collection, Reading & access. A minimum size of 650 × 540 keeps action labels
 readable; content scrolls at small heights. Sections share the existing reader /
 Collection surfaces, 13-point body and 12-point secondary text; only the opening
 heading uses 24-point semibold. Close is always available. The persistent footer
@@ -64,7 +64,7 @@ persistence. State keys: `connected`, `connecting`, `connectionStatus`, `model`,
 - `settingsChanged(changes)` saves only changed preferences.
 - `actionHandler(action)` receives `connect`, `disconnect`, `defaultReader`,
   `accessibility`, `fullDiskAccess`, `collectionSettings`, `collection`,
-  `shortcuts`, `done`.
+  `shortcuts`, `done`, `dismissed`. Only Start reading emits `done`; closing the window does not imply consent.
 - `credentialHandler(secret)` hands the one submitted secret straight to secure
   storage/connection handling, independently from any preferences callback.
 - `updateState` refreshes asynchronous connection status; never pass a secret.
@@ -87,3 +87,22 @@ paint, and no store initialization when this panel is unused.
 Critics should rank findings: P0 data loss/security, P1 broken primary action,
 P2 confusing flow/contrast/clipping, P3 polish. Address P0–P2 before grading the
 experience acceptable; target at least 9/10 within four review loops.
+
+
+## Chat refinement evidence
+
+The native chat shares the reader palette and 13-point controls, presents newest
+messages first, keeps a draft when connection setup prevents sending, and keeps
+Stop available while browsing history. Return sends; Shift Return inserts a line.
+Rich Markdown supports headings, lists, code and clickable page citations. Model
+images are removed from the parsed Markdown model before rendering, so even
+absolute local paths cannot cause a file read. Trusted page previews are separate
+local-only messages restricted to resolved PNG paths under the chat asset folder.
+
+Headless tests cover first-click corners/centers, unconfigured-send draft retention,
+resize/reflow through a native layout tick, safe/unsafe links, rejected Markdown
+images, stored page previews, and rejected external preview paths. The native dark
+and light renders are `/tmp/sz-ai-chat-NSAppearanceNameDarkAqua.png` and
+`/tmp/sz-ai-chat-NSAppearanceNameAqua.png`; these are offscreen renders, never app
+screenshots. Test binary reports zero failures. A separate critic reviews the
+composed experience after integration, rather than grading an isolated mockup.
