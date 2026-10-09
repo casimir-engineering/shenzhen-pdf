@@ -100,7 +100,7 @@ static char versionInfoKey, versionIndicatorKey, versionIndicatorRowKey, version
         // date/recovery label never squeezes page navigation or document tools.
         NSButton* locate=SPDFCollectionButton(@"Locate…",self,@selector(collectionLocateFromIndicator:),@"secondary");
         locate.identifier=@"CollectionLocateDocument"; locate.toolTip=@"Find the missing original automatically or choose it manually";
-        row=[NSStackView stackViewWithViews:@[pill,locate]]; row.spacing=6;
+        row=[NSStackView stackViewWithViews:@[pill,locate]]; row.spacing=6; row.identifier=@"CollectionVersionStatusRow";
         [_toolbar addArrangedSubview:row];
         [row.widthAnchor constraintLessThanOrEqualToAnchor:_toolbar.widthAnchor constant:-16].active = YES;
         objc_setAssociatedObject(self,&versionIndicatorRowKey,row,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -115,7 +115,7 @@ static char versionInfoKey, versionIndicatorKey, versionIndicatorRowKey, version
     NSString* date = [version[@"capturedAt"] isKindOfClass:NSNumber.class] ?
         [format stringFromDate:[NSDate dateWithTimeIntervalSince1970:[version[@"capturedAt"] doubleValue]]] : @"date unavailable";
     NSString* title = older ? [@"Older version — " stringByAppendingString:date] : @"Collection document";
-    if (missing) title = [title stringByAppendingString:@" · Original missing"];
+    if (missing) title = [title stringByAppendingFormat:@" · %@", [doc[@"status"] isEqual:@"Original unavailable"] ? @"Original unavailable" : @"Original missing"];
     pill.title = title; [pill invalidateIntrinsicContentSize]; pill.accessibilityLabel = title; pill.hidden = NO;
     pill.missing=missing; pill.needsDisplay=YES; row.hidden=NO;
     [objc_getAssociatedObject(self,&versionLocateKey) setHidden:!missing];

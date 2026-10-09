@@ -10,6 +10,17 @@ static NSURL* CopyURL(NSURL* root, NSString* documentID, NSString* copyID, NSStr
         URLByAppendingPathComponent:copyID] URLByAppendingPathComponent:filename];
 }
 @implementation SPDFMacCollectionStore (EditableDocuments)
+- (void)recordUnavailableSourcePath:(NSString*)path documentID:(NSString*)documentID {
+    // Only actual failed reader opens call this, on their recovery worker.
+    // Readable metadata is not evidence of readable document contents (TCC/ACLs).
+    [self transaction:^BOOL(NSMutableDictionary* manifest,NSError** error) {
+        (void)error; NSMutableDictionary* doc=manifest[@"documents"][documentID];
+        if (![doc[@"path"] isEqual:path]) return NO;
+        doc[@"originalUnavailable"]=@YES;
+        doc[@"status"]=[NSFileManager.defaultManager fileExistsAtPath:path] ? @"Original unavailable" : @"Original missing";
+        return YES;
+    } error:nil];
+}
 - (NSDictionary*)editableInfoForPath:(NSString*)path {
     // Ordinary paths do not read the manifest or create directories.
     if (![path.pathComponents containsObject:@"editable"]) return nil;
