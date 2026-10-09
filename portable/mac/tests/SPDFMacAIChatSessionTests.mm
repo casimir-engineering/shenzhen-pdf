@@ -1,0 +1,101 @@
+#import <Foundation/Foundation.h>
+#import "SPDFMacAIChatSession.h"
+#import "SPDFMacAIChatStore.h"
+#import "SPDFMacAITransport.h"
+static int failures;
+#define CHECK(c,m) do { if (!(c)) { fprintf(stderr,"FAIL: %s\n",m); ++failures; } } while(0)
+@interface FakeTransport : SPDFMacAITransport
+@property(copy) void (^reply)(NSDictionary*,NSError*);
+@property NSArray* messages;
+@property NSUInteger sends;
+@end
+@implementation FakeTransport
+- (SPDFMacAIRequestToken*)sendMessages:(NSArray*)messages tools:(NSArray*)tools model:(NSString*)model apiKey:(NSString*)key completion:(void (^)(NSDictionary*,NSError*))completion {
+    (void)tools; (void)model; (void)key; self.messages=messages; self.reply=completion; self.sends++;
+    return [SPDFMacAIRequestToken new];
+}
+@end
+@interface FakeTools : NSObject <SPDFMacAIChatTools>
+@property NSUInteger calls;
+@property NSUInteger cancellations;
+@property(copy) void (^reply)(NSDictionary*);
+@end
+@implementation FakeTools
+- (void)performTool:(NSString*)name arguments:(NSDictionary*)args completion:(void (^)(NSDictionary*))completion {
+    (void)name; (void)args; self.calls++; self.reply=completion;
+}
+- (void)cancel { self.cancellations++; }
+- (BOOL)canUndo { return self.calls>0; }
+- (BOOL)undoLastAction:(NSError**)error { (void)error; return YES; }
+@end
+int main(void) { @autoreleasepool {
+    NSURL* root=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
+    SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
+    FakeTransport* transport=[FakeTransport new]; FakeTools* tools=[FakeTools new];
+    SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
+    CHECK(![NSFileManager.defaultManager fileExistsAtPath:root.path],"construction is disk-inert");
+    CHECK(!transport.sends,"construction is network-inert");
+    [session send:@"Explain this document" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
+    CHECK(transport.sends==1 && session.running,"explicit send starts request");
+    void (^late)(NSDictionary*,NSError*)=transport.reply;
+    [session cancel]; late(@{@"role":@"assistant",@"content":@"late"},nil);
+    CHECK([session.chat[@"messages"] count]==1,"cancel discards late assistant response");
+    [session send:@"Read page 1" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
+    transport.reply(@{@"role":@"assistant",@"content":@"",@"tool_calls":@[
+        @{@"id":@"call1",@"type":@"function",@"function":@{@"name":@"read_pages",@"arguments":@"{}"}},
+        @{@"id":@"call2",@"type":@"function",@"function":@{@"name":@"show_document",@"arguments":@"{}"}}]},nil);
+    CHECK(tools.calls==1,"tools execute sequentially");
+    void (^lateTool)(NSDictionary*)=tools.reply; [session cancel]; lateTool(@{@"ok":@YES});
+    CHECK(tools.calls==1,"cancel prevents queued second action");
+    NSArray* messages=session.chat[@"messages"];
+    CHECK([messages.lastObject[@"tool_call_id"] isEqual:@"call2"],"cancel closes all outstanding tool-call pairs");
+    [session send:@"Continue" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
+    transport.reply(@{@"role":@"assistant",@"content":@"Answer with evidence"},nil);
+    CHECK(!session.running && !session.status.length,"completed answer clears running state");
+    CHECK([store chats].count==1,"chat persisted");
+    NSDictionary* loaded=[store chatWithID:session.chat[@"id"]];
+    CHECK([loaded[@"messages"] count]==[session.chat[@"messages"] count],"complete history roundtrips");
+    NSData* data=[NSJSONSerialization dataWithJSONObject:loaded options:0 error:nil];
+    NSString* serialized=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    CHECK(![serialized containsString:@"TEST-SECRET"],"credentials excluded from persistence");
+    CHECK(![store chatWithID:@"../../escape"],"chat identifiers reject path traversal");
+    CHECK([session undo:nil],"explicit undo reaches tool action journal");
+    [session newChat]; [session send:@"Second conversation" model:@"fake/model" apiKey:@"test"];
+    transport.reply(@{@"role":@"assistant",@"content":@"Done"},nil);
+    CHECK([store chats].count==2,"separate chat files preserve other conversation");
+    [session newChat]; [session send:@"bad shape" model:@"fake/model" apiKey:@"test"];
+    transport.reply(@{@"role":@"assistant",@"tool_calls":@[@"bad"]},nil);
+    CHECK(!session.running && session.status.length,"malformed tool entries fail safely");
+    NSUInteger callsBefore=tools.calls;
+    [session send:@"bad arguments" model:@"fake/model" apiKey:@"test"];
+    transport.reply(@{@"role":@"assistant",@"tool_calls":@[@{@"id":@"badargs",@"function":
+        @{@"name":@"undo_action",@"arguments":@"not JSON"}}]},nil);
+    CHECK(!session.running && tools.calls==callsBefore,"invalid JSON cannot invoke a zero-argument mutation");
+    CHECK([store deleteAll:nil] && ![store chats].count,"delete all removes only owned chat files");
+    SPDFMacAIChatStore* second=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
+    CHECK(![second saveChat:loaded error:nil],"deleted chat cannot be resurrected by a stale writer");
+    NSString* orphan=NSUUID.UUID.UUIDString;
+    NSURL* malformed=[root URLByAppendingPathComponent:[orphan stringByAppendingPathExtension:@"json"]];
+    [@"malformed" writeToURL:malformed atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSURL* assets=[root URLByAppendingPathComponent:[orphan stringByAppendingString:@"-assets"]];
+    [NSFileManager.defaultManager createDirectoryAtURL:assets withIntermediateDirectories:YES attributes:nil error:nil];
+    CHECK([store deleteAll:nil] && ![NSFileManager.defaultManager fileExistsAtPath:malformed.path] &&
+        ![NSFileManager.defaultManager fileExistsAtPath:assets.path],"delete all cleans malformed and orphan transcript data");
+    NSString* invalidID=NSUUID.UUID.UUIDString;
+    NSDictionary* invalid=@{@"id":invalidID,@"messages":@[@{@"role":@"assistant",@"tool_calls":@[@"bad"]}]};
+    CHECK([store saveChat:invalid error:nil] && ![store chatWithID:invalidID],"malformed stored actions rejected before resume");
+    NSString* interruptedID=NSUUID.UUID.UUIDString;
+    NSDictionary* interrupted=@{@"id":interruptedID,@"messages":@[@{@"role":@"assistant",@"tool_calls":@[
+        @{@"id":@"pending",@"function":@{@"name":@"read_pages",@"arguments":@"{}"}}]}]};
+    [store saveChat:interrupted error:nil];
+    CHECK([[[store chatWithID:interruptedID][@"messages"] lastObject][@"tool_call_id"] isEqual:@"pending"],"interrupted stored action is completed as cancelled without replay");
+    NSString* temp=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"ShenzhenPDF-AI-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+    [NSFileManager.defaultManager createDirectoryAtPath:temp withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString* png=[temp stringByAppendingPathComponent:@"page.png"];
+    const unsigned char bytes[]={137,80,78,71,13,10,26,10};
+    [[NSData dataWithBytes:bytes length:sizeof(bytes)] writeToFile:png atomically:YES];
+    CHECK(![store savePreview:@{@"path":png} chatID:loaded[@"id"]],"deleted chat cannot recreate preview assets");
+    CHECK(![NSFileManager.defaultManager fileExistsAtPath:temp],"rejected preview cleans owned temporary directory");
+    [NSFileManager.defaultManager removeItemAtURL:root error:nil];
+    fprintf(stderr,"AI chat session: %d failures\n",failures); return failures ? 1 : 0;
+} }
