@@ -64,6 +64,28 @@ static void CapacityChecks(NSURL* sandbox) {
           && queries==store.capacityQueries,@"static budget never queries disk");
     [store updateSettings:@{@"storageLimitBytes":@0} error:nil];
     Check(!store.isStorageLimited && [store.settings[@"storageMode"] isEqual:@"unlimited"],@"legacy explicit unlimited remains unlimited");
+    store.freeBytes=@1000;
+    [store updateSettings:@{@"storageMode":@"dynamic",@"storageDynamicPercent":@50} error:nil];
+    unsigned long long pool=1000+store.storageUsedBytes;
+    Check([store.settings[@"storageDynamicPercent"] integerValue]==50 &&
+        [store.storageBudget[@"storageLimitBytes"] unsignedLongLongValue]==pool/2,@"dynamic fifty percent uses selected reserve");
+    [store updateSettings:@{@"storageMode":@"static",@"storageLimitBytes":@10000} error:nil];
+    [store updateSettings:@{@"storageMode":@"dynamic"} error:nil];
+    Check([store.settings[@"storageDynamicPercent"] integerValue]==50,@"percentage persists across static and dynamic switches");
+    [store updateSettings:@{@"storageDynamicPercent":@999} error:nil];
+    Check([store.settings[@"storageDynamicPercent"] integerValue]==80,@"dynamic percentage clamps upper bound");
+    [store updateSettings:@{@"storageDynamicPercent":@1} error:nil];
+    Check([store.settings[@"storageDynamicPercent"] integerValue]==50,@"dynamic percentage clamps lower bound");
+    [store updateSettings:@{@"storageDynamicPercent":@65} error:nil];
+    NSDictionary* percentReview=[store previewStoragePolicy:@{@"storageMode":@"dynamic"}];
+    Check([percentReview[@"storagePolicy"][@"storageDynamicPercent"] integerValue]==65 &&
+        [store applyStoragePolicy:@{@"storageMode":@"dynamic"} reviewedPlan:percentReview error:nil],
+        @"review and apply preserve saved percent when omitted");
+    CapacityCollectionStore* reopened=[[CapacityCollectionStore alloc] initWithRootURL:root];
+    Check([reopened.settings[@"storageDynamicPercent"] integerValue]==65,@"dynamic percent persists across store instances");
+    store.freeBytes=@(ULLONG_MAX);
+    unsigned long long saturated=ULLONG_MAX/100*65+(ULLONG_MAX%100)*65/100;
+    Check([store.storageBudget[@"storageLimitBytes"] unsignedLongLongValue]==saturated,@"dynamic percent calculation is overflow safe");
     NSDictionary* legacy=@{@"format":@1,@"settings":@{@"choice":@"enabled",@"storageLimitBytes":@2048},@"documents":@{}};
     Put([root URLByAppendingPathComponent:@"manifest.json"],[NSJSONSerialization dataWithJSONObject:legacy options:0 error:nil]);
     Check([store.settings[@"storageMode"] isEqual:@"static"] && [store.storageBudget[@"storageLimitBytes"] unsignedLongLongValue]==2048,@"legacy saved static cap migrates on read");

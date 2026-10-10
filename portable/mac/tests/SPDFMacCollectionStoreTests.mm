@@ -167,8 +167,47 @@ int main(int argc,const char* argv[]) {
         Expect(@"turn off retains search and history",!store.isEnabled && store.documents.count==count &&
                [store search:@"Window" titlesOnly:YES excludingPaths:NSSet.set limit:5].count==4);
         NSURL* relocated=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"MovedCollection"]];
+        // Repro: old builds left both indexes and thumbnails behind after moving.
+        NSString* thumbnail=[root.path stringByAppendingPathComponent:@"thumbnails/fixture.png"];
+        [NSFileManager.defaultManager createDirectoryAtPath:thumbnail.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+        Write(thumbnail,@"thumbnail fixture bytes");
+        NSArray* indexes=[NSFileManager.defaultManager contentsOfDirectoryAtPath:[root.path stringByAppendingPathComponent:@"indexes"] error:nil];
+        NSString* stagedFailure=[root.path stringByAppendingPathComponent:@"cannot-copy.sock"];
+        // An unsupported special file forces a copy failure before the switch.
+        mkfifo(stagedFailure.fileSystemRepresentation,0600);
+        NSError* failedMove=nil;
+        Expect(@"failed staged move leaves original active",![store relocateToURL:relocated error:&failedMove] && [store.rootURL.path isEqual:root.path]);
+        Expect(@"failed staged move rolls back destination",![NSFileManager.defaultManager fileExistsAtPath:relocated.path]);
+        [NSFileManager.defaultManager removeItemAtPath:stagedFailure error:nil];
         NSError* moveError;
-        Expect([NSString stringWithFormat:@"relocation succeeds: %@",moveError ?: @""], [store relocateToURL:relocated error:&moveError]);
+        BOOL didMove=[store relocateToURL:relocated error:&moveError];
+        Expect([NSString stringWithFormat:@"relocation succeeds: %@",moveError ?: @""],didMove);
+        NSSet* routing=[NSSet setWithArray:[NSFileManager.defaultManager contentsOfDirectoryAtPath:root.path error:nil]];
+        Expect(@"old location retains only tiny routing metadata and compatibility links",[routing isEqualToSet:
+            [NSSet setWithArray:@[@"collection.lock",@"redirect.json",@"previews",@"editable"]]]);
+        struct stat previewLink={},editableLink={};
+        Expect(@"legacy paths are symlinks rather than duplicated document trees",lstat([root.path stringByAppendingPathComponent:@"previews"].fileSystemRepresentation,&previewLink)==0 && S_ISLNK(previewLink.st_mode) &&
+            lstat([root.path stringByAppendingPathComponent:@"editable"].fileSystemRepresentation,&editableLink)==0 && S_ISLNK(editableLink.st_mode));
+        Expect(@"thumbnail bytes move to new root only",[[NSString stringWithContentsOfFile:[relocated.path stringByAppendingPathComponent:@"thumbnails/fixture.png"] encoding:NSUTF8StringEncoding error:nil] isEqual:@"thumbnail fixture bytes"] &&
+            ![NSFileManager.defaultManager fileExistsAtPath:thumbnail]);
+        Expect(@"text indexes move to new root only",indexes.count && ![NSFileManager.defaultManager fileExistsAtPath:[root.path stringByAppendingPathComponent:@"indexes"]] &&
+            [[NSFileManager.defaultManager contentsOfDirectoryAtPath:[relocated.path stringByAppendingPathComponent:@"indexes"] error:nil] count]==indexes.count);
+        NSString* staleIndex=[root.path stringByAppendingPathComponent:@"indexes/leftover.json"];
+        [NSFileManager.defaultManager createDirectoryAtPath:staleIndex.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+        Write(staleIndex,@"leftover from an older app build");
+        Expect(@"selecting current destination finishes old payload cleanup",[store relocateToURL:relocated error:nil] &&
+            ![NSFileManager.defaultManager fileExistsAtPath:staleIndex] && [store documents].count==count);
+        NSURL* legacyEditable=[root URLByAppendingPathComponent:@"editable"];
+        [NSFileManager.defaultManager removeItemAtURL:legacyEditable error:nil];
+        [NSFileManager.defaultManager createDirectoryAtURL:legacyEditable withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString* legacyEdit=[legacyEditable.path stringByAppendingPathComponent:@"late-edit.md"];
+        Write(legacyEdit,@"Newer legacy edit must survive retry");
+        NSError* legacyCleanupError=nil;
+        Expect(@"redirect cleanup refuses to delete a real legacy editable tree",![store relocateToURL:relocated error:&legacyCleanupError] &&
+            [legacyCleanupError.localizedDescription containsString:@"newer edits"] &&
+            [[NSString stringWithContentsOfFile:legacyEdit encoding:NSUTF8StringEncoding error:nil] isEqual:@"Newer legacy edit must survive retry"]);
+        [NSFileManager.defaultManager removeItemAtURL:legacyEditable error:nil];
+        [NSFileManager.defaultManager createSymbolicLinkAtURL:legacyEditable withDestinationURL:[relocated URLByAppendingPathComponent:@"editable"] error:nil];
         Expect(@"other windows follow durable relocation",[relaunched.rootURL.path isEqual:relocated.path]);
         Expect(@"relocation retains history and choice",[relaunched versionsForDocumentID:docID].count==3 && !relaunched.isEnabled);
         Expect(@"old preview path survives relocation",[NSFileManager.defaultManager fileExistsAtPath:assetPreview.path]);

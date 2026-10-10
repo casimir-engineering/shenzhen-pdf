@@ -1,12 +1,16 @@
 #import "SPDFMacCollectionStorePrivate.h"
 #import <sys/mount.h>
 #import <limits.h>
+#import <math.h>
 
 NSDictionary* SPDFCollectionStorageSettings(NSDictionary* saved) {
     NSString* mode=saved[@"storageMode"];
     if (![@[@"dynamic",@"static",@"unlimited"] containsObject:mode ?: @""])
         mode=saved[@"storageLimitBytes"] ? ([saved[@"storageLimitBytes"] unsignedLongLongValue] ? @"static" : @"unlimited") : @"dynamic";
-    return @{@"storageMode":mode,@"storageLimitBytes":saved[@"storageLimitBytes"] ?: @0,@"storageDynamicPercent":@80};
+    id value=saved[@"storageDynamicPercent"];
+    double supplied=[value isKindOfClass:NSNumber.class] ? [value doubleValue] : 80;
+    NSInteger percent=isfinite(supplied) ? (NSInteger)MAX(50.0,MIN(80.0,supplied)) : 80;
+    return @{@"storageMode":mode,@"storageLimitBytes":saved[@"storageLimitBytes"] ?: @0,@"storageDynamicPercent":@(percent)};
 }
 @implementation SPDFMacCollectionStore (Capacity)
 - (BOOL)isStorageLimited {
@@ -35,8 +39,9 @@ NSDictionary* SPDFCollectionStorageSettings(NSDictionary* saved) {
     unsigned long long pool=ULLONG_MAX-used<available ? ULLONG_MAX : available+used;
     // Integer arithmetic avoids rounding overflow. One byte is the smallest finite quota;
     // zero remains reserved for explicit unlimited storage.
-    unsigned long long budget=pool/5*4+(pool%5)*4/5;
-    return @{@"storageMode":mode,@"storageDynamicPercent":@80,@"storageLimitBytes":@(free ? MAX(1ULL,budget) : 0),
+    unsigned long long percent=[settings[@"storageDynamicPercent"] unsignedLongLongValue];
+    unsigned long long budget=pool/100*percent+(pool%100)*percent/100;
+    return @{@"storageMode":mode,@"storageDynamicPercent":@(percent),@"storageLimitBytes":@(free ? MAX(1ULL,budget) : 0),
         @"availableBytes":free ?: @0,@"usedBytes":@(used),@"capacityAvailable":@(free!=nil)};
 }
 - (NSDictionary*)storageBudget {
@@ -45,7 +50,9 @@ NSDictionary* SPDFCollectionStorageSettings(NSDictionary* saved) {
 }
 - (NSDictionary*)previewStoragePolicy:(NSDictionary*)policy {
     NSDictionary* manifest=[self readManifest];
-    NSDictionary* settings=SPDFCollectionStorageSettings(policy);
+    NSMutableDictionary* merged=[manifest[@"settings"] mutableCopy] ?: [NSMutableDictionary dictionary];
+    [merged addEntriesFromDictionary:policy];
+    NSDictionary* settings=SPDFCollectionStorageSettings(merged);
     NSDictionary* budget=[self storageBudgetForManifest:manifest settings:settings];
     NSMutableDictionary* plan=[[self cleanupPlanForManifest:manifest limit:[budget[@"storageLimitBytes"] unsignedLongLongValue] protectedVersionID:nil] mutableCopy];
     plan[@"storagePolicy"]=settings;
@@ -56,7 +63,9 @@ NSDictionary* SPDFCollectionStorageSettings(NSDictionary* saved) {
 }
 - (BOOL)applyStoragePolicy:(NSDictionary*)policy reviewedPlan:(NSDictionary*)plan error:(NSError**)error {
     return [self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
-        NSDictionary* settings=SPDFCollectionStorageSettings(policy);
+        NSMutableDictionary* merged=[manifest[@"settings"] mutableCopy] ?: [NSMutableDictionary dictionary];
+        [merged addEntriesFromDictionary:policy];
+        NSDictionary* settings=SPDFCollectionStorageSettings(merged);
         NSDictionary* budget=[self storageBudgetForManifest:manifest settings:settings];
         NSDictionary* current=[self cleanupPlanForManifest:manifest limit:[budget[@"storageLimitBytes"] unsignedLongLongValue] protectedVersionID:nil];
         // Free space changes continually. A smaller deletion set is safe; a larger or different

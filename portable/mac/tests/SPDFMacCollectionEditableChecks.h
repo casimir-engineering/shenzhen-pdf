@@ -1,13 +1,41 @@
+#include <fcntl.h>
+#include <unistd.h>
+@interface SPDFMacCollectionStore (MoveTestSeam)
+- (BOOL)relocationSharesVolumeFrom:(NSURL*)old to:(NSURL*)destination;
+- (BOOL)transferEditableTreeFrom:(NSURL*)old to:(NSURL*)destination transferred:(BOOL*)transferred error:(NSError**)error;
+@end
+@interface EditableMoveStore : SPDFMacCollectionStore
+@property(nonatomic) BOOL forceCrossVolume;
+@property(nonatomic) NSString* lateWritePath;
+@property(nonatomic) BOOL failAfterTransfer;
+@end
+@implementation EditableMoveStore
+- (BOOL)relocationSharesVolumeFrom:(NSURL*)old to:(NSURL*)destination {
+    return !self.forceCrossVolume && [super relocationSharesVolumeFrom:old to:destination];
+}
+- (BOOL)transferEditableTreeFrom:(NSURL*)old to:(NSURL*)destination transferred:(BOOL*)transferred error:(NSError**)error {
+    if(self.lateWritePath) [@"# Saved during relocation" writeToFile:self.lateWritePath atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    BOOL result=[super transferEditableTreeFrom:old to:destination transferred:transferred error:error];
+    if(result && self.failAfterTransfer)
+        [NSFileManager.defaultManager createDirectoryAtURL:[old URLByAppendingPathComponent:@"redirect.json"]
+            withIntermediateDirectories:YES attributes:nil error:nil];
+    return result;
+}
+@end
 static void CheckEditableCollection(void) {
     NSString* sandbox=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:sandbox withIntermediateDirectories:YES attributes:nil error:nil];
-    SPDFMacCollectionStore* store=[[SPDFMacCollectionStore alloc] initWithRootURL:
+    EditableMoveStore* store=[[EditableMoveStore alloc] initWithRootURL:
         [NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"Collection"]]];
     Expect(@"editable lookup is lazy",![store editableInfoForPath:@"/ordinary.pdf"] &&
         ![NSFileManager.defaultManager fileExistsAtPath:store.rootURL.path]);
     [store updateSettings:@{@"choice":@"enabled"} error:nil];
     NSString* source=[sandbox stringByAppendingPathComponent:@"Notes.md"]; Write(source,@"# First revision");
     NSDictionary* doc=Capture(store,source,@"Opened"); NSString* identifier=doc[@"id"], *first=doc[@"latestVersionID"];
+    store.forceCrossVolume=YES;
+    NSURL* immutableMove=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"ImmutableMoved"]];
+    Expect(@"immutable-only Collection permits cross-volume copy workflow",[store relocateToURL:immutableMove error:nil]);
+    store.forceCrossVolume=NO;
     NSURL* copy=[store editableVersionID:first documentID:identifier error:nil];
     Expect(@"Collection documents are writable independent files",copy &&
         [NSFileManager.defaultManager isWritableFileAtPath:copy.path] && ![store isArchivePath:copy.path]);
@@ -69,10 +97,30 @@ static void CheckEditableCollection(void) {
     NSURL* imageSnapshot=[store materializeVersionID:imageRow[@"latestVersionID"] documentID:imageRow[@"id"] error:nil];
     Expect(@"raster edits retain the original pixels and history",[imageEdited[@"versions"] count]==2 &&
         [[NSData dataWithContentsOfURL:imageSnapshot] isEqual:png]);
+    NSURL* originalRoot=store.rootURL;
+    store.forceCrossVolume=YES;
+    NSURL* refused=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"OtherDisk"]];
+    NSError* crossError=nil;
+    Expect(@"cross-disk mutable Collection move refuses before changing storage",![store relocateToURL:refused error:&crossError] &&
+        [crossError.localizedDescription containsString:@"same disk"] && [store.rootURL.path isEqual:originalRoot.path] &&
+        ![NSFileManager.defaultManager fileExistsAtPath:refused.path]);
+    store.forceCrossVolume=NO;store.lateWritePath=renamed.path;
+    store.failAfterTransfer=YES;
+    NSURL* rollback=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"RollbackMove"]];
+    Expect(@"post-transfer routing failure rolls live inodes back without losing late save",![store relocateToURL:rollback error:nil] &&
+        [store.rootURL.path isEqual:originalRoot.path] && ![NSFileManager.defaultManager fileExistsAtPath:rollback.path] &&
+        [[NSString stringWithContentsOfURL:renamed encoding:NSUTF8StringEncoding error:nil] isEqual:@"# Saved during relocation"]);
+    [NSFileManager.defaultManager removeItemAtURL:[originalRoot URLByAppendingPathComponent:@"redirect.json"] error:nil];
+    store.failAfterTransfer=NO;
+    int liveDescriptor=open(renamed.fileSystemRepresentation,O_RDWR);
+    Expect(@"fixture has a live writer descriptor",liveDescriptor>=0);
     NSURL* destination=[NSURL fileURLWithPath:[sandbox stringByAppendingPathComponent:@"Moved"]];
     Expect(@"move Collection retains editable copies",[store relocateToURL:destination error:nil] &&
         [NSFileManager.defaultManager isWritableFileAtPath:renamed.path] &&
         [[store documentForPath:renamed.path][@"id"] isEqual:identifier]);
+    Expect(@"save after initial copy survives relocation",[[NSString stringWithContentsOfURL:renamed encoding:NSUTF8StringEncoding error:nil] isEqual:@"# Saved during relocation"]);
+    if(liveDescriptor>=0){pwrite(liveDescriptor,"!",1,0);fsync(liveDescriptor);close(liveDescriptor);}
+    Expect(@"pre-move open writer still addresses the moved document inode",[[NSString stringWithContentsOfURL:renamed encoding:NSUTF8StringEncoding error:nil] hasPrefix:@"! Saved during relocation"]);
     NSURL* movedRename=[store renameEditablePath:renamed.path filename:@"After move.md" error:nil];
     Expect(@"rename works through a restored pre-relocation path",movedRename &&
         [[store documentForPath:movedRename.path][@"title"] isEqual:@"After move.md"]);

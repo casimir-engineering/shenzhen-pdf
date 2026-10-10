@@ -12,7 +12,8 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 + (instancetype)defaultStore;
 - (instancetype)initWithRootURL:(NSURL*)URL;
 // choice: unset/enabled/disabled. storageMode: dynamic (fresh default), static, unlimited.
-// Dynamic uses 80% of (free volume bytes + retained Collection bytes). Legacy byte limits migrate on read.
+// storageDynamicPercent is 50–80, default 80, of (free volume bytes + retained Collection bytes).
+// Legacy byte limits migrate on read; switching modes preserves the selected dynamic percent.
 - (NSDictionary*)settings;
 - (BOOL)updateSettings:(NSDictionary*)changes error:(NSError**)error;
 - (BOOL)isEnabled;
@@ -96,7 +97,9 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
             roots:(NSArray<NSURL*>*)roots cancelled:(BOOL (^)(void))cancelled error:(NSError**)error;
 @end
 @interface SPDFMacCollectionStore (Location)
-// Copies/verifies existing storage, then durably redirects running windows. Destination must be empty.
+// Verifies staged storage, redirects running windows, then removes all old payload.
+// Only tiny routing metadata and compatibility symlinks remain for saved tabs. Destination must be empty.
+// Collections containing editable copies must stay on the same disk to preserve live file writes.
 - (BOOL)relocateToURL:(NSURL*)URL error:(NSError**)error;
 @end
 @interface SPDFMacCollectionStore (Cleanup)
