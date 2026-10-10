@@ -289,6 +289,14 @@ only when its tag reaches origin. Flow:
 The script blocks on nothing — if it seems hung, the shell is (see traps). Poll
 `pgrep -f cut-release.sh` and read its log; never sit on a 600 s timeout.
 
+Daily-use local builds with saved AI credentials must also use a stable signing
+identity (`make -C portable mac-app MAC_SIGN_IDENTITY='Developer ID Application: …'`).
+The default ad-hoc signature changes its designated requirement on rebuild and
+can invalidate Keychain trust. Never weaken credential ACLs to bypass this; an
+old ad-hoc connection may require one explicit reconnect. Keep startup reads
+noninteractive and verify the actual composer-to-send path, including stale
+`connection_configured` flags. See [Return-send regression](journals/ai-reader/return-send-regression.md).
+
 ## <a id="conventions"></a>Working conventions
 
 - **A reported bug is a fix request.** Diagnose, fix, test, then report — do not
