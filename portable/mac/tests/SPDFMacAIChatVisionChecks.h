@@ -96,6 +96,20 @@ static void CheckChatVision(NSURL* root) {
     NSMutableArray* many=[NSMutableArray array]; [png writeToFile:target atomically:YES];
     for (int i=0;i<6;i++) [many addObject:@{@"role":@"preview",@"local":@YES,@"preview":preview}];
     CHECK(VisionImageCount(SPDFMacAIChatVisionMessages(many,session.chat[@"id"],store,nil))==4,"only four most recent image requests are retained");
+    NSMutableArray* crops=[NSMutableArray array];
+    NSDictionary* provenance=@{@"path":@"doc:drawing",@"page":@1,@"revision":@"drawing-revision"};
+    for(NSUInteger i=0;i<6;i++) {
+        NSMutableDictionary* asset=[preview mutableCopy];asset[@"citation"]=provenance;
+        asset[@"caption"]=i ? @"detail" : @"overview";
+        asset[@"region"]=i ? @{@"x":@.2,@"y":@.3,@"width":@.3,@"height":@.2} : @{@"x":@0,@"y":@0,@"width":@1,@"height":@1};
+        [crops addObject:@{@"role":@"preview",@"local":@YES,@"preview":asset}];
+    }
+    NSArray* paired=SPDFMacAIChatVisionMessages(crops,session.chat[@"id"],store,nil);BOOL overviewRetained=NO;
+    for(NSDictionary* message in paired) {
+        NSArray* parts=message[@"content"];
+        if([parts isKindOfClass:NSArray.class] && parts.count==2 && [parts[0][@"text"] containsString:@"overview"] && [parts[1][@"type"] isEqual:@"image_url"])overviewRetained=YES;
+    }
+    CHECK(overviewRetained && VisionImageCount(paired)==4,"repeated details retain full-page spatial context within four-image budget");
     [@"not a PNG" writeToFile:target atomically:YES encoding:NSUTF8StringEncoding error:nil];
     CHECK(!VisionImageCount(SPDFMacAIChatVisionMessages(many,session.chat[@"id"],store,nil)),"forged invalid PNG never enters request");
     CHECK(!SPDFMacAIChatVisionMessages(many,session.chat[@"id"],store,^BOOL{return YES;}),"cancelled projection exits before assets");

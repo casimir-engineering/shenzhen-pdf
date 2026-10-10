@@ -39,6 +39,11 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
     }
     return @{@"error":@"Document is no longer open."};
 }
+- (NSDictionary*)aiCurrentDocumentContext {
+    SPDFDocumentTab* tab=[self selectedTab];if(!tab.path.length)return @{};
+    return @{@"path":tab.path,@"title":WorkspaceLabel(tab.title ?: tab.path.lastPathComponent,200),
+        @"page":@([self isMarkdownActive] ? [self activeMarkdownSession].currentPageIndex+1 : _pageIndex+1)};
+}
 - (NSDictionary*)aiWorkspaceContext { return [self aiWorkspaceContextWithArguments:@{}]; }
 - (NSDictionary*)aiWorkspaceContextWithArguments:(NSDictionary*)arguments {
     NSUInteger first=MAX((NSUInteger)1,[arguments[@"first"] unsignedIntegerValue]);
@@ -92,7 +97,8 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
         @"next":next<=matched ? @(next) : NSNull.null,@"nextGroup":nextGroup<=groups.count ? @(nextGroup) : NSNull.null,
         @"currentPage":@([self isMarkdownActive] ? [self activeMarkdownSession].currentPageIndex+1 : _pageIndex+1),
         @"colors":spdf_tab_group_colors()} mutableCopy];
-    result[@"capabilities"]=@{@"available":@[@"document_metadata",@"read_pages",@"search_documents",@"render_page",@"show_document",@"organize_groups",@"read_comments",@"edit_comment",@"reader_state",@"reader_control",@"list_collection",@"open_collection",@"close_document",@"reopen_document",@"rename_document",@"document_job",@"undo_action"],
+    result[@"currentDocument"]=[self aiCurrentDocumentContext];
+    result[@"capabilities"]=@{@"available":@[@"document_metadata",@"read_pages",@"search_documents",@"render_page",@"show_document",@"organize_groups",@"list_chats",@"organize_chats",@"read_comments",@"edit_comment",@"reader_state",@"reader_control",@"list_collection",@"open_collection",@"close_document",@"reopen_document",@"rename_document",@"document_job",@"undo_action"],
         @"documentJobs":@{@"kinds":@[@"ocr",@"translate",@"export-pdf"],@"requires":@"OCR and translation need installed local tools; no silent installation."},
         @"unavailable":@{@"delete_files":@"No reversible file deletion adapter."}};
     return result;

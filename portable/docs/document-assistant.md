@@ -77,10 +77,10 @@ messages. Clearing it restores the transcript; the two searches are independent.
 History rows show a concise title and the last conversation timestamp. A short
 background model request suggests a title after the first successful reply;
 this does not delay the answer. Right-click to **Rename chat** or **Move to folder**.
-**New folder** creates a collapsible folder. Right-click a folder to rename it or
-remove it while keeping its chats in Unfiled. Folder membership, collapsed state
+**General** is the default folder. Drag a chat onto any folder, including a collapsed folder or General, to move it. **New folder** creates a collapsible folder and immediately selects its name for inline editing. Rename edits the row in place without an animated dialog; Return commits and Escape cancels. Right-click a folder to rename it or
+remove it while keeping its chats in General. Folder membership, collapsed state
 and custom titles persist; a later model title or conversation save cannot
-replace your chosen name. Folder/title operations never resend a conversation.
+replace your chosen name. Folder/title operations never resend a conversation. You can also ask the assistant to organize all chats: it can list saved chats, create folders, move chats and rename them in a reversible batch. Manual edits made afterwards are protected from Undo.
 
 The chat toolbar offers **Hide chat panel** first, then **New chat**, **Undo**,
 **Redo** and **AI settings**, aligned with the reader toolbar, with hover labels. Thinking, current-tool activity, pauses, errors,
@@ -240,7 +240,7 @@ up to 12 model/tool rounds per send, and a 400,000-byte serialized context
 limit for text. Page images are requested lazily, up to four recent images and
 9 MiB of PNG data per request (12 MiB after base64 encoding). Each full page or
 crop has a default longest edge of 1600 pixels, configurable from 256 to 2400;
-individual PNGs are capped at 8 MiB. Older images can be requested again. Image
+individual PNGs are capped at 8 MiB. An overview of the same page is retained alongside a detail crop, so repeated crops do not discard the drawing context. Older images can be requested again. Image
 processing runs off the main thread, and no image work is added to launch or
 document opening. Start a new chat or narrow the question when a limit is reached. Tool
 requests are also bounded: workspace discovery returns 50 items by default
@@ -276,3 +276,20 @@ and do not use the chat provider.
 User messages have a muted blue background; assistant messages use a neutral
 shade in both themes. Replies are brief by default and follow your requested
 names, wording, scope and constraints.
+
+## Focused drawing questions
+
+An explicit chat send supplies the active document's ID, title and page without
+reading its file or scanning other documents. The assistant is instructed to
+start there for a question about the current document, trace dimension arrows
+and alternate positions, and distinguish component width, per-step travel and
+end-to-end displacement. A readable drawing should be interpreted before another
+crop or unrelated workspace search is requested. Opaque provider reasoning
+blocks are retained within a tool-call turn and discarded afterwards; they are
+not displayed or saved in chat history.
+
+The assistant's chat tools are `list_chats` (paged titles, folders and optional
+message-search context) and `organize_chats` (up to 200 atomic operations).
+`create_folder`, `move_chat`, `rename_chat` and `rename_folder` support creating
+and populating a folder in one call. `organizationRevision` from `list_chats`
+protects concurrent edits. A batch either commits completely or changes nothing.

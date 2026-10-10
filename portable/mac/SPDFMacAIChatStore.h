@@ -21,6 +21,9 @@
 - (BOOL)renameChat:(NSString*)identifier title:(NSString*)title error:(NSError**)error;
 - (BOOL)shouldSuggestTitleForChatID:(NSString*)identifier;
 - (BOOL)setSuggestedTitle:(NSString*)title forChatID:(NSString*)identifier error:(NSError**)error;
+- (NSDictionary*)organizationSnapshot;
+- (NSDictionary*)organizeChats:(NSArray*)operations expectedRevision:(NSString*)revision progress:(NSProgress*)progress error:(NSError**)error;
+- (NSDictionary*)swapOrganizationReceipt:(NSDictionary*)receipt progress:(NSProgress*)progress error:(NSError**)error;
 - (NSDictionary*)savePreview:(NSDictionary*)preview chatID:(NSString*)identifier;
 - (NSData*)previewData:(NSDictionary*)preview chatID:(NSString*)identifier;
 + (void)discardTemporaryPreview:(NSDictionary*)preview;

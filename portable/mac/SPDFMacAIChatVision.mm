@@ -36,6 +36,22 @@ static NSString* Caption(NSDictionary* preview,NSString* callID) {
 }
 NSArray* SPDFMacAIChatVisionMessages(NSArray* messages,NSString* chatID,SPDFMacAIChatStore* store,BOOL (^cancelled)(void)) {
     NSMutableIndexSet* selected=[NSMutableIndexSet indexSet];
+    // Keep the overview beside the newest detail. Four near-identical crops must not
+    // evict the full-page drawing needed to interpret position/extension lines.
+    NSInteger newest=-1;
+    for(NSInteger i=(NSInteger)messages.count-1;i>=0;i--)if([messages[i][@"role"] isEqual:@"preview"]){newest=i;[selected addIndex:i];break;}
+    if(newest>=0) {
+        NSDictionary* latest=[messages[newest][@"preview"] isKindOfClass:NSDictionary.class] ? messages[newest][@"preview"] : nil;
+        NSDictionary* source=[latest[@"citation"] isKindOfClass:NSDictionary.class] ? latest[@"citation"] : nil;
+        if(source)for(NSInteger i=newest-1;i>=0;i--) {
+            NSDictionary* preview=messages[i][@"preview"];
+            if(![preview isKindOfClass:NSDictionary.class])continue;
+            NSDictionary* region=preview[@"region"];
+            BOOL full=[region isKindOfClass:NSDictionary.class] && [region[@"width"] isKindOfClass:NSNumber.class] &&
+                [region[@"height"] isKindOfClass:NSNumber.class] && [region[@"width"] doubleValue]==1 && [region[@"height"] doubleValue]==1;
+            if(full && [preview[@"citation"] isEqual:source]){[selected addIndex:i];break;}
+        }
+    }
     for (NSUInteger i=messages.count;i>0 && selected.count<4;i--)
         if ([messages[i-1][@"role"] isEqual:@"preview"]) [selected addIndex:i-1];
     // Reserve the byte budget newest-first; an older large scan must not evict the requested detail.

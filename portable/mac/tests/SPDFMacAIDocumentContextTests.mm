@@ -125,6 +125,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
 #import "SPDFMacAIPageToolChecks.h"
+#import "SPDFMacAIChatFolderToolChecks.h"
 #import "SPDFMacAICitationNavigationChecks.h"
 #import "SPDFMacAICollectionRenameChecks.h"
 #import "SPDFMacAIMetadataHistoryChecks.h"
@@ -221,6 +222,7 @@ int main(void) { @autoreleasepool {
     [tools performTool:@"list_workspace" arguments:@{} completion:^(NSDictionary* value){ result=value; }];
     NSString* json=[[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:result options:0 error:nil] encoding:NSUTF8StringEncoding];
     Check([json rangeOfString:@"/first.pdf"].location==NSNotFound && [json containsString:@"doc:"],"workspace exposes opaque IDs instead of local paths");
+    CheckChatFolderTools(reader);
     [reader seedTabs:@[Tab(path,group)]]; SPDFMacAITools* readTools=[[SPDFMacAITools alloc] initWithReader:reader];
     result=nil;
     [readTools performTool:@"read_pages" arguments:@{@"path":SPDFAIDocumentIdentifier(path)} completion:^(NSDictionary* value){ result=value; }];
