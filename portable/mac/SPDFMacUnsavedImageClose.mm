@@ -1,3 +1,4 @@
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacUnsavedImageClose.h"
 #import <objc/runtime.h>
 static char approvedKey, terminationPendingKey, closePendingKey, queuedQuitKey;
@@ -10,6 +11,7 @@ static char approvedKey, terminationPendingKey, closePendingKey, queuedQuitKey;
 @end
 @implementation ShenzhenMacDelegate (SPDFMacUnsavedImageClose)
 - (void)closeDocument:(id)sender {
+    if ([self aiChatWindow].isKeyWindow) { [self closeAIChat]; return; }
     (void)sender;
     [self cancelDocumentTransientInteraction];
     if (_selectedTabIndex >= 0) {

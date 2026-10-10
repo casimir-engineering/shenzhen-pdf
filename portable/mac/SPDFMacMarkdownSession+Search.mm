@@ -45,6 +45,11 @@
         preferredIndex:(NSInteger)preferredIndex
          jumpToNearest:(BOOL)jumpToNearest
                 reveal:(BOOL)reveal {
+    [self searchForQuery:query regex:regex preferredIndex:preferredIndex jumpToNearest:jumpToNearest
+        reveal:reveal publicationAllowed:nil];
+}
+- (void)searchForQuery:(NSString*)query regex:(BOOL)regex preferredIndex:(NSInteger)preferredIndex
+    jumpToNearest:(BOOL)jumpToNearest reveal:(BOOL)reveal publicationAllowed:(BOOL (^)(void))publicationAllowed {
     [_searchToken cancel];
     _searchToken = nil;
     _searchGeneration++;
@@ -59,7 +64,8 @@
         if (self.searchUpdateHandler) self.searchUpdateHandler(0, -1, NO);
         return;
     }
-    _activeSearchQuery = [query copy];
+    // Pending citations must not be replayed by reflow/reload without their guard.
+    _activeSearchQuery = publicationAllowed ? nil : [query copy];
     _activeSearchRegex = regex;
     if (self.searchUpdateHandler) self.searchUpdateHandler(0, -1, YES);
     SPDFMarkdownCancellationToken* token = [SPDFMarkdownCancellationToken new];
@@ -74,6 +80,10 @@
                                             error:&error];
       dispatch_async(dispatch_get_main_queue(), ^{
         if (!self->_active || token.isCancelled || searchGeneration != self->_searchGeneration) return;
+        if (publicationAllowed && (self.renderedDocument!=snapshot || !publicationAllowed())) {
+            [self clearSearch]; return;
+        }
+        self->_activeSearchQuery=[query copy];
         self->_searchToken = nil;
         self->_searchErrorDescription =
             matches ? nil : (error.localizedDescription ?: @"Invalid regular expression");

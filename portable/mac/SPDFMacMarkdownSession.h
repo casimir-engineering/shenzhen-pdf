@@ -221,6 +221,9 @@ FOUNDATION_EXPORT BOOL SPDFMacMarkdownCopyCodeSource(SPDFMarkdownDocumentModel* 
         preferredIndex:(NSInteger)preferredIndex
          jumpToNearest:(BOOL)jumpToNearest
                 reveal:(BOOL)reveal;
+- (void)searchForQuery:(NSString*)query regex:(BOOL)regex preferredIndex:(NSInteger)preferredIndex
+    jumpToNearest:(BOOL)jumpToNearest reveal:(BOOL)reveal
+    publicationAllowed:(nullable BOOL (^)(void))publicationAllowed;
 - (void)clearSearch;
 - (void)moveToNextMatch:(BOOL)forward;
 - (void)goToSearchMatchAtIndex:(NSInteger)matchIndex;
