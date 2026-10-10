@@ -34,10 +34,11 @@
     NSTextField* captureHelp = SPDFCollectionText(@"You continue using the originals. Turning this off stops new copies; existing history remains available.",12,NSFontWeightRegular,YES);
     add(captureHelp); [stack setCustomSpacing:19 afterView:captureHelp]; divider();
     section(@"Storage");
+    add(SPDFCollectionText(@"Dynamic adjusts with free space; Static uses a fixed limit.",12,NSFontWeightRegular,YES));
     NSStackView* cap = [NSStackView stackViewWithViews:@[]]; cap.identifier = @"CollectionStorageCap"; cap.spacing = 6; cap.distribution = NSStackViewDistributionFill;
     [cap addArrangedSubview:SPDFCollectionText(@"Storage cap",12,NSFontWeightRegular,NO)];
     [cap addArrangedSubview:[NSView new]];
-    self.limitPicker = SPDFCollectionPopUp(); [self.limitPicker addItemsWithTitles:@[@"Unlimited",@"Static limit",@"Dynamic · 80% available"]];
+    self.limitPicker = SPDFCollectionPopUp(); [self.limitPicker addItemsWithTitles:@[@"Unlimited",@"Static limit",@"Dynamic"]];
     NSString* mode=self.store.settings[@"storageMode"];
     [self.limitPicker selectItemAtIndex:[mode isEqual:@"dynamic"] ? 2 : [mode isEqual:@"static"] ? 1 : 0];
     self.limitPicker.target = self; self.limitPicker.action = @selector(changeLimitMode:); [cap addArrangedSubview:self.limitPicker];
@@ -48,7 +49,15 @@
     self.limitField.accessibilityLabel = @"Storage limit in GB; zero means unlimited";
     self.limitField.target = self; self.limitField.action = @selector(changeLimit:); self.limitField.delegate = (id)self;
     [self.limitField.widthAnchor constraintEqualToConstant:70].active = YES; [cap addArrangedSubview:self.limitField];
-    self.limitUnit = SPDFCollectionText(@"GB",13,NSFontWeightRegular,NO); [cap addArrangedSubview:self.limitUnit]; add(cap);
+    self.limitUnit = SPDFCollectionText(@"GB",13,NSFontWeightRegular,NO); [cap addArrangedSubview:self.limitUnit];
+    self.dynamicPercent=[NSSlider sliderWithValue:[self.store.settings[@"storageDynamicPercent"] doubleValue] ?: 80
+        minValue:50 maxValue:80 target:self action:@selector(changeDynamicPercent:)];
+    self.dynamicPercent.continuous=YES; self.dynamicPercent.accessibilityLabel=@"Available space used by Collection, 50 to 80 percent";
+    self.dynamicPercent.toolTip=@"Use 50–80% of available space, including existing Collection files.";
+    [self.dynamicPercent.widthAnchor constraintEqualToConstant:130].active=YES; [cap addArrangedSubview:self.dynamicPercent];
+    self.dynamicPercentLabel=SPDFCollectionText(@"",12,NSFontWeightRegular,NO);
+    [self.dynamicPercentLabel.widthAnchor constraintEqualToConstant:36].active=YES; [cap addArrangedSubview:self.dynamicPercentLabel]; add(cap);
+    self.dynamicPercent.hidden=self.limitPicker.indexOfSelectedItem!=2; self.dynamicPercentLabel.hidden=self.dynamicPercent.hidden;
     self.limitField.hidden = self.limitPicker.indexOfSelectedItem != 1; self.limitUnit.hidden = self.limitField.hidden;
     // Keep the pending status and its action next to the only setting they apply.
     NSStackView* applyRow = [NSStackView stackViewWithViews:@[]]; applyRow.distribution = NSStackViewDistributionFill;
@@ -57,7 +66,7 @@
     NSButton* apply = SPDFCollectionButton(@"Apply",self,@selector(changeLimit:),@"normal");
     apply.identifier = @"CollectionStorageApply"; apply.accessibilityLabel = @"Apply storage limit";
     [applyRow addArrangedSubview:apply]; add(applyRow);
-    NSTextField* storageHelp=SPDFCollectionText(@"Dynamic uses up to 80% of available space, including existing Collection copies. It adjusts when disk space changes. Static sets a fixed budget; 0 keeps all copies.",12,NSFontWeightRegular,YES);
+    NSTextField* storageHelp=SPDFCollectionText(@"Dynamic includes existing Collection files in available space. Choose 50–80%; the default is 80%.",12,NSFontWeightRegular,YES);
     storageHelp.identifier=@"CollectionStorageHelp"; add(storageHelp);
     self.storage = SPDFCollectionText(@"Storage is calculated when Collection is opened.",12,NSFontWeightRegular,YES); add(self.storage);
     NSStackView* policy = [NSStackView stackViewWithViews:@[]]; policy.spacing = 12; policy.distribution = NSStackViewDistributionFill;
@@ -70,16 +79,17 @@
     self.locationField = SPDFCollectionText(self.store.rootURL.path,12,NSFontWeightRegular,NO);
     self.locationField.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular]; self.locationField.selectable = YES; add(self.locationField);
     NSStackView* location = [NSStackView stackViewWithViews:@[
-        SPDFCollectionButton(@"Set location",self,@selector(changeLocation:),@"normal"),
+        SPDFCollectionButton(@"Move location",self,@selector(changeLocation:),@"normal"),
         SPDFCollectionButton(@"Open location",self,@selector(openLocation:),@"normal")]];
     location.spacing = 8; [stack addArrangedSubview:location];
-    NSTextField* locationHelp = SPDFCollectionText(@"Set location moves the Collection after verifying the copies.",12,NSFontWeightRegular,YES);
+    NSTextField* locationHelp = SPDFCollectionText(@"Moves all Collection files to the new location. Copies are verified before the old files are removed.",12,NSFontWeightRegular,YES);
     add(locationHelp); [stack setCustomSpacing:19 afterView:locationHelp]; divider();
     [self updateStoragePolicy];
 }
 - (void)changeLimitMode:(id)sender {
     (void)sender; BOOL fixed = self.limitPicker.indexOfSelectedItem == 1;
     self.limitField.hidden = !fixed; self.limitUnit.hidden = !fixed;
+    self.dynamicPercent.hidden=self.limitPicker.indexOfSelectedItem!=2; self.dynamicPercentLabel.hidden=self.dynamicPercent.hidden;
     if (fixed && self.limitField.doubleValue == 0) self.limitField.doubleValue = 10;
     [self updateStoragePolicy]; [self.window.contentView layoutSubtreeIfNeeded];
     NSAccessibilityPostNotification(self.settingsPane,NSAccessibilityLayoutChangedNotification);
@@ -88,18 +98,24 @@
 - (void)controlTextDidChange:(NSNotification*)notification {
     if (notification.object == self.limitField) [self updateStoragePolicy];
 }
+- (void)changeDynamicPercent:(id)sender {
+    (void)sender; self.dynamicPercent.doubleValue=round(self.dynamicPercent.doubleValue); [self updateStoragePolicy];
+}
 - (void)updateStoragePolicy {
+    NSDictionary* appliedSettings=self.store.settings;
     double amount = 0; BOOL unlimited = self.limitPicker.indexOfSelectedItem != 1;
     BOOL dynamic = self.limitPicker.indexOfSelectedItem == 2;
     NSScanner* scanner = [NSScanner scannerWithString:self.limitField.stringValue];
     BOOL valid = unlimited || ([scanner scanDouble:&amount] && scanner.isAtEnd && isfinite(amount) && amount>=0 && amount<=1e8);
     unsigned long long proposed = valid ? (unsigned long long)(amount*1e9) : 0;
-    unsigned long long applied = [self.store.settings[@"storageLimitBytes"] unsignedLongLongValue];
+    unsigned long long applied = [appliedSettings[@"storageLimitBytes"] unsignedLongLongValue];
     self.storagePolicy.stringValue = !valid ? @"Enter a valid storage limit" : !dynamic && proposed == 0 ?
         @"No automatic deletion while unlimited" : @"Least opened first · older versions, then documents";
-    BOOL appliedDynamic=[self.store.settings[@"storageMode"] isEqual:@"dynamic"];
-    NSString* appliedLabel = appliedDynamic ? @"Dynamic · 80% available" : applied ? [NSByteCountFormatter stringFromByteCount:(long long)applied countStyle:NSByteCountFormatterCountStyleFile] : @"Unlimited";
-    self.settingsStatus.stringValue = !valid ? @"Enter a valid limit before applying." : (proposed != applied || dynamic != appliedDynamic) ?
+    BOOL appliedDynamic=[appliedSettings[@"storageMode"] isEqual:@"dynamic"];
+    NSInteger appliedPercent=[appliedSettings[@"storageDynamicPercent"] integerValue] ?: 80;
+    self.dynamicPercentLabel.stringValue=[NSString stringWithFormat:@"%ld%%",(long)self.dynamicPercent.integerValue];
+    NSString* appliedLabel = appliedDynamic ? [NSString stringWithFormat:@"Dynamic · %ld%% available",(long)appliedPercent] : applied ? [NSByteCountFormatter stringFromByteCount:(long long)applied countStyle:NSByteCountFormatterCountStyleFile] : @"Unlimited";
+    self.settingsStatus.stringValue = !valid ? @"Enter a valid limit before applying." : (proposed != applied || dynamic != appliedDynamic || (dynamic && self.dynamicPercent.integerValue!=appliedPercent)) ?
         [NSString stringWithFormat:@"Pending change · Apply to review. Applied limit: %@.",appliedLabel] :
         [NSString stringWithFormat:@"Applied limit: %@.",appliedLabel];
 }

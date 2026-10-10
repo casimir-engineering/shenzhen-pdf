@@ -40,11 +40,13 @@ static NSView* Identified(NSView* view,NSString* identifier) {
     return nil;
 }
 #import "SPDFMacCollectionWorkspaceChecks.h"
+#import "SPDFMacCollectionStorageControlsChecks.h"
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         CheckCollectionThumbnails();
+        CheckCollectionStorageControls();
         NSURL* root = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
         SPDFMacCollectionStore* store = [[SPDFMacCollectionStore alloc] initWithRootURL:root];
         SPDFMacCollectionWindow* manager = nil;
@@ -97,7 +99,8 @@ int main(void) {
             Expect(@"focused search editor preserves the icon inset and centered text",searchEditor &&
                 NSMinX(editing)>=NSMinX(searchText)-1 && fabs(NSMidY(editing)-NSMidY(searchText))<=2);
             [searchCell endEditing:searchEditor]; [manager.window makeFirstResponder:manager.table];
-            Expect(@"storage defaults to dynamic capacity",[manager.limitPicker.title containsString:@"Dynamic"] && manager.limitField.hidden);
+            Expect(@"storage defaults to dynamic capacity at 80 percent",[manager.limitPicker.title containsString:@"Dynamic"] &&
+                manager.limitField.hidden && manager.dynamicPercent.integerValue==80 && !manager.dynamicPercent.hidden);
             [manager.limitPicker selectItemAtIndex:1];
             [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
             Expect(@"custom storage policy updates before Apply and reveals its field",!manager.limitField.hidden &&

@@ -30,6 +30,8 @@
 @property(nonatomic) NSTextField* limitField;
 @property(nonatomic) NSPopUpButton* limitPicker;
 @property(nonatomic) NSTextField* limitUnit;
+@property(nonatomic) NSSlider* dynamicPercent;
+@property(nonatomic) NSTextField* dynamicPercentLabel;
 @property(nonatomic) NSArray<NSDictionary*>* rows;
 @property(nonatomic) NSArray<NSDictionary*>* documents;
 @property(nonatomic) NSString* documentID;
@@ -49,6 +51,7 @@
 - (void)returnToReader:(id)sender;
 - (void)buildSettingsPane;
 - (void)updateStoragePolicy;
+- (void)changeDynamicPercent:(id)sender;
 - (void)showDocumentMenu:(NSControl*)sender;
 - (void)populateDocumentMenu:(NSMenu*)menu;
 - (void)showDestination:(NSString*)destination;
