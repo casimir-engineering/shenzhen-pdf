@@ -96,7 +96,7 @@ The model receives opaque document IDs and titles from the current reader
 workspace, then retrieves evidence as needed. Its tools can:
 
 - page through groups and open tabs without reading their files, then request
-  cached summaries, keywords and chapters for a selected document;
+  cached summaries, keywords, tags and chapters for a selected document;
 - search open documents and read bounded page text;
 - render a requested page preview and show a document at a cited page;
 - create, rename, move, collapse, hide or expand tab groups;
@@ -124,7 +124,23 @@ file.
 
 ## Automatic summaries and Collection history
 
-Automatic analysis is cached by source content, document layout and model.
+Choose **AI language** in setup or AI settings using the searchable dropdown.
+English is the initial default; search languages by their English or native names.
+The setting persists in `ai-settings.yaml` as `language`. Replies use it unless
+you explicitly ask for another language in chat. That chat override does not
+change the saved default for background analysis.
+
+Each background treatment sends **one combined request** for the summary,
+keywords, up to six distinct tags, and missing chapters, all in the selected
+language. Tags and the summary are available under **File → Properties → AI
+metadata** after analysis, and through the assistant's `document_metadata` tool.
+Metadata is stored separately from the original document.
+
+Automatic analysis is cached by source content, document layout, model, language
+and prompt version. Changing language invalidates visible generated metadata and
+reprocesses the current eligible document lazily. Other documents are processed
+when consulted; there is no startup migration or bulk re-analysis. Returning to
+an unchanged cached language reuses its metadata without another paid request.
 For Collection documents it applies to the current/latest source only; an
 immutable historical preview or an editable copy based on an older saved
 revision does not receive a separate automatic summary. Authored bookmarks and
@@ -143,7 +159,7 @@ encrypted or oversized indexes return an explicit unavailable status and
 reason; a first revision and identical revisions also have explicit statuses.
 
 When a compatible latest-document revision changes, automatic analysis can
-update its prior summary, keywords and chapters using the previous analysis and
+update its prior summary, keywords, tags and chapters using the previous analysis and
 a bounded text delta, instead of resending the full excerpt. The delta is
 limited to 32,000 changed UTF-16 code units. If page coverage, outline, layout
 or change size is incompatible, analysis falls back to the normal bounded

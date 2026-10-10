@@ -12,7 +12,7 @@
         self.font=[NSFont systemFontOfSize:13]; self.alignment=NSTextAlignmentLeft;
         self.image=[NSImage imageWithSystemSymbolName:@"chevron.down" accessibilityDescription:nil];
         self.imagePosition=NSImageTrailing; self.imageScaling=NSImageScaleProportionallyDown;
-        self.accessibilityLabel=@"Choose model";
+        self.itemName=@"models"; self.accessibilityLabel=@"Choose model";
     } return self;
 }
 - (void)setSelectedID:(NSString*)value {
@@ -26,15 +26,15 @@
     if(self.popover.shown) { [self.popover close]; return; }
     NSViewController* content=[NSViewController new]; content.view=[[NSView alloc] initWithFrame:NSMakeRect(0,0,410,330)];
     self.search=[[NSSearchField alloc] initWithFrame:NSMakeRect(12,290,386,28)];
-    self.search.placeholderString=@"Search models"; self.search.delegate=self;
-    self.search.accessibilityLabel=@"Search models";
+    self.search.placeholderString=[@"Search " stringByAppendingString:self.itemName]; self.search.delegate=self;
+    self.search.accessibilityLabel=[@"Search " stringByAppendingString:self.itemName];
     [content.view addSubview:self.search];
     NSScrollView* scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(8,8,394,274)]; scroll.hasVerticalScroller=YES;
     self.table=[[NSTableView alloc] initWithFrame:scroll.bounds];
     NSTableColumn* column=[[NSTableColumn alloc] initWithIdentifier:@"model"]; column.width=374;
     [self.table addTableColumn:column]; self.table.headerView=nil; self.table.rowHeight=44;
     self.table.dataSource=self; self.table.delegate=self; self.table.target=self; self.table.action=@selector(choose:);
-    self.table.accessibilityLabel=@"Available models"; scroll.documentView=self.table; [content.view addSubview:scroll];
+    self.table.accessibilityLabel=[@"Available " stringByAppendingString:self.itemName]; scroll.documentView=self.table; [content.view addSubview:scroll];
     self.popover=[NSPopover new]; self.popover.behavior=NSPopoverBehaviorTransient; self.popover.contentViewController=content;
     [self refreshChoices]; [self.popover showRelativeToRect:self.bounds ofView:self preferredEdge:NSRectEdgeMaxY];
     [self.search.window makeFirstResponder:self.search]; if(self.opened) self.opened();
@@ -62,8 +62,8 @@
     NSTextField* label=[NSTextField wrappingLabelWithString:@""];
     if(!self.filtered.count) {
         // A typed query must not disguise a loading/failed catalogue as a search miss.
-        label.stringValue=self.choices.count && self.search.stringValue.length ? @"No matching models" :
-            (self.emptyMessage ?: @"No models available");
+        label.stringValue=self.choices.count && self.search.stringValue.length ? [@"No matching " stringByAppendingString:self.itemName] :
+            (self.emptyMessage ?: [NSString stringWithFormat:@"No %@ available",self.itemName]);
         label.textColor=NSColor.secondaryLabelColor; return label;
     }
     NSDictionary* choice=self.filtered[(NSUInteger)row];

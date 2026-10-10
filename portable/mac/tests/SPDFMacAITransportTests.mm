@@ -108,13 +108,16 @@ int main(void) { @autoreleasepool {
     settings.connectionConfigured=NO;
     Check(![settings allowsRequestsForSetupRevision:2],"disconnect immediately gates requests");
     NSError* error=nil; Check([settings load:&error],"missing settings loads defaults");
-    settings.enabled=YES; settings.automaticAnalysis=YES; settings.onboardingStep=2; settings.onboardingRevision=2; settings.showSettingsOnLaunch=YES;Check([settings save:&error],"save YAML");
-    SPDFMacAISettings* restored=[[SPDFMacAISettings alloc] initWithURL:settingsURL];Check([restored load:&error] && restored.enabled && restored.automaticAnalysis && restored.onboardingRevision==2 && restored.onboardingStep==2 && restored.showSettingsOnLaunch,"YAML round trip");
+    settings.language=@"fr"; settings.enabled=YES; settings.automaticAnalysis=YES; settings.onboardingStep=2; settings.onboardingRevision=2; settings.showSettingsOnLaunch=YES;Check([settings save:&error],"save YAML");
+    SPDFMacAISettings* restored=[[SPDFMacAISettings alloc] initWithURL:settingsURL];Check([restored load:&error] && [restored.language isEqual:@"fr"] && restored.enabled && restored.automaticAnalysis && restored.onboardingRevision==2 && restored.onboardingStep==2 && restored.showSettingsOnLaunch,"YAML round trip");
     SPDFMacAISettings* parallel=[[SPDFMacAISettings alloc] initWithURL:settingsURL];[parallel load:&error];
     restored.model=@"deepseek/deepseek-v4-flash";Check([restored save:&error],"first window saves model");
     parallel.automaticAnalysis=NO;Check([parallel save:&error],"second window saves analysis");
     [restored load:&error];Check([restored.model isEqual:@"deepseek/deepseek-v4-flash"] && !restored.automaticAnalysis,
         "locked field merge preserves concurrent window changes");
+    parallel.language=@"ja";Check([parallel save:&error],"language saves independently across windows");
+    restored.model=@"fixture/model";Check([restored save:&error] && [restored.language isEqual:@"ja"],"other settings do not overwrite a parallel language choice");
+    parallel.language=@"en\napi_key: injected";Check(![parallel save:&error],"language rejects arbitrary prompt and YAML content");
     settings.model=@"x\napi_key: secret";Check(![settings save:&error],"reject YAML injection");
     Check(![credentials storeAPIKey:@"bad" error:&error] && keychain.calls==0,"reject invalid key before Keychain");
     NSString* key=@"sk-or-v1-offline-test-key-value";

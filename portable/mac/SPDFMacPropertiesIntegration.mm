@@ -1,5 +1,6 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacPropertiesPanel.h"
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "markdown/SPDFMarkdownDocument.h"
@@ -26,6 +27,9 @@
         }
         page = session.currentPageIndex; headings = session.sidebarModel.chapterItems.count;
     }
+    // Cached metadata only: opening Properties never starts a provider request.
+    NSDictionary* analysis=[self aiAnalysisForPath:path];
+    if(analysis[@"summary"]) { if(!textInfo)textInfo=[NSMutableDictionary dictionary]; textInfo[@"aiAnalysis"]=analysis; }
     [SPDFPropertiesPanelController presentForDocument:_doc sourcePath:path
         workingPath:_workingPath.length ? _workingPath : path pageIndex:page outlineCount:headings
         annotationCount:_comments.count textInfo:textInfo parentWindow:_window];

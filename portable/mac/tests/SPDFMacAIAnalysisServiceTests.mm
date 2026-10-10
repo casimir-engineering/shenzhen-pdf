@@ -22,6 +22,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 @property(atomic) NSInteger calls;
 @property(nonatomic) NSString* reply;
 @property(nonatomic) NSDictionary* payload;
+@property(nonatomic) NSString* instruction;
 @property(nonatomic,copy) void (^held)(NSDictionary*,NSError*);
 @property(nonatomic) BOOL hold;
 @property(nonatomic) NSString* markerPath;
@@ -34,6 +35,8 @@ static BOOL Wait(BOOL (^predicate)(void)) {
         if(fd>=0){write(fd,"request\n",8);close(fd);}
     }
     (void)model;(void)key;Check(!tools.count,"analysis has no action tools");self.calls++;
+    self.instruction=messages[0][@"content"];
+    Check(messages.count==2,"one combined analysis prompt with one document payload");
     self.payload=[NSJSONSerialization JSONObjectWithData:[messages[1][@"content"] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
     if(self.hold)self.held=completion;
     else dispatch_after(dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{completion(@{@"content":self.reply},nil);});
@@ -78,7 +81,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 static int ProcessAnalysis(NSString* directory) {
     NSURL* root=[NSURL fileURLWithPath:directory];
     AnalysisTransport* transport=[AnalysisTransport new];transport.markerPath=[directory stringByAppendingPathComponent:@"requests"];
-    transport.reply=@"{\"summary\":\"Shared\",\"keywords\":[],\"chapters\":[]}";
+    transport.reply=@"{\"summary\":\"Shared\",\"tags\":[\"Electronics\",\"Board\"],\"keywords\":[],\"chapters\":[]}";
     SPDFMacAIAnalysisService* service=[[SPDFMacAIAnalysisService alloc]
         initWithCache:[[SPDFMacAIAnalysisCache alloc] initWithRootURL:root] transport:transport
         contextProvider:^NSDictionary*(NSString* p,BOOL l,NSProgress* g,NSError** e) {
@@ -94,6 +97,7 @@ static int ProcessAnalysis(NSString* directory) {
     }];
     return Wait(^BOOL{return done;}) && success ? 0 : 1;
 }
+#import "SPDFMacAILanguageAnalysisChecks.h"
 #undef main
 int main(int argc,const char** argv) { @autoreleasepool {
     if(argc==2 && strcmp(argv[1],"--broadcast-revision-change")==0) {
@@ -106,7 +110,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
     NSURL* root=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
     SPDFMacAIAnalysisCache* cache=[[SPDFMacAIAnalysisCache alloc] initWithRootURL:root];
     AnalysisTransport* transport=[AnalysisTransport new];
-    transport.reply=@"{\"summary\":\"A summary\",\"keywords\":[\"test\"],\"chapters\":[{\"title\":\"Start\",\"page\":1,\"level\":1}]}";
+    transport.reply=@"{\"summary\":\"A summary\",\"tags\":[\"Electronics\",\"Board\"],\"keywords\":[\"test\"],\"chapters\":[{\"title\":\"Start\",\"page\":1,\"level\":1}]}";
     __block NSInteger hashes=0,contexts=0,keys=0;__block BOOL changed=NO;__block BOOL authored=NO;__block BOOL large=NO;__block BOOL emojiBoundary=NO;__block NSString* layout=@"live-layout-1";
     SPDFMacAIAnalysisService* service=[[SPDFMacAIAnalysisService alloc] initWithCache:cache transport:transport
         contextProvider:^NSDictionary*(NSString* path,BOOL landscape,NSProgress* progress,NSError** error) {
@@ -133,7 +137,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
     Check([result[@"analyzedPages"] isEqual:@[@1,@2]] && ![result[@"partial"] boolValue],"accurate complete coverage");
     done=NO;[service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && transport.calls==1 && contexts==2 && keys==1,"same content deduplicates analysis and key access");
-    Check([result[@"promptVersion"] isEqual:@"analysis-revisions-v3"] && [result[@"cacheKey"] length]==64,"cache records model prompt and complete identity");
+    Check([result[@"promptVersion"] isEqual:@"analysis-language-tags-v4"] && [result[@"cacheKey"] length]==64,"cache records model prompt and complete identity");
     settings.model=@"fixture/another-model";done=NO;
     [service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && result && transport.calls==2,"model change causes fresh analysis");
@@ -159,7 +163,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
         [NSJSONSerialization dataWithJSONObject:transport.payload options:0 error:nil],
         "emoji crossing 64000-unit upload boundary remains valid JSON and never crashes");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];large=NO;emojiBoundary=NO;
-    authored=NO;transport.reply=@"{\"summary\":\"A summary\",\"keywords\":[],\"chapters\":[{\"title\":\"Invalid\",\"page\":3}]}";
+    authored=NO;transport.reply=@"{\"summary\":\"A summary\",\"tags\":[\"Electronics\",\"Board\"],\"keywords\":[],\"chapters\":[{\"title\":\"Invalid\",\"page\":3}]}";
     done=NO;[service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && !result && failure,"out of bounds chapter rejected");
     service.maximumRequestsPerSession=transport.calls;NSInteger previous=transport.calls;
@@ -168,7 +172,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
     service.maximumRequestsPerSession=100;transport.hold=YES;done=NO;
     [service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return transport.held!=nil;}),"request can remain in flight");
-    [service cancelAll];transport.held(@{@"content":@"{\"summary\":\"Late\",\"keywords\":[],\"chapters\":[]}"},nil);
+    [service cancelAll];transport.held(@{@"content":@"{\"summary\":\"Late\",\"tags\":[\"Electronics\",\"Board\"],\"keywords\":[],\"chapters\":[]}"},nil);
     Check(Wait(^BOOL{return done;}) && !result && failure.code==NSURLErrorCancelled && ![cache analysisForHash:hash],"late cancelled response cannot write analysis");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     // A new revision updates the prior summary with an exact bounded delta, never another full upload.
@@ -177,7 +181,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
     __block NSString* revisionText=@"Motor speed is 240 RPM. Disconnect power first.";
     __block NSString* revisionLayout=@"fixed-pages-v1";
     AnalysisTransport* incremental=[AnalysisTransport new];
-    incremental.reply=@"{\"summary\":\"Motor speed and safety\",\"keywords\":[\"motor\"],\"chapters\":[]}";
+    incremental.reply=@"{\"summary\":\"Motor speed and safety\",\"tags\":[\"Electronics\",\"Board\"],\"keywords\":[\"motor\"],\"chapters\":[]}";
     SPDFMacAIAnalysisService* revisionService=[[SPDFMacAIAnalysisService alloc]
         initWithCache:[[SPDFMacAIAnalysisCache alloc] initWithRootURL:revisions] transport:incremental
         contextProvider:^NSDictionary*(NSString* p,BOOL l,NSProgress* g,NSError** e) {
@@ -302,6 +306,20 @@ int main(int argc,const char** argv) { @autoreleasepool {
     BOOL launched=[broadcaster launchAndReturnError:nil];if(launched)[broadcaster waitUntilExit];
     Check(launched && broadcaster.terminationStatus==0 && Wait(^BOOL{return [reader aiAnalysisForPath:freshCopy[@"path"]]==nil;}),
         "mutation in another process invalidates installed Collection-copy analysis");
+    reader.candidates=@[snapshot];
+    SPDFMacAISettings* french=[[SPDFMacAISettings alloc] initWithURL:[root URLByAppendingPathComponent:@"french.yaml"]];
+    french.model=settings.model;french.language=@"fr";
+    [reader seedPath:nil]; // No actual file-open work is needed for this publication guard.
+    [reader configureAIAnalysis:french];
+    [reader aiInstallAnalysis:generated error:nil candidate:snapshot settings:settings];
+    Check(![reader aiAnalysisForPath:@"/test.pdf"],"changing language rejects the prior settings generation");
+    NSMutableDictionary* wrongLanguage=[generated mutableCopy];wrongLanguage[@"language"]=@"en";
+    [reader aiInstallAnalysis:wrongLanguage error:nil candidate:snapshot settings:french];
+    Check(![reader aiAnalysisForPath:@"/test.pdf"],"wrong-language completion cannot install generated metadata");
+    wrongLanguage[@"language"]=@"fr";
+    [reader aiInstallAnalysis:wrongLanguage error:nil candidate:snapshot settings:french];
+    Check([reader aiAnalysisForPath:@"/test.pdf"]!=nil,"matching-language completion installs normally");
+    [reader seedPath:@"/test.pdf"];
     reader.candidates=@[snapshot];settings.enabled=NO;[reader configureAIAnalysis:settings];
     [reader aiInstallAnalysis:generated error:nil candidate:snapshot settings:settings];
     Check(![reader aiAnalysisForPath:@"/test.pdf"],"opt-out rejects already queued main-thread completion");
@@ -359,6 +377,8 @@ int main(int argc,const char** argv) { @autoreleasepool {
     [first waitUntilExit];[second waitUntilExit];
     NSString* calls=[NSString stringWithContentsOfFile:[shared.path stringByAppendingPathComponent:@"requests"] encoding:NSUTF8StringEncoding error:nil];
     Check(first.terminationStatus==0 && second.terminationStatus==0 && [calls isEqual:@"request\n"],"two processes issue exactly one paid request for one key");
+    [NSFileManager.defaultManager removeItemAtURL:root error:nil];
+    CheckLanguageAnalysis([root URLByAppendingPathComponent:@"languages"]);
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     fprintf(stderr,"AI analysis service checks: %s (%d failures)\n",failures ? "FAIL" : "PASS",failures);return failures ? 1 : 0;
 } }

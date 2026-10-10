@@ -73,10 +73,10 @@ translation or text-based answers can work. Stop cancels a running job. Undo
 closes its generated tab and deletes the output only while that exact output is
 unchanged.
 
-Automatic analysis sends a bounded sample for a short summary, keywords and
+Automatic analysis sends a bounded sample for a short summary, up to six tags, keywords and
 suggested chapters after a successful document open when its setting is on;
 authored bookmarks/headings take precedence. The analysis is cached by
-content, layout and model. Unchanged cached analysis is reused. A session is
+content, layout, model, language and prompt version. Unchanged cached analysis is reused. A session is
 limited to 20 uncached analysis requests, each sampling no more than 30 pages
 or 64,000 characters. Collection historical previews and editable copies of
 older revisions are excluded; only the current/latest source is analyzed.
@@ -112,7 +112,7 @@ Responses, messages and tool rounds also have limits; when they are reached,
 the assistant reports that the user should narrow the request or start a new
 chat. It does not claim that a partial search covered the entire workspace.
 
-The `document_metadata` tool returns cached summary/keyword/chapter metadata
+The `document_metadata` tool returns cached summary/tag/keyword/chapter metadata
 and can list Collection revision IDs, dates, file sizes and diff status without
 reading archived document bytes. Supplying a `revisionID` explicitly requests
 a lazy text diff against the preceding revision. The diff uses saved text
@@ -150,3 +150,12 @@ Collection working copies can be renamed directly by the assistant. The action
 preserves the document’s original source reference, group and version history.
 Undo restores both the previous filename and Collection title, and refuses to
 overwrite a subsequent rename or edit.
+
+AI language is selectable from a searchable list in both setup and AI settings.
+It controls default chat replies and generated summaries, tags and chapter titles;
+a language explicitly requested in chat takes priority for replies. The saved
+default remains unchanged. Language changes do not bulk-process the library.
+
+One background request produces all document metadata together, including up to
+six tags. File Properties shows the cached tags, summary and language. Existing
+chapters are preserved, and older Collection revisions are not summarized.

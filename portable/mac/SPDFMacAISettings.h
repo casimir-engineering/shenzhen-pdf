@@ -3,6 +3,7 @@
 // Loading is explicit and cheap. Construction performs no I/O; setup reads happen after first paint.
 @interface SPDFMacAISettings : NSObject
 @property(nonatomic, copy) NSString* model;
+@property(nonatomic, copy) NSString* language; // Stable language code, English by default.
 @property(nonatomic) BOOL enabled;
 @property(nonatomic) BOOL connectionConfigured;
 @property(nonatomic) BOOL automaticAnalysis;

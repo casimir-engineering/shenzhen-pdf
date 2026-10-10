@@ -71,6 +71,13 @@ int main(int argc,const char** argv) {
         Check([Row(sections,@"Pages")[@"value"] isEqual:@"2"] && Row(sections,@"Language"),@"text reader has relevant live page/language stats");
         Check(!Row(sections,@"Security") && !Row(sections,@"Annotations"),@"text does not inherit PDF metadata");
         RenderPanel(sections,textPath,@"text",text[@"text"]);
+        NSDictionary* ai=@{@"summary":@"A compact summary of the circuit board.",@"language":@"fr",@"tags":@[@"Électronique",@"Carte"]};
+        NSMutableDictionary* withAI=[text mutableCopy];withAI[@"aiAnalysis"]=ai;
+        sections=SPDFPropertiesSections(NULL,textPath,textPath,0,0,0,withAI);
+        Check([Row(sections,@"Tags")[@"value"] isEqual:@"Électronique · Carte"] &&
+            [Row(sections,@"AI language")[@"value"] isEqual:@"French"] &&
+            [Row(sections,@"Summary")[@"value"] isEqual:ai[@"summary"]],@"cached document metadata appears in Properties");
+        RenderPanel(sections,textPath,@"ai-metadata",text[@"text"]);
         NSString* longPath=[@"/" stringByAppendingString:[@"Long directory name/" stringByPaddingToLength:600 withString:@"Long directory name/" startingAtIndex:0]];
         NSDictionary* pathRow=Row(SPDFPropertiesSections(NULL,longPath,longPath,0,0,0,nil),@"Location");
         NSTextField* pathField=[[SPDFPropertiesPanelController new] valueFieldForRow:pathRow];
@@ -90,6 +97,7 @@ int main(int argc,const char** argv) {
         Check([Row(sections,@"Pixel dimensions")[@"value"] containsString:@"48 × 32"],@"image properties work without a loaded core document");
         Check(!Row(sections,@"Text") && !Row(sections,@"Annotations") && !Row(sections,@"Security"),@"pictures never request PDF/text stats");
         RenderPanel(sections,png,@"image",nil);
+        Check(Row(SPDFPropertiesSections(NULL,png,png,0,0,0,@{@"aiAnalysis":ai}),@"Tags")!=nil,@"image properties accept cached AI metadata too");
         NSString* pdf=[root stringByAppendingPathComponent:@"sample.pdf"];
         CGRect bounds=CGRectMake(0,0,300,400);
         CGContextRef context=CGPDFContextCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:pdf],&bounds,NULL);

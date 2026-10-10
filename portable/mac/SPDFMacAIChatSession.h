@@ -13,6 +13,7 @@ typedef NS_ENUM(NSInteger, SPDFMacAIChatActivityState) {
 };
 @interface SPDFMacAIChatSession : NSObject
 @property(nonatomic, copy) void (^changed)(void);
+@property(nonatomic, copy) NSString* defaultLanguage;
 @property(nonatomic, readonly) NSDictionary* chat;
 @property(nonatomic, readonly) BOOL running;
 @property(nonatomic, readonly) BOOL canUndo;

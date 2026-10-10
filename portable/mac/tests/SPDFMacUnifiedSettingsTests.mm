@@ -28,7 +28,7 @@ static void Inspect(NSView* view) {
         // native field owns its tracking. Check our field rather than its private glyph.
         if(ancestor) Check(NSHeight(ancestor.frame)>=28,@"native search field has full-height tracking");
         else Check(NSWidth(view.frame)>15 && NSHeight(view.frame)>15,[@"button has a real target " stringByAppendingString:view.identifier ?: @""]);
-        if([NSStringFromClass(view.class) isEqual:@"SPDFSettingsButton"]) {
+        if([NSStringFromClass(view.class) isEqual:@"SPDFSettingsButton"] || [view isKindOfClass:SPDFMacSearchablePicker.class]) {
             NSView* root=view.window.contentView;
             for(NSValue* point in @[[NSValue valueWithPoint:NSMakePoint(2,2)],
                 [NSValue valueWithPoint:NSMakePoint(NSWidth(view.bounds)-2,NSHeight(view.bounds)-2)]]) {
@@ -81,6 +81,12 @@ int main(void) { @autoreleasepool {
     [(NSButton*)Find(controller.window.contentView,@"showDefaults") performClick:nil];
     Check(Find(controller.window.contentView,@"defaultReader:pdf") && Find(controller.window.contentView,@"defaultReader:epub") && Find(controller.window.contentView,@"defaultReader:md"),@"per-format default reader choices remain available in ordinary Settings");
     [controller selectSection:@"ai"];
+    SPDFMacSearchablePicker* language=(id)Find(controller.window.contentView,@"aiLanguage");
+    Check([language isKindOfClass:SPDFMacSearchablePicker.class] && language.choices.count>4,@"AI language uses the shared searchable dropdown");
+    Check([language.selectedID isEqual:@"en"] && [language.itemName isEqual:@"languages"],@"language picker has clear labels and a default");
+    language.selected(@"fr");Check([change[@"aiLanguage"] isEqual:@"fr"],@"language selection is persisted through the settings callback");
+    [controller updateState:@{@"aiLanguage":@"ja"}];
+    Check([language.selectedID isEqual:@"ja"],@"language updates without rebuilding settings or losing focus");
     SPDFMacSearchablePicker* model=(id)Find(controller.window.contentView,@"model");
     Check([model isKindOfClass:SPDFMacSearchablePicker.class],@"model choice is searchable dropdown, not text input");
     action=nil; [controller updateState:@{@"models":@[@{@"id":@"test/model",@"name":@"Test model"}]}];
@@ -92,6 +98,11 @@ int main(void) { @autoreleasepool {
     NSSearchField* query=[NSSearchField new]; NSTableView* table=[NSTableView new];
     table.dataSource=(id<NSTableViewDataSource>)filterProbe; [table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"model"]];
     [filterProbe setValue:query forKey:@"search"]; [filterProbe setValue:table forKey:@"table"];
+    filterProbe.choices=language.choices; query.stringValue=@"français";[filterProbe refreshChoices];
+    Check([[[filterProbe valueForKey:@"filtered"] firstObject][@"id"] isEqual:@"fr"],@"language list searches native names");
+    query.stringValue=@"Japanese";[filterProbe refreshChoices];
+    Check([[[filterProbe valueForKey:@"filtered"] firstObject][@"id"] isEqual:@"ja"],@"language list searches English names");
+    filterProbe.choices=@[@{@"id":@"one/alpha",@"name":@"Alpha"},@{@"id":@"two/beta",@"name":@"Beta"},@{@"id":@"three/beta",@"name":@"Beta 2"}];
     query.stringValue=@"BETA"; [filterProbe refreshChoices];
     Check([[filterProbe valueForKey:@"filtered"] count]==2,@"model dropdown filters names case-insensitively");
     [filterProbe control:query textView:nil doCommandBySelector:@selector(moveDown:)];
@@ -183,6 +194,7 @@ int main(void) { @autoreleasepool {
     wizard.settingsChanged=^(NSDictionary* value){ wizardChange=value; };
     for(NSInteger step=0;step<4;step++) {
         [wizard setValue:@(step) forKey:@"wizardStep"]; [wizard showSetupWizard]; [wizard.window.contentView layoutSubtreeIfNeeded];
+        if(step==2) Check([Find(wizard.window.contentView,@"aiLanguage") isKindOfClass:SPDFMacSearchablePicker.class],@"setup wizard exposes the same language selector");
         Check(NSHeight(wizard.window.contentView.bounds)==520,@"all wizard steps retain the compact window height");
         NSButton* next=(id)Find(wizard.window.contentView,@"done");
         Check([next.accessibilityLabel isEqual:(step<3 ? @"Continue" : @"Done")],@"wizard footer accessibility label follows the current action");

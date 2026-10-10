@@ -1,5 +1,6 @@
 #import "SPDFMacPropertiesModel.h"
 #import "SPDFMacPropertiesFormat.h"
+#import "SPDFMacAILanguage.h"
 #import "SPDFMacImageProperties.h"
 
 static NSString* spdf_properties_metadata(spdf_document* doc, const char* key) {
@@ -26,6 +27,16 @@ static NSString* spdf_properties_grouped(NSUInteger value) {
 
 static NSMutableDictionary* spdf_properties_row(NSString* label, NSString* value) {
     return [NSMutableDictionary dictionaryWithDictionary:@{@"label" : label, @"value" : value}];
+}
+
+static void spdf_properties_append_ai(NSMutableArray* sections, NSDictionary* analysis) {
+    if([analysis[@"summary"] isKindOfClass:NSString.class]) {
+        NSArray* tags=[analysis[@"tags"] isKindOfClass:NSArray.class] ? analysis[@"tags"] : @[];
+        [sections addObject:@{@"title":@"AI metadata",@"rows":@[
+            spdf_properties_row(@"Tags",tags.count ? [tags componentsJoinedByString:@" · "] : @"None"),
+            spdf_properties_row(@"AI language",SPDFMacAILanguageName(analysis[@"language"])),
+            spdf_properties_row(@"Summary",analysis[@"summary"]) ]}];
+    }
 }
 
 NSArray<NSDictionary*>* SPDFPropertiesSections(spdf_document* doc, NSString* sourcePath,
@@ -113,6 +124,7 @@ NSArray<NSDictionary*>* SPDFPropertiesSections(spdf_document* doc, NSString* sou
     if (raster) {
         NSArray* rows = SPDFImagePropertyRows(inspectionPath.length ? inspectionPath : sourcePath);
         if (rows.count) [sections addObject:@{@"title":@"Image", @"rows":rows}];
+        spdf_properties_append_ai(sections,textInfo[@"aiAnalysis"]);
         return sections; // No PDF permissions, annotations or full-document text scan for pictures.
     }
     NSMutableArray* statsRows = [NSMutableArray array];
@@ -137,5 +149,6 @@ NSArray<NSDictionary*>* SPDFPropertiesSections(spdf_document* doc, NSString* sou
         if (doc || textInfo[@"text"]) [statsRows addObject:spdf_properties_row(@"Text",@"Counting…")];
     }
     if (statsRows.count) [sections addObject:@{@"title":@"Statistics",@"rows":statsRows}];
+    spdf_properties_append_ai(sections,textInfo[@"aiAnalysis"]);
     return sections;
 }
