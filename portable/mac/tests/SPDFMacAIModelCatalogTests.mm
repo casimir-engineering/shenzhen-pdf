@@ -10,5 +10,9 @@ int main(void) { @autoreleasepool {
     if (SPDFMacAIModelFromCatalog(data,@"text-only",nil)) return 3;
     if (SPDFMacAIModelFromCatalog([@"{}" dataUsingEncoding:NSUTF8StringEncoding],@"missing",nil)) return 4;
     if (SPDFMacAIModelFromCatalog([@"null" dataUsingEncoding:NSUTF8StringEncoding],@"missing",nil)) return 5;
+    NSArray* models=SPDFMacAIModelsFromCatalog(data,nil);
+    if(models.count!=1 || ![models[0][@"id"] isEqual:@"deepseek/deepseek-v4.1-flash"]) return 6;
+    NSData* malformed=[NSJSONSerialization dataWithJSONObject:@{@"data":@[@{@"id":@1},@{@"id":@"bad id",@"supported_parameters":@[@"tools"]}]} options:0 error:nil];
+    if(SPDFMacAIModelsFromCatalog(malformed,nil).count) return 7;
     puts("AI model catalog: passed"); return 0;
 } }

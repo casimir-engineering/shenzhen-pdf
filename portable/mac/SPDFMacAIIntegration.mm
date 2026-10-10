@@ -10,6 +10,9 @@
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacUnifiedSettings.h"
 #import <objc/runtime.h>
+@interface ShenzhenMacDelegate (AISetupHost)
+- (void)showUnifiedSettingsMode:(BOOL)wizard;
+@end
 @interface SPDFReaderAIState : NSObject
 @property SPDFMacAIChatSession* session;
 @property SPDFMacAIChatStore* store;
@@ -90,6 +93,8 @@ static char stateKey;
 - (BOOL)aiSendText:(NSString*)text {
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];
     NSError* error=nil; [settings load:&error];
+    if(settings.onboardingRevision<SPDFUnifiedSettingsExperienceVersion) { [self showUnifiedSettingsMode:YES]; return NO; }
+    if(!settings.connectionConfigured) { [self showAIConnectionSettingsWithReason:@"Connect OpenRouter to send your message. Your draft is kept."]; return NO; }
     if (!settings.enabled) { [self showAIConnectionSettingsWithReason:@"Enable document chat to send your message. Your draft is waiting in the chat."]; return NO; }
     NSString* key=[SPDFMacAICredentials APIKeyWithError:&error];
     if (!key.length) { [self showAIConnectionSettingsWithReason:@"Connect OpenRouter to send your message. Your draft is waiting in the chat."]; return NO; }

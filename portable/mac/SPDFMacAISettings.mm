@@ -11,12 +11,15 @@
     return [NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"ai-settings.yaml"]];
 }
 - (instancetype)initWithURL:(NSURL*)URL {
-    if((self=[super init])) { _URL=URL; _model=SPDFMacAIDefaultModel; _baseline=[self values]; } return self;
+    if((self=[super init])) { _URL=URL; _model=SPDFMacAIDefaultModel; _enabled=YES; _automaticAnalysis=YES; _baseline=[self values]; } return self;
+}
+- (BOOL)allowsRequestsForSetupRevision:(NSInteger)revision {
+    return self.enabled && self.connectionConfigured && self.onboardingRevision>=revision;
 }
 - (NSDictionary*)values {
     return @{@"model":self.model ?: SPDFMacAIDefaultModel,@"enabled":@(self.enabled),
-        @"automatic_analysis":@(self.automaticAnalysis),@"show_settings_on_launch":@(self.showSettingsOnLaunch),
-        @"onboarding_revision":@(self.onboardingRevision)};
+        @"connection_configured":@(self.connectionConfigured),@"automatic_analysis":@(self.automaticAnalysis),@"show_settings_on_launch":@(self.showSettingsOnLaunch),
+        @"onboarding_revision":@(self.onboardingRevision),@"onboarding_step":@(self.onboardingStep)};
 }
 - (BOOL)load:(NSError**)error {
     if(error)*error=nil;
@@ -35,9 +38,11 @@
         if([key isEqual:@"model"] && value.length>0 && value.length<=160 &&
             [value rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.:~"].invertedSet].location==NSNotFound)
             self.model=value;
+        else if([key isEqual:@"connection_configured"])self.connectionConfigured=[value isEqual:@"true"];
         else if([key isEqual:@"enabled"])self.enabled=[value isEqual:@"true"];
         else if([key isEqual:@"automatic_analysis"])self.automaticAnalysis=[value isEqual:@"true"];
         else if([key isEqual:@"show_settings_on_launch"])self.showSettingsOnLaunch=[value isEqual:@"true"];
+        else if([key isEqual:@"onboarding_step"])self.onboardingStep=MIN(3,MAX(0,value.integerValue));
         else if([key isEqual:@"onboarding_revision"])self.onboardingRevision=MAX(0,value.integerValue);
     }
     _baseline=[self values]; return YES;
@@ -61,16 +66,18 @@
     NSMutableDictionary* merged=[[current values] mutableCopy]; NSDictionary* requested=[self values];
     // Independent windows update only their changed fields, preserving other windows' settings.
     for(NSString* key in requested)if(![requested[key] isEqual:_baseline[key]])merged[key]=requested[key];
-    NSString* YAML=[NSString stringWithFormat:@"schema_version: 1\nmodel: %@\nenabled: %@\nautomatic_analysis: %@\nshow_settings_on_launch: %@\nonboarding_revision: %ld\n",
+    NSString* YAML=[NSString stringWithFormat:@"schema_version: 1\nmodel: %@\nenabled: %@\nconnection_configured: %@\nautomatic_analysis: %@\nshow_settings_on_launch: %@\nonboarding_revision: %ld\nonboarding_step: %ld\n",
         merged[@"model"],[merged[@"enabled"] boolValue] ? @"true" : @"false",
+        [merged[@"connection_configured"] boolValue] ? @"true" : @"false",
         [merged[@"automatic_analysis"] boolValue] ? @"true" : @"false",
-        [merged[@"show_settings_on_launch"] boolValue] ? @"true" : @"false",[merged[@"onboarding_revision"] longValue]];
+        [merged[@"show_settings_on_launch"] boolValue] ? @"true" : @"false",[merged[@"onboarding_revision"] longValue],[merged[@"onboarding_step"] longValue]];
     BOOL saved=[[YAML dataUsingEncoding:NSUTF8StringEncoding] writeToURL:_URL options:NSDataWritingAtomic error:error];
     if(saved) {
         chmod(_URL.fileSystemRepresentation,0600); self.model=merged[@"model"]; self.enabled=[merged[@"enabled"] boolValue];
+        self.connectionConfigured=[merged[@"connection_configured"] boolValue];
         self.automaticAnalysis=[merged[@"automatic_analysis"] boolValue];
         self.showSettingsOnLaunch=[merged[@"show_settings_on_launch"] boolValue];
-        self.onboardingRevision=[merged[@"onboarding_revision"] integerValue]; _baseline=[self values];
+        self.onboardingRevision=[merged[@"onboarding_revision"] integerValue]; self.onboardingStep=[merged[@"onboarding_step"] integerValue]; _baseline=[self values];
     }
     flock(descriptor,LOCK_UN);close(descriptor);return saved;
 }
