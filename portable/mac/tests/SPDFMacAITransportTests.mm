@@ -6,7 +6,7 @@
 #import <arpa/inet.h>
 #import <sys/socket.h>
 #import <unistd.h>
-static int failures=0, requests=0, mode=0;
+static int failures=0, requests=0, mode=0, recoveryReplies=0;
 static NSURLRequest* captured;
 static void Check(BOOL value,const char* name) { if(!value){fprintf(stderr,"FAIL %s\n",name);failures++;} }
 static BOOL Wait(BOOL (^predicate)(void)) {
@@ -21,7 +21,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 + (NSURLRequest*)canonicalRequestForRequest:(NSURLRequest*)request { return request; }
 - (void)startLoading {
     @synchronized(FakeProtocol.class) { requests++; captured=self.request; }
-    if(mode==1)return;
+    if(mode==1 || (mode==13 && recoveryReplies++>0))return;
     NSInteger status=mode==2 ? 401 : mode==5 ? 400 : 200;
     [self.client URLProtocol:self didReceiveResponse:[[NSHTTPURLResponse alloc] initWithURL:self.request.URL
         statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type":@"application/json"}]
@@ -29,6 +29,19 @@ static BOOL Wait(BOOL (^predicate)(void)) {
     NSData* data=nil;
     if(mode==3)data=[NSMutableData dataWithLength:2*1024*1024+1];
     else if(mode==4)data=[@"{\"wrong\":true}" dataUsingEncoding:NSUTF8StringEncoding];
+    else if(mode>=6) {
+        NSDictionary* response=nil;
+        if(mode==6 || mode==7 || mode==12 || mode==13) {
+            BOOL length=mode==7 || mode==13 || recoveryReplies++==0;
+            NSDictionary* truncated=mode==12 ? @{@"content":NSNull.null,@"tool_calls":@[@{@"id":@"never-execute",@"function":@{@"name":@"rename_document",@"arguments":@"{}"}}]} : @{@"content":NSNull.null,@"reasoning":@"private reasoning"};
+            response=@{@"choices":@[@{@"finish_reason":length ? @"length" : @"stop",
+                @"message":length ? truncated : @{@"content":@"Recovered answer"}}]};
+        } else if(mode==8) response=@{@"choices":@[@{@"finish_reason":@"stop",@"message":@{@"content":NSNull.null}}]};
+        else if(mode==9) response=@{@"choices":@[@{@"message":@{@"content":@[@{@"type":@"text",@"text":@"Answer "},@{@"type":@"text",@"text":@"with citation"}]}}]};
+        else if(mode==10) response=@{@"error":@{@"code":@502,@"message":@"private upstream details"}};
+        else if(mode==11) response=@{@"choices":@[@{@"finish_reason":@"content_filter",@"message":@{@"content":NSNull.null}}]};
+        data=[NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
+    }
     else if([self.request.URL.path hasSuffix:@"/auth/keys"])
         data=[@"{\"key\":\"sk-or-v1-offline-test-key-value\"}" dataUsingEncoding:NSUTF8StringEncoding];
     else data=[@"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}" dataUsingEncoding:NSUTF8StringEncoding];
@@ -152,7 +165,7 @@ int main(void) { @autoreleasepool {
     NSURLRequest* request=SPDFMacAIChatRequest(messages,@[],SPDFMacAIDefaultModel,key,&error);
     NSDictionary* body=RequestJSON(request);
     Check([body[@"provider"][@"data_collection"] isEqual:@"deny"] && [body[@"provider"][@"zdr"] boolValue],"privacy fail closed");
-    Check([body[@"max_tokens"] integerValue]==4096 && request.timeoutInterval==90,"bounded token and timeout budget");
+    Check([body[@"max_tokens"] integerValue]==8192 && request.timeoutInterval==90,"bounded token and timeout budget");
     NSString* huge=[@"x" stringByPaddingToLength:1024*1024+1 withString:@"x" startingAtIndex:0];
     Check(!SPDFMacAIChatRequest(@[@{@"role":@"user",@"content":huge}],nil,SPDFMacAIDefaultModel,key,&error),"oversized request rejected");
     NSString* imageURL=[@"data:image/png;base64," stringByAppendingString:[@"A" stringByPaddingToLength:2*1024*1024 withString:@"A" startingAtIndex:0]];
@@ -165,6 +178,30 @@ int main(void) { @autoreleasepool {
     void (^completion)(NSDictionary*,NSError*)=^(NSDictionary* message,NSError* e){result=message;failure=e;done=YES;Check(NSThread.isMainThread,"completion on main thread");};
     [transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
     Check(Wait(^BOOL{return done;}) && !failure && [result[@"content"] isEqual:@"Hello"],"offline successful response");
+    for (int testMode=6;testMode<=12;testMode++) {
+        mode=testMode;recoveryReplies=0;done=NO;result=nil;failure=nil;int before=requests;
+        [transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
+        Check(Wait(^BOOL{return done;}),"provider response variant completes");
+        if(mode==6 || mode==12) {
+            Check(!failure && [result[@"content"] isEqual:@"Recovered answer"] && !result[@"tool_calls"] && requests==before+2,
+                "truncation retries once without exposing incomplete text or actions");
+            NSDictionary* retry=RequestJSON(captured);
+            Check([retry[@"max_tokens"] integerValue]==16384 && [retry[@"messages"] isEqual:messages] &&
+                [retry[@"model"] isEqual:SPDFMacAIDefaultModel] && [retry[@"provider"] isEqual:body[@"provider"]],
+                "recovery expands only output allowance, preserving model, evidence and privacy");
+        } else if(mode==9) Check(!failure && [result[@"content"] isEqual:@"Answer with citation"],"text content blocks normalize to visible answer");
+        else {
+            Check(failure && !result && requests==before+(mode==7 ? 2 : 1),"errors are bounded with no speculative retry");
+            Check(failure.code==(mode==7 ? 7 : mode==8 ? 8 : mode==10 ? 10 : 9),"provider errors have distinct actionable causes");
+            Check(![failure.localizedDescription containsString:@"private"],"errors never expose private provider or reasoning content");
+        }
+    }
+    mode=13;recoveryReplies=0;done=NO;int beforeRecovery=requests;
+    SPDFMacAIRequestToken* recovering=[transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
+    Check(Wait(^BOOL{return requests==beforeRecovery+2;}),"truncated request starts bounded recovery");
+    [recovering cancel];
+    Check(Wait(^BOOL{return done;}) && failure.code==NSURLErrorCancelled && requests==beforeRecovery+2,
+        "Stop cancels the recovery request without a third attempt");
     for(int testMode=2;testMode<=4;testMode++) {
         mode=testMode; done=NO;result=nil;failure=nil;
         [transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
@@ -180,7 +217,7 @@ int main(void) { @autoreleasepool {
     SPDFMacAIRequestToken* token=[transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
     [token cancel];Check(Wait(^BOOL{return done;}) && token.cancelled && failure.code==NSURLErrorCancelled,"cancellation completes without result");
     Check([SPDFMacAIPKCEChallenge(@"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") isEqual:@"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"],"RFC 7636 S256 vector");
-    mode=0;done=NO;failure=nil;__block BOOL connected=NO;NSInteger keyCalls=keychain.calls;
+    mode=0, recoveryReplies=0;done=NO;failure=nil;__block BOOL connected=NO;NSInteger keyCalls=keychain.calls;
     NSURL* authorization=[auth startWithCompletion:^(BOOL success,NSError* e){connected=success;failure=e;done=YES;} error:&error];
     Check(authorization && keychain.calls==keyCalls,"sign-in begins without reading credentials");
     NSMutableDictionary* query=[NSMutableDictionary dictionary];

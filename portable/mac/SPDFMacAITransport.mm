@@ -32,7 +32,7 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
         [apiKey rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location!=NSNotFound) {
         if(error)*error=SPDFMacAIError(1,@"Connect OpenRouter and choose a valid model before sending."); return nil;
     }
-    NSMutableDictionary* body=[@{@"model":model,@"messages":messages,@"stream":@NO,@"max_tokens":@4096,
+    NSMutableDictionary* body=[@{@"model":model,@"messages":messages,@"stream":@NO,@"max_tokens":@8192,
         @"provider":@{@"data_collection":@"deny",@"zdr":@YES},@"user":@"shenzhen-pdf"} mutableCopy];
     if (tools.count) { body[@"tools"]=tools; body[@"tool_choice"]=@"auto"; }
     if (![NSJSONSerialization isValidJSONObject:body]) {
@@ -113,10 +113,35 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
         id choices=[JSON isKindOfClass:NSDictionary.class] ? JSON[@"choices"] : nil;
         id first=[choices isKindOfClass:NSArray.class] && [choices count] ? choices[0] : nil;
         id candidate=[first isKindOfClass:NSDictionary.class] ? first[@"message"] : nil;
-        if([candidate isKindOfClass:NSDictionary.class] &&
-            ([candidate[@"content"] isKindOfClass:NSString.class] || [candidate[@"tool_calls"] isKindOfClass:NSArray.class]))
-            message=candidate;
-        else failure=SPDFMacAIError(6,@"The model returned an unreadable response. Try again.");
+        NSString* reason=[first isKindOfClass:NSDictionary.class] && [first[@"finish_reason"] isKindOfClass:NSString.class] ? first[@"finish_reason"] : nil;
+        if ([reason isEqual:@"length"]) {
+            // Reasoning consumes the same output budget as the visible answer.
+            // Never execute even apparently complete actions from a truncated batch.
+            failure=SPDFMacAIError(7,@"The model exhausted its response budget before finishing. Your chat is saved; try a shorter question or another model.");
+        } else if ([reason isEqual:@"content_filter"] ||
+                   ([candidate isKindOfClass:NSDictionary.class] && [candidate[@"refusal"] isKindOfClass:NSString.class] && [candidate[@"refusal"] length])) {
+            failure=SPDFMacAIError(9,@"The model declined this request. Your chat is saved; rephrase it or choose another model.");
+        } else if ([JSON isKindOfClass:NSDictionary.class] && [JSON[@"error"] isKindOfClass:NSDictionary.class]) {
+            failure=SPDFMacAIError(10,@"The model provider failed while generating the answer. Your chat is saved; retry or choose another model.");
+        } else if ([candidate isKindOfClass:NSDictionary.class]) {
+            NSMutableDictionary* normalized=[candidate mutableCopy]; id content=candidate[@"content"];
+            if ([content isKindOfClass:NSArray.class]) {
+                NSMutableString* text=[NSMutableString string]; BOOL valid=YES;
+                for (id part in content) {
+                    if (![part isKindOfClass:NSDictionary.class] || ![part[@"type"] isEqual:@"text"] ||
+                        ![part[@"text"] isKindOfClass:NSString.class]) { valid=NO; break; }
+                    [text appendString:part[@"text"]];
+                }
+                content=valid ? text : nil; normalized[@"content"]=content ?: NSNull.null;
+            }
+            id calls=candidate[@"tool_calls"];
+            BOOL text=[content isKindOfClass:NSString.class] &&
+                [content stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length;
+            BOOL actions=[calls isKindOfClass:NSArray.class] && [calls count]>0;
+            if (calls==NSNull.null) [normalized removeObjectForKey:@"tool_calls"];
+            if (text || actions) message=normalized;
+            else failure=SPDFMacAIError(8,@"The model returned no answer or actions. Your chat is saved; retry or choose another model.");
+        } else failure=SPDFMacAIError(6,@"The provider returned an invalid response format. Your chat is saved; retry or choose another model.");
     }
     void (^completion)(NSDictionary*,NSError*)=self.completion; self.completion=nil;
     self.token.task=nil; self.bytes=nil;
@@ -134,6 +159,11 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
 - (SPDFMacAIRequestToken*)sendMessages:(NSArray<NSDictionary*>*)messages tools:(NSArray<NSDictionary*>*)tools
     model:(NSString*)model apiKey:(NSString*)apiKey completion:(void (^)(NSDictionary*,NSError*))completion {
     SPDFMacAIRequestToken* token=[SPDFMacAIRequestToken new];
+    [self startMessages:messages tools:tools model:model apiKey:apiKey token:token recovery:NO completion:completion];
+    return token;
+}
+- (void)startMessages:(NSArray*)messages tools:(NSArray*)tools model:(NSString*)model apiKey:(NSString*)apiKey
+    token:(SPDFMacAIRequestToken*)token recovery:(BOOL)recovery completion:(void (^)(NSDictionary*,NSError*))completion {
     void (^start)(void)=^{
         if (token.cancelled) {
             dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]); }); return;
@@ -143,6 +173,13 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
         if(!request) {
             dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,error); }); return;
         }
+        if (recovery) {
+            NSMutableURLRequest* expanded=[request mutableCopy];
+            NSMutableDictionary* body=[[NSJSONSerialization JSONObjectWithData:request.HTTPBody options:0 error:nil] mutableCopy];
+            body[@"max_tokens"]=@16384;
+            expanded.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:NSJSONWritingWithoutEscapingSlashes error:nil];
+            request=expanded;
+        }
         if (token.cancelled) {
             dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]); }); return;
         }
@@ -150,13 +187,19 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
         configuration.URLCache=nil; configuration.HTTPCookieStorage=nil; configuration.URLCredentialStorage=nil;
         configuration.timeoutIntervalForRequest=90; configuration.timeoutIntervalForResource=120;
         SPDFMacAIResponse* response=[SPDFMacAIResponse new]; response.bytes=[NSMutableData data];
-        response.token=token; response.completion=completion; response.hasImages=ImageBytes(messages,NULL)>0;
+        response.token=token; response.hasImages=ImageBytes(messages,NULL)>0;
+        response.completion=^(NSDictionary* reply,NSError* failure) {
+            // Retry only a rejected, truncated response, once. No action from it
+            // has reached the session, so recovery cannot replay completed edits.
+            if (!token.cancelled && !recovery && [failure.domain isEqual:@"SPDFMacAI"] && failure.code==7)
+                [self startMessages:messages tools:tools model:model apiKey:apiKey token:token recovery:YES completion:completion];
+            else if (completion) completion(reply,failure);
+        };
         NSURLSession* session=[NSURLSession sessionWithConfiguration:configuration delegate:response delegateQueue:nil];
         NSURLSessionDataTask* task=[session dataTaskWithRequest:request]; token.task=task; if (!token.cancelled) [task resume];
     };
     // Large multipart JSON is serialized off-main, along with the explicit request.
     if (ImageBytes(messages,NULL)) dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),start);
     else start();
-    return token;
 }
 @end

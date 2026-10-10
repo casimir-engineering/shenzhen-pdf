@@ -4,6 +4,10 @@ static void CheckChatCompletion(NSURL* root) {
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools
         definitions:@[@{@"type":@"function"}] store:store];
     CHECK(!transport.sends,"title generation adds no request to construction");
+    [session send:@"Test empty reply" model:@"fake/model" apiKey:@"fixture"];
+    transport.reply(@{@"content":@"  "},nil);
+    CHECK(!session.running && session.activityState==SPDFMacAIChatActivityError && [session.chat[@"messages"] count]==1,
+        "empty response never persists a blank assistant bubble or reports completion");
     for (NSNumber* wrapFailure in @[@NO,@YES]) {
         [session newChat]; [session send:@"Rewrite generated chapters" model:@"fake/model" apiKey:@"fixture"];
         for (NSUInteger index=0;index<12;index++) {
