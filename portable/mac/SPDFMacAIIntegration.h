@@ -6,6 +6,7 @@
 - (void)closeAIChat;
 - (void)cancelAIChat;
 - (BOOL)isAIChatVisible;
+- (NSWindow*)aiChatWindow;
 - (void)preparePaletteForSearch;
 - (void)showAIChatForQuery:(NSString*)query;
 @end

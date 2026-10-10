@@ -74,7 +74,8 @@ static NSEvent* ComposerReturn(BOOL shift,NSInteger windowNumber) {
         context:nil characters:@"\r" charactersIgnoringModifiers:@"\r" isARepeat:NO keyCode:36];
 }
 static NSString* ComposerStatus(SPDFMacAIChatView* view) {
-    return [(NSTextField*)[view valueForKey:@"status"] stringValue];
+    NSString* issue=[(NSTextField*)[view valueForKey:@"issueText"] stringValue];
+    return issue.length ? issue : [(NSTextField*)[view valueForKey:@"status"] stringValue];
 }
 static void SaveComposerSettings(BOOL configured,BOOL enabled,BOOL setupComplete) {
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];
