@@ -81,6 +81,8 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     if (!URL || ![NSJSONSerialization isValidJSONObject:chat]) return NO;
     NSData* data=[NSJSONSerialization dataWithJSONObject:chat options:0 error:error];
     if (!data || data.length>8*1024*1024) return NO;
+    // Compare the exact serialized snapshot that will be committed, never mutable caller state.
+    chat=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     int fd=[self lockStore:error]; if (fd<0) return NO;
     BOOL removed=[NSFileManager.defaultManager fileExistsAtPath:[self tombstone:chat[@"id"]].path];
     BOOL conflict=NO;
