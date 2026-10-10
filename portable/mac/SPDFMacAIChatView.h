@@ -11,4 +11,5 @@
 - (void)refreshActivityFromSession:(SPDFMacAIChatSession*)session;
 - (void)displaySession:(SPDFMacAIChatSession*)session;
 - (void)displayChats:(NSArray<NSDictionary*>*)chats;
+- (void)setPinMode:(NSInteger)mode;
 @end
