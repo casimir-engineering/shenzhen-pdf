@@ -82,7 +82,11 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
 - (BOOL)transaction:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {
     BOOL committed = [self manifestTransaction:body writeBack:YES error:error];
     // Deliver only after releasing both locks; observers may read the committed store.
-    if (committed) [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:self];
+    if (committed) {
+        [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:self];
+        [NSDistributedNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionStoreDidChangeAcrossProcesses"
+            object:self.rootURL.path userInfo:@{@"processID":@(NSProcessInfo.processInfo.processIdentifier)} deliverImmediately:YES];
+    }
     return committed;
 }
 - (BOOL)withLockedManifest:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {

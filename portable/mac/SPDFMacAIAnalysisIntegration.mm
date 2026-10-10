@@ -3,6 +3,7 @@
 #import "SPDFMacAIAnalysisService.h"
 #import "SPDFMacAIDocumentContext.h"
 #import "SPDFMacAITransport.h"
+#import "SPDFMacCollectionStore.h"
 #import "SPDFMacAIToolsReader.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacMarkdownSidebarModel.h"
@@ -12,7 +13,42 @@
 - (BOOL)sidebarSearchText:(NSString*)text matchesFilter:(NSString*)filter;
 @end
 #import <objc/runtime.h>
-static char analysisServiceKey, analysisSettingsKey, analysisResultsKey, analysisConfigurationKey;
+static char analysisServiceKey, analysisSettingsKey, analysisResultsKey, analysisConfigurationKey, analysisRevisionObserverKey;
+@interface SPDFAnalysisRevisionObserver : NSObject
+@property(atomic) NSUInteger generation;
+@property(atomic) BOOL enabled;
+@property(nonatomic) id token;
+@property(nonatomic,copy) void (^changed)(NSString* root);
+@property(nonatomic) NSMutableSet* roots;
+- (void)distributedChange:(NSNotification*)note;
+@end
+@implementation SPDFAnalysisRevisionObserver
+- (void)dealloc {
+    if(self.token)[NSNotificationCenter.defaultCenter removeObserver:self.token];
+    [NSDistributedNotificationCenter.defaultCenter removeObserver:self];
+}
+- (void)distributedChange:(NSNotification*)note {
+    if([note.userInfo[@"processID"] intValue]==NSProcessInfo.processInfo.processIdentifier)return;
+    if(self.changed && [note.object isKindOfClass:NSString.class])self.changed(note.object);
+}
+@end
+static NSString* CollectionCopyRoot(NSDictionary* candidate) {
+    for(NSString* key in @[@"path",@"readPath"]) {
+        NSString* path=[candidate[key] stringByStandardizingPath];NSArray* parts=path.pathComponents;
+        if(parts.count<5)continue;
+        NSString* folder=parts[parts.count-4];
+        if(![folder isEqual:@"editable"] && ![folder isEqual:@"previews"])continue;
+        for(NSUInteger i=0;i<4;i++)path=path.stringByDeletingLastPathComponent;
+        return path;
+    }
+    return nil;
+}
+static BOOL CollectionCopyCandidate(NSDictionary* candidate) { return CollectionCopyRoot(candidate)!=nil; }
+static BOOL CurrentCollectionGeneration(ShenzhenMacDelegate* owner,NSDictionary* candidate) {
+    if(!CollectionCopyCandidate(candidate))return YES;
+    SPDFAnalysisRevisionObserver* observer=objc_getAssociatedObject(owner,&analysisRevisionObserverKey);
+    return [candidate[@"collectionGeneration"] unsignedIntegerValue]==observer.generation;
+}
 static NSDictionary* Candidate(ShenzhenMacDelegate* owner,NSString* path) {
     return [owner aiDocumentCandidateForPath:path];
 }
@@ -23,6 +59,40 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
         before[@"renderedDocument"]==after[@"renderedDocument"] && before[@"paginationPlan"]==after[@"paginationPlan"];
 }
 @implementation ShenzhenMacDelegate (SPDFMacAIAnalysisIntegration)
+- (SPDFAnalysisRevisionObserver*)aiObserveCollectionAnalysisRevisions:(NSDictionary*)candidate {
+    SPDFAnalysisRevisionObserver* observer=objc_getAssociatedObject(self,&analysisRevisionObserverKey);
+    NSString* root=CollectionCopyRoot(candidate);
+    if(observer) { @synchronized(observer) { if(root)[observer.roots addObject:root]; } return observer; }
+    observer=[SPDFAnalysisRevisionObserver new];observer.roots=[NSMutableSet set];observer.enabled=YES;
+    if(root)[observer.roots addObject:root];
+    __weak SPDFAnalysisRevisionObserver* weakObserver=observer;
+    __weak ShenzhenMacDelegate* weakSelf=self;
+    observer.changed=^(NSString* changedRoot){
+            SPDFAnalysisRevisionObserver* state=weakObserver;if(!state || !state.enabled)return;
+            @synchronized(state) { if(![state.roots containsObject:changedRoot.stringByStandardizingPath])return;state.generation++; }
+            dispatch_async(dispatch_get_main_queue(),^{
+                ShenzhenMacDelegate* owner=weakSelf;if(!owner)return;
+                SPDFMacAISettings* settings=objc_getAssociatedObject(owner,&analysisSettingsKey);
+                if(!settings.enabled || !settings.automaticAnalysis)return;
+                NSMutableDictionary* results=objc_getAssociatedObject(owner,&analysisResultsKey);
+                for(NSString* path in results.allKeys)
+                    if(CollectionCopyCandidate(results[path][@"candidate"]))[results removeObjectForKey:path];
+                NSDictionary* current=@{@"path":owner->_path ?: @""};
+                if(CollectionCopyCandidate(current)) {
+                    [owner rebuildSidebar];[owner aiDocumentDidOpen:owner->_path];
+                }
+            });
+        };
+    observer.token=[NSNotificationCenter.defaultCenter addObserverForName:SPDFCollectionStoreDidChangeNotification
+        object:nil queue:nil usingBlock:^(NSNotification* note) {
+            if([note.object isKindOfClass:SPDFMacCollectionStore.class] && weakObserver.changed)
+                weakObserver.changed([(SPDFMacCollectionStore*)note.object rootURL].path);
+        }];
+    [NSDistributedNotificationCenter.defaultCenter addObserver:observer selector:@selector(distributedChange:)
+        name:@"SPDFCollectionStoreDidChangeAcrossProcesses" object:nil suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
+    objc_setAssociatedObject(self,&analysisRevisionObserverKey,observer,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return observer;
+}
 - (void)configureAIAnalysis:(id)value {
     SPDFMacAISettings* settings=value;
     NSArray* previous=objc_getAssociatedObject(self,&analysisConfigurationKey);
@@ -33,6 +103,7 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
     [objc_getAssociatedObject(self,&analysisServiceKey) cancelAll];
     objc_setAssociatedObject(self,&analysisResultsKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     BOOL enabled=settings.enabled && settings.automaticAnalysis;
+    [(SPDFAnalysisRevisionObserver*)objc_getAssociatedObject(self,&analysisRevisionObserverKey) setEnabled:enabled];
     if (enabled || (previous.count && [previous[0] boolValue] && [previous[1] boolValue])) {
         for (SPDFDocumentTab* tab in _tabs) if (tab.cachedMarkdownSession)
             [self configureAIAnalysisForMarkdownSession:tab.cachedMarkdownSession path:tab.path];
@@ -56,8 +127,9 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
     // This branch precedes even queue/cache creation. Opening a document without
     // opted-in background analysis has no AI disk, extraction or network work.
     if (!settings.enabled || !settings.automaticAnalysis || !path.length) return;
-    NSDictionary* candidate=Candidate(self,path);
+    NSMutableDictionary* candidate=[Candidate(self,path) mutableCopy];
     if (!candidate) return;
+    if(CollectionCopyCandidate(candidate))candidate[@"collectionGeneration"]=@([self aiObserveCollectionAnalysisRevisions:candidate].generation);
     dispatch_async(dispatch_get_main_queue(),^{
         if (objc_getAssociatedObject(self,&analysisSettingsKey)!=settings || !settings.enabled || !settings.automaticAnalysis) return;
         SPDFMacAIAnalysisService* service=objc_getAssociatedObject(self,&analysisServiceKey);
@@ -77,7 +149,8 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
     settings:(SPDFMacAISettings*)settings {
             ShenzhenMacDelegate* owner=self;
             NSString* path=candidate[@"path"];
-            if (!owner || objc_getAssociatedObject(owner,&analysisSettingsKey)!=settings ||
+            if(CollectionCopyCandidate(candidate))[self aiObserveCollectionAnalysisRevisions:candidate];
+            if (!owner || !CurrentCollectionGeneration(owner,candidate) || objc_getAssociatedObject(owner,&analysisSettingsKey)!=settings ||
                 !settings.enabled || !settings.automaticAnalysis || ![settings.model isEqual:analysis[@"model"] ?: settings.model] ||
                 !SameCandidate(candidate,Candidate(owner,path))) return;
             NSMutableDictionary* results=objc_getAssociatedObject(owner,&analysisResultsKey);
@@ -93,7 +166,8 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
     NSDictionary* entry=[objc_getAssociatedObject(self,&analysisResultsKey) objectForKey:path ?: @""];
     if (!entry) return nil;
     SPDFMacAISettings* settings=objc_getAssociatedObject(self,&analysisSettingsKey);
-    if (!settings.enabled || !settings.automaticAnalysis || !SameCandidate(entry[@"candidate"],Candidate(self,path))) return nil;
+    if (!settings.enabled || !settings.automaticAnalysis || !CurrentCollectionGeneration(self,entry[@"candidate"]) ||
+        !SameCandidate(entry[@"candidate"],Candidate(self,path))) return nil;
     return entry[@"analysis"];
 }
 - (NSArray<NSDictionary*>*)aiGeneratedChapterRows {

@@ -40,6 +40,23 @@ static BOOL Wait(BOOL (^predicate)(void)) {
     return [SPDFMacAIRequestToken new];
 }
 @end
+@interface RevisionRaceCache : SPDFMacAIAnalysisCache
+@property(nonatomic,copy) void (^afterLease)(void);
+@end
+@implementation RevisionRaceCache
+- (int)lockHash:(NSString*)hash progress:(NSProgress*)progress error:(NSError**)error {
+    int descriptor=[super lockHash:hash progress:progress error:error];
+    if(descriptor>=0 && self.afterLease)self.afterLease();return descriptor;
+}
+@end
+@interface RevisionRaceService : SPDFMacAIAnalysisService
+@property(atomic) BOOL eligible;
+@end
+@implementation RevisionRaceService
+- (NSDictionary*)revisionMetadataForCandidate:(NSDictionary*)candidate {
+    return @{@"analysisEligible":@(self.eligible),@"analysisDocumentID":@"race-document"};
+}
+@end
 @interface ShenzhenMacDelegate (AnalysisProbeInstall)
 - (void)aiInstallAnalysis:(NSDictionary*)analysis error:(NSError*)error candidate:(NSDictionary*)candidate
     settings:(SPDFMacAISettings*)settings;
@@ -78,17 +95,23 @@ static int ProcessAnalysis(NSString* directory) {
 }
 #undef main
 int main(int argc,const char** argv) { @autoreleasepool {
+    if(argc==2 && strcmp(argv[1],"--broadcast-revision-change")==0) {
+        [NSDistributedNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionStoreDidChangeAcrossProcesses"
+            object:@"/fixture" userInfo:@{@"processID":@(NSProcessInfo.processInfo.processIdentifier)} deliverImmediately:YES];
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];return 0;
+    }
     if(argc==3 && strcmp(argv[1],"--process-analysis")==0) return ProcessAnalysis([NSString stringWithUTF8String:argv[2]]);
     NSString* hash=[@"a" stringByPaddingToLength:64 withString:@"a" startingAtIndex:0];
     NSURL* root=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
     SPDFMacAIAnalysisCache* cache=[[SPDFMacAIAnalysisCache alloc] initWithRootURL:root];
     AnalysisTransport* transport=[AnalysisTransport new];
     transport.reply=@"{\"summary\":\"A summary\",\"keywords\":[\"test\"],\"chapters\":[{\"title\":\"Start\",\"page\":1,\"level\":1}]}";
-    __block NSInteger hashes=0,contexts=0,keys=0;__block BOOL changed=NO;__block BOOL authored=NO;__block BOOL large=NO;__block NSString* layout=@"live-layout-1";
+    __block NSInteger hashes=0,contexts=0,keys=0;__block BOOL changed=NO;__block BOOL authored=NO;__block BOOL large=NO;__block BOOL emojiBoundary=NO;__block NSString* layout=@"live-layout-1";
     SPDFMacAIAnalysisService* service=[[SPDFMacAIAnalysisService alloc] initWithCache:cache transport:transport
         contextProvider:^NSDictionary*(NSString* path,BOOL landscape,NSProgress* progress,NSError** error) {
             (void)path;(void)landscape;(void)progress;(void)error;contexts++;
-            return @{@"layoutIdentity":layout,@"pageCount":large ? @40 : @2,@"pages":@[@{@"page":@1,@"text":large ? [@"x" stringByPaddingToLength:100000 withString:@"x" startingAtIndex:0] : @"First page"},@{@"page":@2,@"text":@"Second page"}],
+            NSString* largeText=emojiBoundary ? [[@"x" stringByPaddingToLength:63999 withString:@"x" startingAtIndex:0] stringByAppendingString:@"😀 boundary"] : [@"x" stringByPaddingToLength:100000 withString:@"x" startingAtIndex:0];
+            return @{@"layoutIdentity":layout,@"pageCount":large ? @40 : @2,@"pages":@[@{@"page":@1,@"text":large ? largeText : @"First page"},@{@"page":@2,@"text":@"Second page"}],
                 @"outline":authored ? @[@{@"title":@"Authored",@"page":@1,@"level":@1}] : @[],@"truncated":@NO};
         } hashProvider:^NSString*(NSString* path,NSProgress* progress,NSError** error) {
             (void)path;(void)progress;(void)error;hashes++;
@@ -129,7 +152,12 @@ int main(int argc,const char** argv) { @autoreleasepool {
     Check(Wait(^BOOL{return done;}) && result && [result[@"partial"] boolValue] && [result[@"analyzedPages"] isEqual:@[@1]],
         "bounded excerpts have explicit partial coverage");
     Check([transport.payload[@"pages"][0][@"text"] length]==64000,"upload text bound enforced");
-    [NSFileManager.defaultManager removeItemAtURL:root error:nil];large=NO;
+    [NSFileManager.defaultManager removeItemAtURL:root error:nil];emojiBoundary=YES;done=NO;
+    [service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && result && [transport.payload[@"pages"][0][@"text"] length]==63999 &&
+        [NSJSONSerialization dataWithJSONObject:transport.payload options:0 error:nil],
+        "emoji crossing 64000-unit upload boundary remains valid JSON and never crashes");
+    [NSFileManager.defaultManager removeItemAtURL:root error:nil];large=NO;emojiBoundary=NO;
     authored=NO;transport.reply=@"{\"summary\":\"A summary\",\"keywords\":[],\"chapters\":[{\"title\":\"Invalid\",\"page\":3}]}";
     done=NO;[service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && !result && failure,"out of bounds chapter rejected");
@@ -216,6 +244,21 @@ int main(int argc,const char** argv) { @autoreleasepool {
     Check([SPDFAICollectionRevisionMetadata(collection,historyPath,20)[@"revisionCount"] integerValue]==2,
         "opening identical bytes does not add a duplicate Collection revision");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
+    RevisionRaceCache* raceCache=[[RevisionRaceCache alloc] initWithRootURL:[root URLByAppendingPathComponent:@"lease-race"]];
+    AnalysisTransport* raceTransport=[AnalysisTransport new];raceTransport.reply=incremental.reply;
+    RevisionRaceService* raceService=[[RevisionRaceService alloc] initWithCache:raceCache transport:raceTransport
+        contextProvider:^NSDictionary*(NSString* p,BOOL l,NSProgress* g,NSError** e) {
+            return @{@"pageCount":@1,@"pages":@[@{@"page":@1,@"text":@"unchanged copy"}],@"outline":@[]};
+        } hashProvider:^NSString*(NSString* p,NSProgress* g,NSError** e) {return hash;}
+        keyProvider:^NSString*(NSError** e) {return @"fixture";}];
+    raceService.eligible=YES;done=NO;
+    [raceService analyzeDocumentAtPath:@"/editable/copy.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && result && raceTransport.calls==1,"latest editable copy analysis primes the shared cache");
+    raceCache.afterLease=^{raceService.eligible=NO;};done=NO;
+    [raceService analyzeDocumentAtPath:@"/editable/copy.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && !result && raceTransport.calls==1,
+        "copy becoming historical during cache lease cannot return cached latest analysis");
+    raceCache.afterLease=nil;
     [NSApplication sharedApplication];
     AnalysisReaderProbe* reader=[AnalysisReaderProbe new];[reader seedPath:@"/test.pdf"];
     settings.enabled=NO;[reader configureAIAnalysis:settings];[reader aiDocumentDidOpen:@"/test.pdf"];
@@ -234,9 +277,36 @@ int main(int argc,const char** argv) { @autoreleasepool {
     Check([reader aiGeneratedChapterRows].count==0,"changed pagination immediately hides generated chapters");
     [reader aiInstallAnalysis:generated error:nil candidate:snapshot settings:settings];
     Check([reader aiGeneratedChapterRows].count==0,"late old-layout completion cannot install chapters");
+    NSDictionary* copySnapshot=@{@"path":@"/fixture/editable/doc/copy/copy.pdf",@"readPath":@"/fixture/editable/doc/copy/copy.pdf",
+        @"revision":@"unchanged",@"landscape":@NO,@"collectionGeneration":@0};
+    reader.candidates=@[copySnapshot];
+    [reader aiInstallAnalysis:generated error:nil candidate:copySnapshot settings:settings];
+    Check([reader aiAnalysisForPath:copySnapshot[@"path"]]!=nil,"current Collection copy analysis is initially visible");
+    SPDFMacCollectionStore* unrelatedStore=[[SPDFMacCollectionStore alloc] initWithRootURL:[NSURL fileURLWithPath:@"/unrelated-fixture"]];
+    [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:unrelatedStore];
+    Check([reader aiAnalysisForPath:copySnapshot[@"path"]]!=nil,"unrelated temporary Collection changes do not invalidate current analysis");
+    SPDFMacCollectionStore* observedStore=[[SPDFMacCollectionStore alloc] initWithRootURL:[NSURL fileURLWithPath:@"/fixture"]];
+    [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:observedStore];
+    Check([reader aiAnalysisForPath:copySnapshot[@"path"]]==nil,
+        "Collection mutation hides installed copy analysis immediately without reading manifest in render path");
+    [reader aiInstallAnalysis:generated error:nil candidate:copySnapshot settings:settings];
+    Check([reader aiAnalysisForPath:copySnapshot[@"path"]]==nil,"queued pre-mutation copy result cannot reinstall stale summary");
+    NSMutableDictionary* freshCopy=[copySnapshot mutableCopy];freshCopy[@"collectionGeneration"]=@1;
+    reader.candidates=@[freshCopy];[reader aiInstallAnalysis:generated error:nil candidate:freshCopy settings:settings];
+    Check([reader aiAnalysisForPath:freshCopy[@"path"]]!=nil,"freshly revalidated copy summary can display after local mutation");
+    NSTask* broadcaster=[NSTask new];
+    broadcaster.executableURL=[NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[0]]];
+    broadcaster.arguments=@[@"--broadcast-revision-change"];
+    BOOL launched=[broadcaster launchAndReturnError:nil];if(launched)[broadcaster waitUntilExit];
+    Check(launched && broadcaster.terminationStatus==0 && Wait(^BOOL{return [reader aiAnalysisForPath:freshCopy[@"path"]]==nil;}),
+        "mutation in another process invalidates installed Collection-copy analysis");
     reader.candidates=@[snapshot];settings.enabled=NO;[reader configureAIAnalysis:settings];
     [reader aiInstallAnalysis:generated error:nil candidate:snapshot settings:settings];
     Check(![reader aiAnalysisForPath:@"/test.pdf"],"opt-out rejects already queued main-thread completion");
+    NSUInteger disabledReads=reader.candidateReads;
+    [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:observedStore];
+    [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]];
+    Check(reader.candidateReads==disabledReads,"Collection notification after opt-out performs no candidate work");
     [NSFileManager.defaultManager createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil];
     NSString* md=[root.path stringByAppendingPathComponent:@"assets.md"];
     NSString* asset=[root.path stringByAppendingPathComponent:@"asset.png"];
