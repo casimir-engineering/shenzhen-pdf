@@ -95,3 +95,9 @@ chat session and transport, sidebar navigation/workspace, workspace panel budget
 launch policy, and 32 updater cases. The split-local divider regression now proves
 that programmatic layout cannot change the saved width and real divider tracking
 can. File-size and whitespace checks also passed.
+
+A final performance check removed per-frame YAML writes during divider dragging.
+Geometry remains immediate; a 200 ms settling debounce saves only the final width.
+The production-linked composer fixture verifies three width changes cause zero
+synchronous writes and one eventual save containing the final value. Context
+acceptance passed again after this change.

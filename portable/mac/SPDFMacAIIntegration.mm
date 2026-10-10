@@ -27,6 +27,7 @@
 @property SPDFMacAIChatDock* dock;
 @property SPDFMacAIChatHistoryView* historyView;
 @property NSUInteger searchGeneration;
+@property NSUInteger widthSaveGeneration;
 @property NSMutableDictionary* drafts;
 @property BOOL history;
 @property NSString* submissionIssue;
@@ -82,7 +83,7 @@ static char stateKey;
         state.dock=[[SPDFMacAIChatDock alloc] initWithReaderView:_documentContainer chatView:state.view
             width:[[self sidebarWorkspaceState][@"chatWidth"] doubleValue]];
         __weak ShenzhenMacDelegate* owner=self;
-        state.dock.resized=^(CGFloat width){ [owner sidebarWorkspaceState][@"chatWidth"]=@(width);[owner persistActiveState];[owner applyWorkspacePanelPolicy];[owner relayoutDocumentForViewportChange]; };
+        state.dock.resized=^(CGFloat width){ [owner rememberAIChatWidth:width]; };
     }
     if(query.length) {
         state.drafts[state.session.chat[@"id"]]=[state.view.composer.string copy] ?: @"";
@@ -91,6 +92,16 @@ static char stateKey;
     [state.view setHistorySearchQuery:state.historyView.search.stringValue];
     [state.dock setVisible:YES];[self applyWorkspacePanelPolicy];[state.view displaySession:state.session];
     [self relayoutDocumentForViewportChange];[_window makeFirstResponder:state.view.composer];
+}
+- (void)rememberAIChatWidth:(CGFloat)width {
+    SPDFReaderAIState* state=objc_getAssociatedObject(self,&stateKey);
+    [self sidebarWorkspaceState][@"chatWidth"]=@(width);
+    [self applyWorkspacePanelPolicy];[self relayoutDocumentForViewportChange];
+    NSUInteger generation=++state.widthSaveGeneration;
+    __weak ShenzhenMacDelegate* owner=self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,200*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        if(generation==state.widthSaveGeneration)[owner persistActiveState];
+    });
 }
 - (void)cancelAIChat { [((SPDFReaderAIState*)objc_getAssociatedObject(self,&stateKey)).session cancel]; }
 - (void)closeAIChat {
