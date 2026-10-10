@@ -5,6 +5,8 @@
 #import "SPDFMacAIDocumentActions.h"
 #import "SPDFMacAIDocumentJobsIntegration.h"
 #import "SPDFMacAICollectionTools.h"
+#import "SPDFMacAIRevisionContext.h"
+#import "SPDFMacCollectionStore.h"
 #import "SPDFMacAIDocumentContext.h"
 #import "SPDFMacAgentGroups.h"
 #import "SPDFMacAgentCommand.h"
@@ -35,7 +37,7 @@ static id Externalize(id value, NSString* key) {
         NSMutableArray* result=[NSMutableArray array]; for (id item in value) [result addObject:Externalize(item,key)]; return result;
     }
     if ([value isKindOfClass:NSString.class] && [value isAbsolutePath] &&
-        [@[@"path",@"paths",@"beforePath",@"lastUsedPath"] containsObject:key]) return SPDFAIDocumentIdentifier(value);
+        [@[@"path",@"paths",@"beforePath",@"lastUsedPath",@"analysisDocumentID"] containsObject:key]) return SPDFAIDocumentIdentifier(value);
     if ([value isKindOfClass:NSString.class] && [value isAbsolutePath] && [key isEqual:@"title"]) return [value lastPathComponent];
     return value;
 }
@@ -76,7 +78,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
               @"groupFirst":Field(@"integer",@"One-based group offset; default 1."),
               @"count":Field(@"integer",@"Page size 1–100; default 50."),
               @"groupID":Field(@"string",@"Optional group ID to filter document titles.")},@[]),
-        Definition(@"document_metadata",@"Retrieve the cached summary, keywords and generated chapters for one open document, without triggering new analysis. Use before detailed page reads; cached summaries are navigation aids, not cited evidence.",@{@"path":path},@[@"path"]),
+        Definition(@"document_metadata",@"Retrieve the cached summary, keywords and generated chapters for one open document, without triggering new analysis. Use before detailed page reads; cached summaries are navigation aids, not cited evidence. Includes lazy Collection revision dates, sizes and diff availability; only latest versions receive automatic analysis. Supply revisionID from history to lazily compute its text diff versus the previous revision.",@{@"path":path,@"revisionID":@{@"type":@"string",@"maxLength":@100}},@[@"path"]),
         Definition(@"read_pages",@"Read exact page text and authored chapters. At most 20 pages per request; use nextPage for continuation.",
             @{@"path":path,@"page":Field(@"integer",@"First page, one-based."),@"count":Field(@"integer",@"1–20 pages."),
               @"revision":Field(@"string",@"Optional exact revision from a prior result; changed documents are rejected.")},@[@"path"]),
@@ -215,7 +217,20 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
     if (invalid) { completion(invalid); return; }
     if (!self.reader) { completion(ToolError(@"Reader window is closed.")); return; }
     if ([name isEqual:@"list_workspace"]) { completion([self.reader aiWorkspaceContextWithArguments:arguments]); return; }
-    if ([name isEqual:@"document_metadata"]) { completion([self.reader aiDocumentMetadataForPath:arguments[@"path"]]); return; }
+    if ([name isEqual:@"document_metadata"]) {
+        NSMutableDictionary* metadata=[[self.reader aiDocumentMetadataForPath:arguments[@"path"]] mutableCopy];
+        NSProgress* progress=[NSProgress progressWithTotalUnitCount:1]; self.progress=progress;
+        NSString* path=arguments[@"path"];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+            NSDictionary* history=progress.cancelled ? nil : SPDFAICollectionRevisionMetadata(SPDFMacCollectionStore.defaultStore,path,20);
+            NSDictionary* diff=[arguments[@"revisionID"] length] && !progress.cancelled ?
+                SPDFAICollectionRevisionDiff(SPDFMacCollectionStore.defaultStore,path,arguments[@"revisionID"],progress) : nil;
+            dispatch_async(dispatch_get_main_queue(),^{
+                if(progress.cancelled) { completion(ToolError(@"Cancelled."));return; }
+                if(history)metadata[@"history"]=history; if(diff)metadata[@"revisionDiff"]=diff; completion(metadata);
+            });
+        }); return;
+    }
     if ([name isEqual:@"reader_state"]) { completion([self.reader aiReaderControls]); return; }
     if ([name isEqual:@"reopen_document"]) {
         NSDictionary* action=nil;

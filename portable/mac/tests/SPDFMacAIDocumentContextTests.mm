@@ -121,6 +121,12 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
 int main(void) { @autoreleasepool {
+    NSString* emojiBoundary=[[@"a" stringByPaddingToLength:63999 withString:@"a" startingAtIndex:0] stringByAppendingString:@"😀x"];
+    NSString* boundedEmoji=SPDFAIBoundedText(emojiBoundary,64000);
+    Check(boundedEmoji.length==63999 && [NSJSONSerialization dataWithJSONObject:@[boundedEmoji] options:0 error:nil]!=nil,"bounded context preserves surrogate pairs");
+    NSString* longCombiningBoundary=[@"e" stringByPaddingToLength:100002 withString:@"\u0301" startingAtIndex:0];
+    Check(SPDFAIBoundedText(longCombiningBoundary,100000).length==0,"bounded context never exceeds budget for a long composed sequence");
+    Check([SPDFAIBoundedText(@"abcd",2) isEqual:@"ab"] && [SPDFAIBoundedText(@"😀",2) isEqual:@"😀"] && SPDFAIBoundedText(@"a",0).length==0,"bounded context exact and zero boundaries");
     [NSApplication sharedApplication];
     NSString* root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
@@ -362,8 +368,11 @@ int main(void) { @autoreleasepool {
     [largeTools performTool:@"list_workspace" arguments:@{@"count":@100} completion:^(NSDictionary* value){result=value;}];
     Check([NSJSONSerialization dataWithJSONObject:result options:0 error:nil].length<100000 && result[@"next"]!=NSNull.null,
         "UTF8-heavy names obey byte budget with continuation even at maximum page size");
+    result=nil;
     [largeTools performTool:@"document_metadata" arguments:@{@"path":firstID} completion:^(NSDictionary* value){result=value;}];
-    Check(!result[@"error"] && large.metadataCalls==1 && !large.candidateCalls,"explicit metadata performs one lookup without eager workspace analysis");
+    deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    while(!result && deadline.timeIntervalSinceNow>0) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    Check(result && !result[@"error"] && large.metadataCalls==1 && !large.candidateCalls,"explicit metadata performs one lookup without eager workspace analysis");
     NSString* combining=[@"A" stringByPaddingToLength:120000 withString:@"\u0301" startingAtIndex:0];
     [many.firstObject setTitle:combining]; [[many.firstObject group] setName:combining];
     [largeTools performTool:@"list_workspace" arguments:@{} completion:^(NSDictionary* value){result=value;}];
@@ -377,7 +386,10 @@ int main(void) { @autoreleasepool {
     [large aiInstallAnalysis:@{@"model":cacheSettings.model,@"summary":@"Cached source summary",@"keywords":@[],@"chapters":@[]}
         error:nil candidate:metadataCandidate settings:cacheSettings];
     large.candidateSnapshots=0; large.candidateCalls=0; large.metadataCalls=0;
+    result=nil;
     [largeTools performTool:@"document_metadata" arguments:@{@"path":SPDFAIDocumentIdentifier(metadataPath)} completion:^(NSDictionary* value){result=value;}];
+    deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    while(!result && deadline.timeIntervalSinceNow>0) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Check([result[@"analysis"][@"summary"] isEqual:@"Cached source summary"] && large.candidateSnapshots==1 &&
         !large.candidateCalls && large.metadataCalls==1,"production cached metadata validates only its selected document in 1000-tab workspace");
     [NSFileManager.defaultManager removeItemAtPath:root error:nil];

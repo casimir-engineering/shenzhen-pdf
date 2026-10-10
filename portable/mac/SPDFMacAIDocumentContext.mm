@@ -10,8 +10,11 @@ static id ContextError(NSError** error, NSString* message) {
         userInfo:@{NSLocalizedDescriptionKey:message}];
     return nil;
 }
-static NSString* Bounded(NSString* text, NSUInteger max) {
-    return text.length>max ? [text substringToIndex:max] : text;
+NSString* SPDFAIBoundedText(NSString* text, NSUInteger max) {
+    if (text.length<=max) return text;
+    if (!max) return @"";
+    NSRange boundary=[text rangeOfComposedCharacterSequenceAtIndex:max];
+    return [text substringToIndex:boundary.location];
 }
 NSString* SPDFAIContentHash(NSString* path, NSProgress* progress, NSError** error) {
     NSString* stamp=SPDFSearchFileStamp(path);
@@ -56,7 +59,7 @@ static NSDictionary* ExtractContext(NSString* path, BOOL landscape, NSUInteger f
                     if (NSLocationInRange(heading.attributedRange.location,fragment.attributedRange)) { found=YES; break; }
                 if (found) break; destination++;
             }
-            if (destination<count && outline.count<1000) [outline addObject:@{@"title":Bounded(heading.title,256),
+            if (destination<count && outline.count<1000) [outline addObject:@{@"title":SPDFAIBoundedText(heading.title,256),
                 @"page":@(destination+1),@"level":@(heading.level)}];
         }
         for (NSUInteger index=firstPage-1;index<MIN(count,firstPage-1+pageLimit);index++) {
@@ -67,7 +70,7 @@ static NSDictionary* ExtractContext(NSString* path, BOOL landscape, NSUInteger f
                     [pageText appendString:[text substringWithRange:fragment.attributedRange]];
                     [pageText appendString:@"\n"];
                 }
-            NSString* bounded=Bounded(pageText,100000);
+            NSString* bounded=SPDFAIBoundedText(pageText,100000);
             if (bounded.length<pageText.length) truncated=YES;
             characters+=bounded.length;
             [pages addObject:@{@"page":@(index+1),@"text":bounded}];
@@ -81,7 +84,7 @@ static NSDictionary* ExtractContext(NSString* path, BOOL landscape, NSUInteger f
             for (int i=0;i<headings.count && i<1000;i++) {
                 spdf_outline_item item=headings.items[i];
                 if (item.page_index>=0 && item.page_index<(int)count)
-                    [outline addObject:@{@"title":Bounded(item.title ? [NSString stringWithUTF8String:item.title] : @"",256),
+                    [outline addObject:@{@"title":SPDFAIBoundedText(item.title ? [NSString stringWithUTF8String:item.title] : @"",256),
                         @"page":@(item.page_index+1),@"level":@(item.level+1)}];
             }
         spdf_free_outline(&headings);
@@ -95,7 +98,7 @@ static NSDictionary* ExtractContext(NSString* path, BOOL landscape, NSUInteger f
                 [text appendString:line ?: @""]; [text appendString:@"\n"];
                 if (text.length>=100000) { truncated=YES; break; }
             }
-            spdf_free_text_lines(&lines); NSString* bounded=Bounded(text,100000); characters+=bounded.length;
+            spdf_free_text_lines(&lines); NSString* bounded=SPDFAIBoundedText(text,100000); characters+=bounded.length;
             [pages addObject:@{@"page":@(index+1),@"text":bounded}];
             if (characters>=1000000) { truncated=YES; break; }
         }
