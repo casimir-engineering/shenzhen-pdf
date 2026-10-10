@@ -1,31 +1,52 @@
 #import "SPDFMacAIModelCatalog.h"
 static NSError* Error(NSString* text) { return [NSError errorWithDomain:@"ShenzhenPDF.AI.Model" code:1 userInfo:@{NSLocalizedDescriptionKey:text}]; }
-NSDictionary* SPDFMacAIModelFromCatalog(NSData* data,NSString* identifier,NSError** error) {
-    if (!data.length || data.length>4*1024*1024) { if(error)*error=Error(@"Model list is unavailable. Your chosen model has been kept."); return nil; }
+NSArray<NSDictionary*>* SPDFMacAIModelsFromCatalog(NSData* data,NSError** error) {
+    if(error)*error=nil;
+    if (!data.length || data.length>8*1024*1024) { if(error)*error=Error(@"Model list unavailable. Try again."); return nil; }
     id value=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     NSArray* models=[value isKindOfClass:NSDictionary.class] ? value[@"data"] : nil;
-    if (![models isKindOfClass:NSArray.class]) { if(error)*error=Error(@"OpenRouter returned an invalid model list."); return nil; }
+    if (![models isKindOfClass:NSArray.class] || models.count>20000) { if(error)*error=Error(@"Invalid model list."); return nil; }
+    NSMutableArray* result=[NSMutableArray array]; NSMutableSet* seen=[NSMutableSet set];
+    NSCharacterSet* invalid=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.:~"].invertedSet;
     for (id model in models) {
-        if (![model isKindOfClass:NSDictionary.class] || ![model[@"id"] isEqual:identifier]) continue;
-        NSArray* parameters=model[@"supported_parameters"];
-        if (![parameters isKindOfClass:NSArray.class] || ![parameters containsObject:@"tools"]) {
-            if(error)*error=Error(@"This model does not advertise tool support. Choose a model that can work with documents."); return nil;
-        }
-        return model;
+        if (![model isKindOfClass:NSDictionary.class]) continue;
+        NSString* identifier=model[@"id"]; NSArray* parameters=model[@"supported_parameters"];
+        if (![identifier isKindOfClass:NSString.class] || !identifier.length || identifier.length>160 ||
+            [identifier rangeOfCharacterFromSet:invalid].location!=NSNotFound || [seen containsObject:identifier] ||
+            ![parameters isKindOfClass:NSArray.class] || ![parameters containsObject:@"tools"]) continue;
+        NSString* name=[model[@"name"] isKindOfClass:NSString.class] ? model[@"name"] : identifier;
+        if (name.length>200) name=identifier;
+        [seen addObject:identifier]; [result addObject:@{@"id":identifier,@"name":name,@"supported_parameters":@[@"tools"]}];
     }
-    if(error)*error=Error(@"That model is not currently in OpenRouter’s catalog. Check its ID or choose another model. Your preference has been kept."); return nil;
+    [result sortUsingComparator:^NSComparisonResult(NSDictionary* a,NSDictionary* b) {
+        return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]];
+    }];
+    return result;
 }
-NSURLSessionDataTask* SPDFMacAIValidateModel(NSString* identifier,void (^completion)(NSDictionary*,NSError*)) {
+NSDictionary* SPDFMacAIModelFromCatalog(NSData* data,NSString* identifier,NSError** error) {
+    NSArray* models=SPDFMacAIModelsFromCatalog(data,error); if(!models)return nil;
+    for(NSDictionary* model in models) if([model[@"id"] isEqual:identifier])return model;
+    if(error)*error=Error(@"This model is unavailable or does not support document tools. Choose another model."); return nil;
+}
+NSURLSessionDataTask* SPDFMacAIFetchModels(void (^completion)(NSArray<NSDictionary*>*,NSError*)) {
     NSURLSessionConfiguration* config=NSURLSessionConfiguration.ephemeralSessionConfiguration;
     config.timeoutIntervalForRequest=20; config.timeoutIntervalForResource=25; config.URLCache=nil;
+    config.HTTPCookieStorage=nil; config.URLCredentialStorage=nil;
     NSURLSession* session=[NSURLSession sessionWithConfiguration:config];
     NSURLSessionDataTask* task=[session dataTaskWithURL:[NSURL URLWithString:@"https://openrouter.ai/api/v1/models"]
         completionHandler:^(NSData* data,NSURLResponse* response,NSError* error) {
             NSError* failure=error;
-            if (!failure && [(NSHTTPURLResponse*)response statusCode]!=200) failure=Error(@"OpenRouter’s model list could not be checked. Try again later.");
-            NSDictionary* model=failure ? nil : SPDFMacAIModelFromCatalog(data,identifier,&failure);
+            if (!failure && (![response isKindOfClass:NSHTTPURLResponse.class] || [(NSHTTPURLResponse*)response statusCode]!=200))
+                failure=Error(@"Model list unavailable. Try again.");
+            NSArray* models=failure ? nil : SPDFMacAIModelsFromCatalog(data,&failure);
             [session finishTasksAndInvalidate];
-            dispatch_async(dispatch_get_main_queue(),^{ if(completion)completion(model,failure); });
+            dispatch_async(dispatch_get_main_queue(),^{ if(completion)completion(models,failure); });
         }];
     [task resume]; return task;
+}
+NSURLSessionDataTask* SPDFMacAIValidateModel(NSString* identifier,void (^completion)(NSDictionary*,NSError*)) {
+    return SPDFMacAIFetchModels(^(NSArray<NSDictionary*>* models,NSError* error) {
+        for(NSDictionary* model in models) if([model[@"id"] isEqual:identifier]) { if(completion)completion(model,nil);return; }
+        if(completion)completion(nil,error ?: Error(@"This model is unavailable or does not support document tools. Choose another model."));
+    });
 }
