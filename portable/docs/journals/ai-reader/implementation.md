@@ -104,3 +104,39 @@ Technical review loop 3 retained **9/10**, closing the selected-document metadat
 The final application build (`make -C portable -j4 mac-app`, `/tmp/ai-final-app.log`) returned exit 0. Repeating the real browser Deny flow in this binary displayed “Connection cancelled” in the browser, restored the Connect OpenRouter button in Settings immediately, and showed no error sheet. Command-comma also reopened Settings correctly. The private validation instance was kept separate from the user's saved workspace throughout.
 
 The finished build is `dist/ShenzhenPDF.app`. It is a local ad-hoc-signed development build, not a notarized public release. Reader and AI release notes are prepared separately in `portable/docs/releases/ai-reader-preview.md`. Browser account approval was not performed; live model inference was verified with the separately authorized test credential and synthetic content. Normal use starts by connecting the account in Settings.
+
+## 10 October 2026 — setup and revision context
+
+The current first-run path is a four-step Settings wizard shown after the reader
+is ready: Full Disk Access, Collection, OpenRouter, and per-format default
+reader choices. Full Disk Access is optional and macOS can request it later;
+the wizard has no Accessibility step. Collection can use a dynamic allowance
+of up to 80% of free space plus existing Collection storage, a fixed storage
+limit, or Unlimited. The OpenRouter API-key field is revealed only when chosen;
+opening the model picker loads a searchable catalog filtered to tool-capable
+models. Finishing setup closes the wizard back to the reader and does not make
+Settings recur at every startup.
+
+New installations default document chat and automatic analysis to on, while
+existing saved preferences are preserved. The defaults do not authorize a
+request by themselves: cloud chat and analysis require completed setup and a
+connected OpenRouter account. The setup text explains the document text sent
+for summaries/missing chapters and the use of account credits.
+
+Automatic Collection analysis applies to the current/latest source. Immutable
+historical previews and editable copies attached to older saved revisions do
+not receive separate automatic summaries. When a latest revision is compatible
+with its saved analysis baseline, the provider receives the previous analysis
+and a bounded text delta (up to 32,000 changed UTF-16 code units); it does not
+receive the full excerpt again. Incompatible page coverage, outline, layout, or
+change size uses the existing bounded excerpt path.
+
+`document_metadata` lists Collection revision identifiers, dates and file
+sizes from manifest metadata without reading archived document bytes. Passing
+an explicit `revisionID` lazily computes a text-only comparison with the
+preceding revision from saved indexes. It compares at most 30 pages and
+128,000 combined text characters, with a 4 MiB limit per index, and marks the
+result partial. It does not measure image changes or full-file byte changes;
+missing, encrypted or oversized indexes return an unavailable reason. See
+[revision analysis validation](revision-analysis-validation.md) for the source
+validation record and bounds.
