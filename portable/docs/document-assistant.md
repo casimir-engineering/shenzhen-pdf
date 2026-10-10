@@ -98,6 +98,12 @@ Page-only citations remain available for diagrams and other visual evidence.
 Changed or unavailable sources produce an explanation instead of navigating to
 an unverified passage. Source links contain opaque document IDs, not local paths.
 
+When a requested fixed-layout page has very little extractable text, its read
+also supplies one bounded page image. Text extraction can miss drawings, outlined
+letters and spatial relationships; the assistant sees that limitation explicitly.
+Other sparse pages are identified for inspection when relevant. Ordinary text
+reads do not generate images.
+
 Brief results can appear as pastel answer cards: a small descriptive label, a
 large number, range or short phrase, and **View evidence**. The button opens the
 verified source through the same citation navigation. Card text is selectable,

@@ -77,7 +77,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
               @"count":Field(@"integer",@"Page size 1–100; default 50."),
               @"groupID":Field(@"string",@"Optional group ID to filter document titles.")},@[]),
         Definition(@"document_metadata",@"Retrieve the cached summary, up to six tags, keywords, analysis language and generated chapters for one open document, without triggering new analysis. Use when an overview is needed; skip if the relevant page is already known. Cached summaries are navigation aids, not cited evidence. Includes lazy Collection revision dates, sizes and diff availability; only latest versions receive automatic analysis. Supply revisionID from history to lazily compute its text diff versus the previous revision.",@{@"path":path,@"revisionID":@{@"type":@"string",@"maxLength":@100}},@[@"path"]),
-        Definition(@"read_pages",@"Read exact page text and authored chapters. At most 20 pages per request; use nextPage for continuation.",
+        Definition(@"read_pages",@"Read extracted page text and authored chapters. Graphics and outlined text may be missing. Sparse fixed-layout reads include one page image; inspect it before answering. At most 20 pages per request; use nextPage for continuation.",
             @{@"path":path,@"page":Field(@"integer",@"First page, one-based."),@"count":Field(@"integer",@"1–20 pages."),
               @"revision":Field(@"string",@"Optional exact revision from a prior result; changed documents are rejected.")},@[@"path"]),
         Definition(@"search_documents",@"Search text in open documents. Returns exact matching snippets, pages and clickable citations that highlight the query. Use a short exact passage for precise source links, and preserve the returned citation URL unchanged. Partial coverage is disclosed. Scope by path when known.",
@@ -407,7 +407,9 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
                 NSMutableArray* pages=[NSMutableArray array];
                 for (NSDictionary* item in context[@"pages"]) { NSMutableDictionary* row=[item mutableCopy];
                     row[@"citation"]=Citation(path,item[@"page"],context[@"revision"],context[@"layoutIdentity"],nil); [pages addObject:row]; }
-                value[@"pages"]=pages; result=value;
+                value[@"pages"]=pages;
+                if ([name isEqual:@"read_pages"]) SPDFAISupplementSparsePageRead(value,selected,progress);
+                result=value;
             } else {
                 NSMutableArray* results=[NSMutableArray array], *coverage=[NSMutableArray array]; NSUInteger visited=0;
                 NSArray* scope=selected ? @[selected] : candidates;
