@@ -165,6 +165,19 @@ static void CheckComposerAcceptance(void) {
     Check(NSIntersectsRect(issue.frame,view.bounds) && NSHeight(issue.frame)>=40 &&
         NSMaxY(issue.frame)<=NSMinY(composerBox.frame)+1 && NSWidth(recovery.frame)>80,
         "authorization issue and action are laid out visibly directly above the composer");
+    NSString* evidence=NSProcessInfo.processInfo.environment[@"SPDF_AI_AUTH_EVIDENCE_DIR"];
+    if(evidence.length)for(NSNumber* width in @[@650,@520])for(NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
+        [window setContentSize:NSMakeSize(width.doubleValue,540)];view.appearance=[NSAppearance appearanceNamed:appearance];
+        [view layoutSubtreeIfNeeded];
+        for(NSNumber* x in @[@2,@(NSWidth(recovery.bounds)-2)])for(NSNumber* y in @[@2,@(NSHeight(recovery.bounds)-2)]) {
+            NSPoint point=[recovery convertPoint:NSMakePoint(x.doubleValue,y.doubleValue) toView:view.superview];NSView* hit=[view hitTest:point];
+            Check(hit==recovery || [hit isDescendantOf:recovery],"authorization button full inset hit rectangle is clickable");
+        }
+        NSBitmapImageRep* image=[view bitmapImageRepForCachingDisplayInRect:view.bounds];[view cacheDisplayInRect:view.bounds toBitmapImageRep:image];
+        NSString* file=[NSString stringWithFormat:@"ai-chat-authorization-%@-%@.png",width,[appearance isEqual:NSAppearanceNameAqua] ? @"light" : @"dark"];
+        Check([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[evidence stringByAppendingPathComponent:file] atomically:YES],
+            "headless authorization preview exported");
+    }
     reads=reader.keyReads;[recovery performClick:nil];
     Check(reader.authorizationCalls==1 && reader.keyReads==reads && ComposerRequestCount()==before &&
         [view.composer.string isEqual:@"Authorize this retained draft"] && !issue.hidden,
