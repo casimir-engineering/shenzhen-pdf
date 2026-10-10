@@ -87,6 +87,8 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
     NSDictionary* immediateSession = MergeSession(nil, liveWindow);
     NSArray* immediateOpen = spdf_collection_palette_open_candidates(liveCandidates, immediateSession);
     NSArray* supplements = collectionOnly ? @[] : [self collectionPaletteSupplementaryRowsForQuery:query excludingOpenPaths:spdf_collection_palette_open_paths(immediateOpen)];
+    if (!collectionOnly && query.length) supplements=[supplements arrayByAddingObject:
+        @{@"kind":@"askAI",@"title":@"Ask AI about this…",@"subtitle":@"Chat with your documents"}];
     NSArray* openNames = collectionOnly ? @[] : spdf_collection_palette_open_name_rows(immediateOpen, query);
     NSMutableArray* titledOpen = [NSMutableArray array];
     for (NSDictionary* row in openNames) {

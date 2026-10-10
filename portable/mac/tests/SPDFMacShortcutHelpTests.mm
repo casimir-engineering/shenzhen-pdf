@@ -36,9 +36,13 @@ int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     NSArray* rows = SPDFShortcutHelpRows(@"");
     Check([rows.firstObject[@"title"] isEqual:@"New!"] && [rows.firstObject[@"highlighted"] boolValue],"New! is the first highlighted category");
-    Check([rows[1][@"keys"] isEqual:@[@"Cmd",@"G"]],"Groups owns Command G");
-    Check([rows[2][@"keys"] isEqual:@[@"Cmd",@"H"]],"History is discoverable in New!");
-    Check([rows[3][@"keys"] isEqual:@[@"Cmd",@"D"]],"Previous document is discoverable in New!");
+    NSMutableDictionary* newActions = [NSMutableDictionary dictionary];
+    for (NSDictionary* row in rows) if ([row[@"highlighted"] boolValue] && row[@"keys"])
+        newActions[row[@"title"]] = row[@"keys"];
+    Check([newActions[@"Groups"] isEqual:@[@"Cmd",@"G"]],"Groups owns Command G");
+    Check([newActions[@"Version history"] isEqual:@[@"Cmd",@"H"]],"History is discoverable in New!");
+    Check([newActions[@"Previous document"] isEqual:@[@"Cmd",@"D"]],"Previous document is discoverable in New!");
+    Check(SPDFShortcutHelpRows(@"document chat").count > 1,"new chat path is discoverable");
     NSArray* previous = SPDFShortcutHelpRows(@"Previous result");
     Check([previous.lastObject[@"keys"] isEqual:@[@"Cmd",@"Enter"]],"previous result advertises Command Return");
     Check([SPDFShortcutHelpRows(@"Find next").firstObject[@"kind"] isEqual:@"empty"],"obsolete find next binding is absent");

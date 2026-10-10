@@ -1,3 +1,4 @@
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacSidebarChapters.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 
@@ -281,6 +282,9 @@ static NSLayoutConstraint* SPDFIndentConstraint(NSView* cell) {
 }
 
 - (NSString*)sidebarOutlineSummary {
+    NSUInteger generated=[self aiGeneratedChapterRows].count;
+    if (generated) return [NSString stringWithFormat:@"AI chapters · %lu%@",(unsigned long)generated,
+        [[self aiAnalysisForPath:_path][@"partial"] boolValue] ? @" · partial document" : @""];
     if (SPDFIsSourceDocumentPath(_path)) return @"No chapters";
     NSUInteger count = [self isMarkdownActive] ? [self activeMarkdownSession].sidebarModel.chapterItems.count
         : (NSUInteger)MAX(0,_outline.count);

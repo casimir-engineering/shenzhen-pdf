@@ -69,6 +69,12 @@
         }
     });
 }
+- (BOOL)showSettingsWithError:(NSError**)error {
+    BOOL sent=[_pipe send:@{@"kind":@"destination",@"destination":@"Settings"}];
+    if (!sent && error) *error=[NSError errorWithDomain:@"SPDFCollectionCompanion" code:1
+        userInfo:@{NSLocalizedDescriptionKey:@"Collection Settings could not receive the request. Please try again."}];
+    return sent;
+}
 - (BOOL)showDocumentID:(NSString*)documentID query:(NSString*)query error:(NSError**)error {
     if (!_task.running) {
         [_pipe close];

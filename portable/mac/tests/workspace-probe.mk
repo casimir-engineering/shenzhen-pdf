@@ -1,3 +1,5 @@
+ifndef SPDF_WORKSPACE_PROBE_INCLUDED
+SPDF_WORKSPACE_PROBE_INCLUDED := 1
 # Run from portable with: make -f Makefile -f mac/tests/workspace-probe.mk mac-workspace-probe
 # Compiles the actual reader, replacing only its entry point. No app bundle is
 # started and no updater runs. Click-routing checks briefly realize a fully
@@ -24,3 +26,5 @@ $(MAC_README_PROBE): $(MAC_README_PROBE_OBJS) $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4
 .PHONY: mac-readme-probe
 mac-readme-probe: $(MAC_README_PROBE)
 	"$(MAC_README_PROBE)" "$(WORKSPACE_EVIDENCE_DIR)"
+
+endif

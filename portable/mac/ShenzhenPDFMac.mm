@@ -1,3 +1,4 @@
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacReadOnlyCopy.h"
 #import "SPDFMacMenuText.h"
 #import "SPDFMacClipboardIntegration.h"
@@ -92,7 +93,7 @@ static const CGFloat kMinWindowWidth = 560.0;
 static const CGFloat kMinWindowHeight = 380.0;
 static const CGFloat kDefaultMinimapWidth = 126.5;
 static const CGFloat kDefaultSidebarWidth = 240.0;
-static const CGFloat kMinSidebarWidth = 176.0;
+static const CGFloat kMinSidebarWidth = 208.0;
 static const CGFloat kSearchSidebarMinWidth = 216.0;
 static const CGFloat kMaxSidebarWidth = 320.0;
 static const CGFloat kSidebarMaxWidthFraction = 0.34;
@@ -787,18 +788,8 @@ static char kSPDFPasswordPromptClosesNewTabKey;
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
                        [self resumePersistentStateSavesAfterLaunch];
-                       if (self.restoreWindowID.length == 0) [self promptToMakeDefaultPDFReaderIfNeededOnLaunch];
+                       [self showUnifiedSettingsAfterFirstPaint];
                        if (self.restoreWindowID.length == 0) {
-                           // Permissions is the first thing the user sets. The shortcut-help
-                           // panel floats above the wizard's child window, so while the wizard
-                           // is up, hold the shortcut help back until the wizard is dismissed.
-                           BOOL wizardShown = [self showPermissionsWizardOnFirstLaunchIfNeeded];
-                           if (self->_showShortcutHelpOnLaunch) {
-                               if (wizardShown)
-                                   self->_pendingShortcutHelpAfterPermissions = YES;
-                               else
-                                   [self showShortcutHelp:nil];
-                           }
                            if (!self.detachedTabLaunch) {
                                // Consume the post-update health marker FIRST (writes
                                // update_ok / deletes .old / shows the success banner, or
@@ -1869,7 +1860,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                     keyEquivalent:@""];
     }
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"Set Up Permissions…" action:@selector(showPermissionsWizard:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"Settings…" action:@selector(showUnifiedSettings:) keyEquivalent:@","];
     [appMenu addItemWithTitle:@"Make Shenzhen PDF Default PDF Reader..."
                        action:@selector(makeDefaultPDFReader:)
                 keyEquivalent:@""];
@@ -2101,6 +2092,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     NSMenuItem* settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
     [mainMenu addItem:settingsItem];
     NSMenu* settingsMenu = [[NSMenu alloc] initWithTitle:@"Settings"];
+    [settingsMenu addItemWithTitle:@"Settings & AI…" action:@selector(showUnifiedSettings:) keyEquivalent:@""].target=self;
     NSMenuItem* defaultSidebarItem = [settingsMenu addItemWithTitle:@"Open New Documents with Side Panel"
                                                              action:@selector(toggleDefaultSidebarForNewDocuments:)
                                                       keyEquivalent:@""];
@@ -7204,7 +7196,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 }
                 [self discardCachedRuntimeForTab:currentTab];
                 currentTab.cachedDocument = completedDocument;
-                [self collectionDidOpenPath:currentTab.path];
+                [self collectionDidOpenPath:currentTab.path]; [self aiDocumentDidOpen:currentTab.path];
                 currentTab.cachedRenderedPages = [completedPages mutableCopy];
                 [self recordFileAttributes:completedAttributes forTab:currentTab];
                 currentTab.missingFile = NO;
@@ -7922,7 +7914,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
     tab.missingFile = NO;
     tab.missingMessage = @"";
-    [self collectionDidOpenPath:path];
+    [self collectionDidOpenPath:path]; [self aiDocumentDidOpen:path];
     [self recordFileAttributes:attributes forTab:tab];
     NSInteger pageCount = spdf_page_count(_doc);
     [self applySinglePageMinimapDefaultToTab:tab pageCount:pageCount];
@@ -8434,7 +8426,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.missingMessage = @"";
     objc_setAssociatedObject(tab, &kSPDFPasswordPromptClosesNewTabKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     tab.cachedDocument = newDoc;
-    [self collectionDidOpenPath:path];
+    [self collectionDidOpenPath:path]; [self aiDocumentDidOpen:path];
     [self recordFileAttributes:attributes forTab:tab];
     [self primePageGeometryCacheForDocument:newDoc
                           pageGeometryState:[self pageGeometryStateForPath:path]
@@ -8578,7 +8570,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
             SPDFDocumentTab* existingTab = [self selectedTab];
             if (existingTab.readOnly && existingTab.workingPath.length && !existingTab.readOnlyCopyBinding.count)
                 [self loadSelectedTab]; // Explicit reopen renews legacy provenance after launch.
-            else { [self ensureActiveMarkdownTabHasContent]; [self collectionDidOpenPath:_path]; }
+            else { [self ensureActiveMarkdownTabHasContent]; [self collectionDidOpenPath:_path]; [self aiDocumentDidOpen:_path]; }
             if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
             [self savePersistentState];
             [self focusActiveDocumentViewAfterTabSelection];
@@ -9210,7 +9202,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
     [_sidebarItems removeAllObjects];
-    BOOL hasChapters = _outline.count > 0;
+    BOOL hasChapters = _outline.count > 0 || [self aiGeneratedChapterRows].count > 0;
     BOOL hasComments = _comments.count > 0;
     BOOL hasSearch = [self hasSearchSidebar];
     BOOL hasSidebar = _sidebarModeControl != nil;
@@ -9265,6 +9257,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 [_sidebarItems addObject:sidebarItem];
             }
         } else if (hasChapters) {
+            [self appendAIGeneratedChaptersMatchingFilter:filter];
             for (int i = 0; i < _outline.count; ++i) {
                 spdf_outline_item item = _outline.items[i];
                 NSString* title = item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
@@ -12204,11 +12197,13 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 - (void)activatePaletteSelection:(id)sender {
+    if (sender!=_paletteTable && !_paletteSearchField.stringValue.length && _paletteMode==1) { [self showAIChat:nil]; return; }
     (void)sender;
     NSInteger row = _paletteTable.selectedRow;
     if (row < 0 || row >= (NSInteger)_paletteResults.count) return;
     NSDictionary* result = _paletteResults[(NSUInteger)row];
     if (![self isSelectablePaletteResult:result]) return;
+    if ([result[@"kind"] isEqual:@"askAI"]) { [self showAIChatForQuery:_paletteSearchField.stringValue]; return; }
     [self closePalette:nil];
     [self openPaletteResult:result];
 }
@@ -14981,6 +14976,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                (hasDoc && [NSPasteboard.generalPasteboard canReadObjectForClasses:@[ NSString.class ] options:@{}]));
     if (action == @selector(openDocument:) || action == @selector(openPathPrompt:) || action == @selector(newTabRequested:) ||
         action == NSSelectorFromString(@"createEmptyTabGroupFromPlus:") ||
+        action == @selector(showUnifiedSettings:) || action == @selector(showAIChats:) ||
         action == @selector(toggleFullScreen:) || action == @selector(showFavoritesPalette:) ||
         action == @selector(showFindPalette:) || action == @selector(focusFind:) ||
         action == @selector(setCommentAuthor:) || action == @selector(openRecentDocument:) ||

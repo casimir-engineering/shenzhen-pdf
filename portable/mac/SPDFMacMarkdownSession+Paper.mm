@@ -1,3 +1,5 @@
+#import "SPDFMacMarkdownSourceRevision.h"
+#import "SPDFMacSearchFileCache.h"
 #import "SPDFMacMarkdownSessionPrivate.h"
 
 // The PAPER half of the session: which sheet the document is laid out on.
@@ -55,7 +57,10 @@
 SPDFMarkdownDocument* SPDFMacMarkdownLoadDocument(NSURL* URL, SPDFMarkdownRenderOptions* options,
     SPDFMarkdownPageOrientation orientation, NSDictionary* previousFrontMatter,
     SPDFMarkdownPageConfiguration** configuration, NSError** error) {
+    NSString* sourceRevision=SPDFSearchFileStamp(URL.path);
     SPDFMarkdownDocumentModel* model = [[SPDFMarkdownParser new] loadURL:URL error:error];
+    if (model && [sourceRevision isEqual:SPDFSearchFileStamp(URL.path)])
+        SPDFMacMarkdownSetSourceRevision(model,sourceRevision);
     if (!model) return nil;
     SPDFMarkdownPageConfiguration* fallback = [SPDFMarkdownPageConfiguration A4ConfigurationForOrientation:orientation];
     SPDFMarkdownPageConfiguration* paper = SPDFMarkdownPageConfigurationForFrontMatter(model.frontMatter, fallback, error);

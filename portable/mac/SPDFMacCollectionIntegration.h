@@ -22,6 +22,7 @@
 - (void)installCollectionSettingsMenu:(NSMenu*)menu;
 - (void)addCollectionItemsToTabMenu:(NSMenu*)menu path:(NSString*)path;
 - (void)showCollectionManager:(id)sender;
+- (void)showCollectionSettings:(id)sender;
 - (void)showCollectionManagerForQuery:(NSString*)query;
 - (void)showCollectionManagerForDocumentID:(NSString*)documentID query:(NSString*)query;
 - (void)showCollectionHistory:(id)sender;

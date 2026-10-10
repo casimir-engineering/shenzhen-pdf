@@ -1,3 +1,4 @@
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacCollectionPalette.h"
 #import "SPDFMacCollectionStyle.h"
@@ -7,6 +8,7 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
 
 @implementation ShenzhenMacDelegate (SPDFMacPalettePresentation)
 - (void)showPaletteWithTitle:(NSString*)title {
+    [self preparePaletteForSearch];
     if (!_palettePanel) {
         _palettePanel = [[NSPanel alloc]
             initWithContentRect:NSMakeRect(0, 0, 650, 390)
@@ -44,7 +46,7 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
 
     _palettePanel.title = title;
     _paletteSearchField.stringValue = @"";
-    _paletteSearchField.placeholderString = @"Documents, groups, text, or col: for Collection";
+    _paletteSearchField.placeholderString = @"Search documents · Return on empty search to chat";
     _paletteAllDocsCheckbox.hidden = YES;
     _paletteFavoritePendingDelete = nil;
     _paletteMenuCommandCandidates = [self paletteMenuCommandCandidates];

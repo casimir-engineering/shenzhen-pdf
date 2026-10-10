@@ -30,6 +30,8 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, readonly, nullable) NSTextView* textView;
 @property(nonatomic, readonly, nullable) SPDFMarkdownDocument* document;
 @property(nonatomic, readonly, nullable) SPDFMarkdownRenderedDocument* renderedDocument;
+// Exact source identity captured around parsing; never refreshed from an old live render.
+@property(nonatomic, readonly, nullable) NSString* loadedSourceRevision;
 // The live on-screen pagination plan (current font scale, language overrides,
 // reserved language-control band). Print and Save-as-PDF consume this plan
 // with renderedDocument so exports match the reader page for page.
@@ -93,6 +95,8 @@ typedef NS_ENUM(NSInteger, SPDFMacMarkdownSessionState) {
 @property(nonatomic, copy, nullable) void (^openDocumentHandler)(NSURL* URL, NSString* _Nullable anchor);
 @property(nonatomic, copy, nullable) void (^openExternalURLHandler)(NSURL* URL);
 @property(nonatomic, copy, nullable) void (^statusHandler)(NSString* status);
+// Optional consumer notified only after a completed rerender has installed its live layout.
+@property(nonatomic, copy, nullable) void (^renderInstalledHandler)(void);
 @property(nonatomic, copy, nullable) void (^searchUpdateHandler)
     (NSUInteger count, NSInteger currentIndex, BOOL searching);
 // Fired by next/previous/explicit match jumps (never by searchUpdateHandler's

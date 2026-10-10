@@ -82,6 +82,8 @@ $PORTABLE/mac/markdown/SPDFMarkdownImageRecolor.mm
 $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
 "
+COLLECTION_STORE_SOURCES=$(printf '%s\n' "$PORTABLE"/mac/SPDFMacCollectionStore*.mm)
+
 UI_SOURCES="
 $PORTABLE/mac/SPDFMacCollectionWindow.mm
 $PORTABLE/mac/SPDFMacCollectionManagerWindow.mm
@@ -105,20 +107,8 @@ $PORTABLE/mac/SPDFMacCollectionCompareViews.mm
 $PORTABLE/mac/SPDFMacCollectionCompareWindow.mm
 $PORTABLE/mac/SPDFMacCollectionCompareLatest.mm
 $PORTABLE/mac/SPDFMacCollectionLocate.mm
-$PORTABLE/mac/SPDFMacCollectionStore.mm
-$PORTABLE/mac/SPDFMacCollectionStoreAccess.mm
-$PORTABLE/mac/SPDFMacCollectionStoreAssets.mm
-$PORTABLE/mac/SPDFMacCollectionStoreCapture.mm
-$PORTABLE/mac/SPDFMacCollectionStoreCleanup.mm
-$PORTABLE/mac/SPDFMacCollectionStoreContextSearch.mm
-$PORTABLE/mac/SPDFMacCollectionStoreExport.mm
-$PORTABLE/mac/SPDFMacCollectionStoreFingerprint.mm
-$PORTABLE/mac/SPDFMacCollectionStoreLocation.mm
-$PORTABLE/mac/SPDFMacCollectionStoreMarkdown.mm
-$PORTABLE/mac/SPDFMacCollectionStoreSearch.mm
+$COLLECTION_STORE_SOURCES
 $PORTABLE/mac/SPDFMacSearchFileCache.mm
-$PORTABLE/mac/SPDFMacCollectionStoreScheduling.mm
-$PORTABLE/mac/SPDFMacCollectionStoreImport.mm
 $PORTABLE/mac/SPDFMacCollectionCompareEngine.mm
 $PORTABLE/mac/SPDFMacCollectionCompareLoad.mm
 $PORTABLE/mac/SPDFMacCollectionPaletteModel.mm

@@ -1,3 +1,4 @@
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarChapters.h"
 #import "SPDFMacTranslationEnablement.h"
@@ -164,6 +165,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 
 - (void)configureMarkdownSession:(SPDFMacMarkdownSession*)session forTab:(SPDFDocumentTab*)tab {
     session.reader = (id<SPDFMacUIReader>)self;
+    [self configureAIAnalysisForMarkdownSession:session path:tab.path];
     __weak ShenzhenMacDelegate* weakSelf = self;
     __weak SPDFMacMarkdownSession* weakSession = session;
     session.statusHandler = ^(NSString* status) {
@@ -322,7 +324,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                                                               reveal:NO];
                            [strongSelf rebuildSidebar];
                            [strongSelf updateMarkdownMinimap];
-                           [strongSelf collectionDidOpenPath:path];
+                           [strongSelf collectionDidOpenPath:path]; [strongSelf aiDocumentDidOpen:path];
                        }
                        [strongSelf updateControlsForActiveMarkdown];
                        /* After the control pass: it drops first responder. */
@@ -380,7 +382,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 }
 
 - (BOOL)markdownHasChapters {
-    return self.markdownState.activeSession.sidebarModel.chapterItems.count > 0;
+    return self.markdownState.activeSession.sidebarModel.chapterItems.count > 0 || [self aiGeneratedChapterRows].count > 0;
 }
 
 - (BOOL)markdownHasSearchSidebar {
@@ -393,7 +395,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     SPDFMacMarkdownSession* session = self.markdownState.activeSession;
     SPDFMacMarkdownSidebarModel* model = session.sidebarModel;
     BOOL loading = !model && session.state == SPDFMacMarkdownSessionLoading;
-    BOOL hasChapters = model.chapterItems.count > 0;
+    BOOL hasChapters = model.chapterItems.count > 0 || [self aiGeneratedChapterRows].count > 0;
     BOOL hasSearch = [self markdownHasSearchSidebar];
     BOOL hasSidebar = _sidebarModeControl != nil;
 
@@ -417,6 +419,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                                                                      searching:_findSearchInProgress]];
     } else if (hasChapters) {
         [_sidebarItems addObjectsFromArray:[model chapterItemsMatchingQuery:_chapterFilterText ?: @""]];
+        [self appendAIGeneratedChaptersMatchingFilter:_chapterFilterText];
     }
 
     [self syncSidebarTableColumnWidth];
