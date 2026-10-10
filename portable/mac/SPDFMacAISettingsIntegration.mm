@@ -161,7 +161,11 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         if([action isEqual:@"wizardDone"]) {
             SPDFMacAISettings* settings=ReadSettings(); settings.onboardingRevision=SPDFUnifiedSettingsExperienceVersion;
             settings.onboardingStep=0; settings.showSettingsOnLaunch=NO;
-            settings.connectionConfigured=[SPDFMacAICredentials APIKeyWithError:nil].length>0; NSError* error=nil;
+            // Completion is not a credential health check. A noninteractive ACL/lock
+            // failure must not erase a connection the user already configured.
+            if(!settings.connectionConfigured && [SPDFMacAICredentials APIKeyWithError:nil].length)
+                settings.connectionConfigured=YES;
+            NSError* error=nil;
             if(![settings save:&error]) { [_window presentError:error]; [self showUnifiedSettingsMode:YES]; return; }
             ReleaseSetupLock(self);
             NSString* choice=SPDFMacCollectionStore.defaultStore.settings[@"choice"];
