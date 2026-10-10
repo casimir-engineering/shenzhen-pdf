@@ -4,6 +4,7 @@
 #import "SPDFMacTabGroupIntegration.h"
 #import "SPDFMacSidebarWorkspace.h"
 #import "SPDFMacCollectionIntegration.h"
+#import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacDocumentRename.h"
 #import "SPDFMacSearchFileCache.h"
@@ -70,11 +71,26 @@ static NSDictionary* ActionError(NSString* message) { return @{@"error":message}
     if (!destination || [destination isEqual:source]) return ActionError(@"Enter a different filename without path separators.");
     if (![arguments[@"revision"] isEqual:SPDFSearchFileStamp(source)]) return ActionError(@"Document revision changed. Read reader_state again.");
     struct stat info={};
-    if (lstat(source.fileSystemRepresentation,&info) || !S_ISREG(info.st_mode) || info.st_size>32LL*1024*1024 ||
+    if (lstat(source.fileSystemRepresentation,&info) || !S_ISREG(info.st_mode)) return ActionError(@"Document is not a regular file.");
+    SPDFMacCollectionStore* store=SPDFMacCollectionStore.defaultStore;
+    NSDictionary* editable=[store editableInfoForPath:source];
+    if (editable) {
+        if (progress.cancelled) return ActionError(@"Rename cancelled.");
+        NSError* error=nil; NSString* title=editable[@"document"][@"title"];
+        NSURL* renamed=[store renameEditablePath:source filename:destination.lastPathComponent
+            documentTitle:destination.lastPathComponent expectedTitle:title error:&error];
+        if (!renamed) return ActionError(error.localizedDescription ?: @"Collection rename failed.");
+        [self adoptRenamedDocumentFrom:source to:renamed.path replacingReadOnly:NO];
+        [self collectionSetVersionInfo:[store editableInfoForPath:renamed.path] forTab:tab];
+        [self collectionRefreshHistory];
+        return @{@"renamed":@YES,@"path":renamed.path,@"documentReceipt":@{@"kind":@"collection-rename",
+            @"source":source,@"destination":renamed.path,@"historyID":editable[@"document"][@"id"],@"copyID":editable[@"copyID"],
+            @"beforeTitle":title ?: source.lastPathComponent,@"afterTitle":destination.lastPathComponent,
+            @"afterRevision":SPDFSearchFileStamp(renamed.path) ?: @""}};
+    }
+    if (info.st_size>32LL*1024*1024 ||
         ![NSFileManager.defaultManager isWritableFileAtPath:source.stringByDeletingLastPathComponent])
         return ActionError(@"Assistant rename requires a writable normal file up to 32 MiB; use the tab menu for Save As or larger files.");
-    SPDFMacCollectionStore* store=SPDFMacCollectionStore.defaultStore;
-    if ([store editableInfoForPath:source]) return ActionError(@"Use Rename in the tab menu for a Collection working copy.");
     NSDictionary* history=[store documentForPath:source];
     if (progress.cancelled || ![arguments[@"revision"] isEqual:SPDFSearchFileStamp(source)]) return ActionError(@"Rename cancelled or source changed.");
     NSError* error=nil;
@@ -92,6 +108,21 @@ static NSDictionary* ActionError(NSString* message) { return @{@"error":message}
     if (progress.cancelled) return NO;
     NSString* kind=receipt[@"kind"];
     if ([kind isEqual:@"job"]) return [self aiUndoDocumentJob:receipt progress:progress];
+    if ([kind isEqual:@"collection-rename"]) {
+        NSString* source=receipt[@"source"],*destination=receipt[@"destination"];
+        SPDFMacCollectionStore* store=SPDFMacCollectionStore.defaultStore;
+        NSDictionary* info=[store editableInfoForPath:destination];
+        if (![info[@"document"][@"id"] isEqual:receipt[@"historyID"]] || ![info[@"copyID"] isEqual:receipt[@"copyID"]] ||
+            ![receipt[@"afterRevision"] isEqual:SPDFSearchFileStamp(destination)] ||
+            [NSFileManager.defaultManager fileExistsAtPath:source]) return NO;
+        NSURL* restored=[store renameEditablePath:destination filename:source.lastPathComponent
+            documentTitle:receipt[@"beforeTitle"] expectedTitle:receipt[@"afterTitle"] error:nil];
+        if (!restored) return NO;
+        [self adoptRenamedDocumentFrom:destination to:restored.path replacingReadOnly:NO];
+        NSInteger index=[self indexOfTabForPath:restored.path];
+        if (index>=0 && index<(NSInteger)_tabs.count) [self collectionSetVersionInfo:[store editableInfoForPath:restored.path] forTab:_tabs[(NSUInteger)index]];
+        [self collectionRefreshHistory]; return YES;
+    }
     if ([kind isEqual:@"rename"]) {
         NSString* source=receipt[@"source"],*destination=receipt[@"destination"];
         if (![receipt[@"afterRevision"] isEqual:SPDFSearchFileStamp(destination)] ||

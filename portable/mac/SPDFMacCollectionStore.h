@@ -34,6 +34,9 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 - (nullable NSURL*)editableVersionID:(nullable NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error;
 - (nullable NSDictionary*)captureEditablePath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;
 - (nullable NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename error:(NSError**)error;
+// Explicit rename/Undo variant: atomically guard and restore the Collection title.
+- (nullable NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename
+    documentTitle:(NSString*)title expectedTitle:(nullable NSString*)expectedTitle error:(NSError**)error;
 - (void)rememberGroup:(NSDictionary*)group documentID:(NSString*)documentID;
 - (void)rememberGroups:(NSDictionary<NSString*,NSDictionary*>*)groups;
 @end

@@ -43,7 +43,9 @@ Chat now has its own native resizable window with independent search, normal
 macOS Close/Minimize behavior, and two remembered pin modes: above Shenzhen PDF
 or above all apps. Closing it preserves the unsent draft and conversation.
 Activity shows when the model is thinking, which tool is working, when a reply
-is ready, and actionable failures. User messages remain in the saved history.
+is ready, and actionable failures. User messages remain in the saved history. Muted blue user messages and neutral
+assistant messages distinguish the two speakers in both themes. Replies are
+brief by default and follow the user’s requested scope and wording.
 The authorization-send path no longer loses the user message when its composer
 clears, which previously could stop the first tool call with a false save conflict.
 
@@ -126,7 +128,7 @@ state. Document jobs write into an app-owned output directory and use exclusive
 file creation so an existing path is never replaced. Job Undo removes only a
 file that still matches the generated receipt. File rename and comment edits
 have explicit writable-file and size limits. Encrypted PDF jobs, arbitrary
-deletion, unsupported read-only/Collection-working-copy rename, and tools not
+deletion, read-only original rename without Save As, and tools not
 listed in discovery remain unavailable.
 
 Each provider request asks for OpenRouter no-data-collection and zero-data-
@@ -143,3 +145,8 @@ See the [document assistant guide](../document-assistant.md) for setup and
 operational detail, and [AI control and Markdown authoring](../agent-interface.md)
 for the separate headless CLI/MCP interface. See the [revision analysis validation](../journals/ai-reader/revision-analysis-validation.md)
 for the bounded text-delta and history-index implementation details.
+
+Collection working copies can be renamed directly by the assistant. The action
+preserves the document’s original source reference, group and version history.
+Undo restores both the previous filename and Collection title, and refuses to
+overwrite a subsequent rename or edit.

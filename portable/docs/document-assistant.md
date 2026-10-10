@@ -194,8 +194,9 @@ Other current boundaries:
   configure their dependencies. Encrypted PDFs are not supported by assistant
   export/OCR/translation jobs.
 - Safe rename supports regular writable files up to 32 MiB in their current
-  folder. Collection working copies and read-only files use the native Rename
-  or Save As flow.
+  folder. Collection working copies can also be renamed directly, with Undo;
+  this preserves their original source reference and saved history. Read-only
+  originals require the native Save As flow.
 - Reversible PDF comment editing and page rotation are limited to supported
   writable PDFs up to 32 MiB. Other PDF edits are not exposed.
 - There is no arbitrary original-file deletion tool. Undo is conditional on
@@ -204,3 +205,7 @@ Other current boundaries:
 See [AI control and Markdown authoring](agent-interface.md) for the separate
 command-line/MCP interface. Its inspect/open commands are explicit integrations
 and do not use the chat provider.
+
+User messages have a muted blue background; assistant messages use a neutral
+shade in both themes. Replies are brief by default and follow your requested
+names, wording, scope and constraints.

@@ -51,6 +51,9 @@ int main(void) { @autoreleasepool {
     CHECK(!transport.sends,"construction is network-inert");
     [session send:@"Explain this document" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
     CHECK(transport.sends==1 && session.running,"explicit send starts request");
+    NSString* system=transport.messages.firstObject[@"content"];
+    CHECK([system containsString:@"Be as brief as possible"] && [system containsString:@"follow the user's specifications closely"] &&
+        [system containsString:@"Perform requested actions with tools"],"system prompt requires brief, faithful, action-oriented responses");
     void (^late)(NSDictionary*,NSError*)=transport.reply;
     [session cancel]; CHECK(session.activityState==SPDFMacAIChatActivityStopped,"cancel reports stopped"); late(@{@"role":@"assistant",@"content":@"late"},nil);
     CHECK([session.chat[@"messages"] count]==1,"cancel discards late assistant response");
