@@ -66,6 +66,7 @@ static NSView* Identified(NSView* view, NSString* identifier) {
 @property unsigned long long storageLimit;
 @property NSString* deletedVersion;
 @property NSString* clearedDocument;
+@property NSMutableArray<NSString*>* editableVersions;
 @end
 @implementation HistoryFixtureStore
 - (NSDictionary*)settings { return @{@"storageLimitBytes":@(self.storageLimit)}; }
@@ -84,6 +85,13 @@ static NSView* Identified(NSView* view, NSString* identifier) {
     (void)document; (void)error;
     dispatch_async(dispatch_get_main_queue(), ^{ self.materializations++; });
     return [self.rootURL URLByAppendingPathComponent:[version stringByAppendingString:@".md"]];
+}
+- (NSURL*)editableVersionID:(NSString*)version documentID:(NSString*)document error:(NSError**)error {
+    (void)document; (void)error;
+    if (!self.editableVersions) self.editableVersions=[NSMutableArray array];
+    @synchronized (self.editableVersions) { [self.editableVersions addObject:version]; }
+    return [[[[self.rootURL URLByAppendingPathComponent:@"editable"] URLByAppendingPathComponent:@"fixture"]
+        URLByAppendingPathComponent:version] URLByAppendingPathComponent:[version stringByAppendingString:@".md"]];
 }
 @end
 @interface SPDFMacCollectionHistoryController (TestActions)
@@ -213,8 +221,9 @@ int main(void) {
         [Button(history.view,@"Save New Copy As…") performClick:nil];
         Expect([history.savedVersion isEqual:@"new"] && history.restoresLink,"Save New Copy restores link from latest version without selection");
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
-        Expect(Await(^BOOL { return opens == 1; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"new.md"],
-            "missing latest opens saved version without a prompt");
+        Expect(Await(^BOOL { return opens == 1; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"new.md"] &&
+            [openedPath.pathComponents containsObject:@"editable"],
+            "missing latest opens an editable Collection copy without a prompt");
         [history menuNeedsUpdate:table.menu];
         Expect([table.menu itemWithTitle:@"Delete version…"].enabled &&
             ![table.menu itemWithTitle:@"Delete all previous backups…"],
@@ -231,8 +240,9 @@ int main(void) {
             [actions itemWithTitle:@"Compare with Previous"].enabled,
             "latest selected disables self comparison while previous comparison stays reachable");
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];
-        Expect(Await(^BOOL { return opens == 3; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"old.md"],
-            "older selection stays read-only");
+        Expect(Await(^BOOL { return opens == 3; }) && archivedOpen && [openedPath.lastPathComponent isEqual:@"old.md"] &&
+            [openedPath.pathComponents containsObject:@"editable"],
+            "older selection opens an independent editable Collection copy");
         Expect(Button(history.view,@"Compare with Latest").enabled &&
             ![actions itemWithTitle:@"Compare with Previous"].enabled &&
             [actions itemWithTitle:@"Save a Copy…"].enabled,
@@ -248,10 +258,13 @@ int main(void) {
         Expect(Await(^BOOL { return history.revealedPath != nil; }) && [history.revealedPath isEqual:store.fixturePath],
             "Latest reveal uses live original");
         store.fixturePath = @"/missing/Notes.md";
-        NSUInteger materializations = store.materializations;
+        NSUInteger editableVersions;
+        @synchronized (store.editableVersions) { editableVersions=store.editableVersions.count; }
         [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
         [history cancelPendingPreviews];
-        Expect(Await(^BOOL { return store.materializations > materializations; }),"pending preview actually materializes");
+        Expect(Await(^BOOL {
+            @synchronized (store.editableVersions) { return store.editableVersions.count > editableVersions; }
+        }),"pending preview resolves an editable Collection copy");
         NSDate* drained = [NSDate dateWithTimeIntervalSinceNow:.1];
         while (drained.timeIntervalSinceNow > 0)
             [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:drained];
