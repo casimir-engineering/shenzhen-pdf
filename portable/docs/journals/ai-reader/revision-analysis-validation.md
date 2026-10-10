@@ -23,3 +23,9 @@ The production-linked `SPDFMacAIAnalysisServiceTests` executable passed with exi
 - Both an immutable old preview and an editable old revision are ineligible for automatic summaries.
 
 The first complete AI reader suite passed before parent metadata integration began. A later combined run reached an unrelated metadata-contract assertion while that integration was changing; the freshly linked analysis executable was then run separately and passed. The parent run performs the final integrated suite.
+
+## Lifecycle and encoding follow-up
+
+The technical review found a cache-lease race: an editable copy could become historical while waiting for another process, yet receive a cached summary. The worker now checks latest status again after obtaining the lease. Collection-copy requests also capture a revision generation. Local and cross-process committed Collection changes invalidate that generation, hiding already installed copy summaries and rejecting queued stale completions. The active copy is rechecked on the worker after a capture promotes it to latest. Notifications are scoped to the Collection roots represented by that reader's copies; unrelated temporary stores do not invalidate user documents. Opting out disables the observer before it queues any work. None of these display checks read the Collection manifest.
+
+A separate test places an emoji across the 64,000-unit analysis upload boundary. Clipping now uses the shared Unicode-safe prefix helper, and failed JSON encoding returns an error before request construction. Tests cover the lease race, installed and queued stale copy results, actual second-process invalidation, unrelated-store isolation, and the post-opt-out no-work path.
