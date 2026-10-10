@@ -1,6 +1,8 @@
 #pragma once
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+// Returns a prefix within the UTF-16 budget without splitting a composed character.
+NSString* SPDFAIBoundedText(NSString* text, NSUInteger max);
 // Explicit worker-only extraction. No singleton, queue, directory or document is
 // created until called. Page numbers are one-based. Results contain exact text,
 // authored outline and revision; limits are reported, never silently hidden.

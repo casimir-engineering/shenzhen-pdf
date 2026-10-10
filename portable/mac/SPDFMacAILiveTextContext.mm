@@ -132,7 +132,7 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
                 [pageText appendString:[text substringWithRange:fragment.attributedRange]]; [pageText appendString:@"\n"];
                 if (pageText.length>=100000) { truncated=YES; break; }
             }
-        if (pageText.length>100000) [pageText deleteCharactersInRange:NSMakeRange(100000,pageText.length-100000)];
+        if (pageText.length>100000) [pageText setString:SPDFAIBoundedText(pageText,100000)];
         [pages addObject:@{@"page":@(index+1),@"text":pageText}]; characters+=pageText.length;
         if (characters>=1000000) { truncated=YES; break; }
     }
