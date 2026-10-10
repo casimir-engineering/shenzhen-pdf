@@ -41,8 +41,17 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 @property(nonatomic) NSData* stored;
 @property(nonatomic) NSDictionary* last;
 @property(nonatomic) OSStatus failure;
+@property(nonatomic) NSUInteger interactiveCalls;
+@property(nonatomic) BOOL unsupportedAuthorization;
 @end
 @implementation FakeKeychain
+- (BOOL)respondsToSelector:(SEL)selector {
+    if(self.unsupportedAuthorization && selector==@selector(copyMatchingWithUserInteraction:result:))return NO;
+    return [super respondsToSelector:selector];
+}
+- (OSStatus)copyMatchingWithUserInteraction:(NSDictionary*)query result:(NSData**)result {
+    self.interactiveCalls++;return [self copyMatching:query result:result];
+}
 - (OSStatus)copyMatching:(NSDictionary*)query result:(NSData**)result {
     self.calls++; self.last=query; if(self.failure)return self.failure;
     if(result)*result=self.stored; return self.stored ? errSecSuccess : errSecItemNotFound;
@@ -118,6 +127,22 @@ int main(void) { @autoreleasepool {
     Check(![credentials storeAPIKey:key error:&error] && error.code==errSecInteractionNotAllowed,"locked AI key cannot pretend save succeeded");
     Check(![credentials removeAPIKeyWithError:&error] && error.code==errSecInteractionNotAllowed && keychain.stored.length,"denied disconnect preserves the credential");
     keychain.failure=errSecSuccess;
+    Check(keychain.interactiveCalls==0,"normal credential operations never request interactive authorization");
+    Check([[credentials authorizeAPIKeyAccessWithError:&error] isEqual:key] && keychain.interactiveCalls==1 &&
+        ExplicitAuthorizationQuery(keychain.last) &&
+        [keychain.last[(__bridge id)kSecReturnData] boolValue],"explicit authorization alone allows system UI and returns the validated key");
+    Check([[credentials APIKeyWithError:&error] isEqual:key] && NoninteractiveQuery(keychain.last) && keychain.interactiveCalls==1,
+        "authorization never changes subsequent noninteractive query policy");
+    keychain.failure=errSecUserCanceled;
+    Check(![credentials authorizeAPIKeyAccessWithError:&error] && error.code==errSecUserCanceled && keychain.stored.length,
+        "cancelled explicit authorization preserves key and reports cancellation");
+    keychain.failure=errSecAuthFailed;
+    Check(![credentials authorizeAPIKeyAccessWithError:&error] && error.code==errSecAuthFailed && keychain.stored.length,
+        "failed explicit authorization cannot pretend success");
+    keychain.failure=errSecSuccess;keychain.unsupportedAuthorization=YES;NSInteger calls=keychain.calls;
+    Check(![credentials authorizeAPIKeyAccessWithError:&error] && error.code==errSecUnimplemented && keychain.calls==calls,
+        "backend without explicit authorization support fails closed");
+    keychain.unsupportedAuthorization=NO;
     Check([credentials removeAPIKeyWithError:&error] && NoninteractiveQuery(keychain.last),"disconnect removes credential without UI");
     Check(![credentials APIKeyWithError:&error],"disconnected credential stays absent");
     NSArray* messages=@[@{@"role":@"user",@"content":@"Test"}];
