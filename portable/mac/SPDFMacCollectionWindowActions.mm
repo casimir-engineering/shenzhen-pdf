@@ -148,7 +148,7 @@
         return;
     }
     unsigned long long bytes = (unsigned long long)(amount * 1e9);
-    NSDictionary* policy=@{@"storageMode":self.limitPicker.indexOfSelectedItem == 2 ? @"dynamic" : bytes ? @"static" : @"unlimited",@"storageLimitBytes":@(bytes)};
+    NSDictionary* policy=@{@"storageMode":self.limitPicker.indexOfSelectedItem == 2 ? @"dynamic" : bytes ? @"static" : @"unlimited",@"storageLimitBytes":@(bytes),@"storageDynamicPercent":@(self.dynamicPercent.integerValue)};
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSDictionary* plan = [self.store previewStoragePolicy:policy];
         dispatch_async(dispatch_get_main_queue(), ^{

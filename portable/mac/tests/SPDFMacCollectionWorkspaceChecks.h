@@ -89,6 +89,14 @@ static void CheckCollectionSettingsApplyPlacement(SPDFMacCollectionWindow* manag
             NSView* help=Identified(manager.settingsPane,@"CollectionStorageHelp");
             NSRect helpRect = [help convertRect:help.bounds toView:stack];
             NSRect locationRect = [manager.locationField convertRect:manager.locationField.bounds toView:stack];
+            if(mode==2) {
+                NSRect slider=[manager.dynamicPercent convertRect:manager.dynamicPercent.bounds toView:cap];
+                NSRect value=[manager.dynamicPercentLabel alignmentRectForFrame:
+                    [manager.dynamicPercentLabel convertRect:manager.dynamicPercentLabel.bounds toView:cap]];
+                Expect(@"dynamic slider and readout fit the minimum Settings width",
+                    NSMinX(slider)>=0 && NSMaxX(slider)<=NSWidth(cap.bounds) &&
+                    NSMinX(value)>=NSMaxX(slider) && NSMaxX(value)<=NSWidth(cap.bounds));
+            }
             Expect(@"Apply sits directly below the cap, before help and Location in all limit modes",
                 cap && apply && NSMinY(applyRect)>=NSMaxY(capRect) && NSMinY(applyRect)-NSMaxY(capRect)<=12 &&
                 NSMaxY(applyRect)<=NSMinY(helpRect) && NSMaxY(applyRect)<NSMinY(locationRect));
