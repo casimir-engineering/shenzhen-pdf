@@ -13,8 +13,12 @@
 The first normal launch opens a four-step setup after the reader is ready:
 **Full Disk Access**, **Collection**, **OpenRouter**, then **Default reader**.
 Full Disk Access is optional; you can continue and macOS will prompt if a later
-open needs it. Collection offers a dynamic limit based on 80% of free space plus
-existing Collection storage, a fixed limit, or Unlimited. OpenRouter connects in
+open needs it. Collection offers an adjustable dynamic limit of 50–80% (default 80%) of free
+space plus existing Collection storage, a fixed limit, or Unlimited. Move
+location verifies the transfer and removes the old stored files. Editable
+Collection documents can move between folders on the same disk; cross-disk moves
+are refused when editable documents exist, protecting in-progress saves. Startup
+Keychain reads cannot show password prompts. OpenRouter connects in
 the browser or through an API key field revealed on request; keys stay in
 Keychain. Open the model picker to load and search the catalog of models that
 support tool calls. The final step lets you search file types and independently

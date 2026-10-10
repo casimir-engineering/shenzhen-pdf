@@ -215,3 +215,50 @@ Static + Continue and then Dynamic + Continue both landed on the AI page with
 Step 3 displayed, closing the reproduced UI race. Done returned to the reader.
 The app in `dist/ShenzhenPDF.app` is the resulting local development build;
 no notarization or public release was performed for this batch.
+
+
+## Storage and credential follow-up — 10 October 2026
+
+Settings status now uses the saved connection flag instead of reading a Keychain
+secret during launch. All AI and Collection Keychain operations explicitly
+disable authentication UI, including the legacy Keychain ACL path. A locked or
+denied key fails without a password dialog; key storage remains protected by
+Keychain. Signed releases retain their stable signing identity.
+
+The Collection step explains the two storage modes in one line: “Dynamic adapts
+to free space; Static uses a fixed size.” A native slider selects 50–80%, default
+80%, with a numeric readout. The value persists through mode changes and is
+available in both setup and Collection settings. Default-reader choices remain
+available from Settings → General → Choose file types….
+
+![Collection setup with adjustable percentage](images/setup-storage-percentage.png)
+
+This is a headless render of the native controller at its narrow size. The
+unchecked Collection box belongs to the test fixture; the production default
+remains enabled.
+
+“Move location…” transfers verified content and removes the old stored payload,
+including indexes and thumbnails. Small routing records keep saved tab paths
+working. Independent review caught a late-save race in the initial copy/delete
+approach; the move implementation preserves editable file identity on the same
+disk. Cross-disk moves with editable documents are refused rather than risking
+loss of a concurrent save. See [move validation](collection-move-validation.md).
+
+Focused settings, credential, ordinary-document Keychain laziness, launch policy
+and updater regressions pass. The updater suite still passes all 32 cases.
+The final Collection Store, Integrity and Cleanup suite passed with exit 0
+(`/tmp/collection-move-lossless-final-verified.log`). Independent UX review of
+the native narrow render and source rated visual quality and usability 9/10,
+with no medium findings; a minor default-reader subtitle mismatch was corrected.
+Settings tests then passed again (`/tmp/storage-settings-copy-final.log`).
+The relocation review reached 9/10 for its supported scope; see the
+[technical review](technical-critic-storage-follow-up.md) for resolved findings
+and recovery limits. The associated AI fix preserves latest-only analysis for
+restored old paths and learns moved roots lazily. Production-linked regressions
+passed (`/tmp/ai-relocation-alias-final-tests.log`), including disabled-AI laziness.
+Final delivery build: `make -C portable -j4 mac-app` exited 0
+(`/tmp/storage-followup-delivery-app.log`), followed by successful deep strict
+code-signature verification, whitespace checks and the file-size ratchet
+(1,333 maintained source files, 34 exact caps). The resulting development app is
+`dist/ShenzhenPDF.app`. No user app was restarted and no public release was
+performed for this follow-up.
