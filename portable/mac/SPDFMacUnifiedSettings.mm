@@ -261,7 +261,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (void)buildReading {
     [self heading:@"Reading & access" subtitle:@"These choices are optional. Grant only the permissions you need."];
     [self add:[self toggle:@"keepImageColors" label:@"Keep original image colors by default"]];
-    [self actionRow:@"Default reader" detail:@"Open PDF files with ShenzhenPDF from Finder and other apps."
+    [self actionRow:@"Default reader" detail:@"Choose which file types open in ShenzhenPDF from Finder and other apps."
         label:@"Choose file types…" action:@"showDefaults"];
     [self divider];
     [self actionRow:@"Full Disk Access" detail:@"For documents stored inside other apps’ protected folders. macOS may require reopening ShenzhenPDF after granting access."
