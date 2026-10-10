@@ -218,7 +218,7 @@ are identified explicitly. Text-only models are not silently replaced.
   answers no longer appear as successful completions.
 - Chat answers now default to 1–3 short sentences with citations. Detailed
   explanations, derivations and tables are provided when requested.
-- Concise chat replies retain drawing checks for total travel, dimensions and
-  tolerances. The assistant reuses readable evidence and copies source links.
+- Concise chat replies check source context, scope and conditions, choosing text
+  or page images as needed. The assistant reuses evidence and copies source links.
 - A citation with an invented text highlight falls back to its verified page,
   including in existing chats. Unverified document/page links remain blocked.
