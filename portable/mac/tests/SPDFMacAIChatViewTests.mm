@@ -70,10 +70,12 @@ static void Click(NSWindow* window,NSButton* button,NSPoint local) {
 #import "SPDFMacAIChatDockChecks.h"
 #import "SPDFMacAIChatReopenChecks.h"
 #import "SPDFMacAIChatOrderChecks.h"
+#import "SPDFMacAIAnswerCardViewChecks.h"
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     RunChatReopenChecks();
     RunChatOrderChecks();
+    RunAnswerCardViewChecks();
     NSAttributedString* safe=SPDFMacAIChatMarkdown(@"**Evidence** [page](spdf-ai://document?path=test&page=2) [site](https://example.com) [unsafe](file:///tmp/private) ![hidden](file:///tmp/private.png) ![remote](https://example.com/tracker.png)",500,YES);
     __block NSUInteger links=0,attachments=0;
     [safe enumerateAttributesInRange:NSMakeRange(0,safe.length) options:0 usingBlock:^(NSDictionary* a,NSRange r,BOOL* stop){
