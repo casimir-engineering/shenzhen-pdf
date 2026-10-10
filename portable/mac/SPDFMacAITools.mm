@@ -82,8 +82,14 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         Definition(@"search_documents",@"Search text in open documents. Returns exact matching snippets, pages and clickable citations that highlight the query. Use a short exact passage for precise source links, and preserve the returned citation URL unchanged. Partial coverage is disclosed. Scope by path when known.",
             @{@"query":@{@"type":@"string",@"maxLength":@512,@"description":@"Short literal passage to find and highlight."},@"path":path,
               @"page":Field(@"integer",@"First page to search, one-based.")},@[@"query"]),
-        Definition(@"render_page",@"Show a page image in the chat to illustrate a diagram, table or passage. Render only pages relevant to the user's request.",
-            @{@"path":path,@"page":Field(@"integer",@"Page, one-based.")},@[@"path",@"page"]),
+        Definition(@"render_page",@"Inspect a full page or zoomed region visually. The image is sent to your vision input and shown in chat. Use for diagrams, dimensions, scanned tables or image-only information before concluding it is absent. Start with the whole page, then request a relevant region for small details. Only render pages needed for the user's request.",
+            @{@"path":path,@"page":Field(@"integer",@"Page, one-based."),
+              @"maxDimension":@{@"type":@"integer",@"minimum":@256,@"maximum":@2400,@"description":@"Maximum output edge in pixels; default 1600. Use 2400 for fine print."},
+              @"region":@{@"type":@"object",@"description":@"Optional crop in normalized page coordinates: top-left origin, x/y in 0–1, positive width/height, entirely inside the page. Omit for full page.",
+                @"properties":@{@"x":@{@"type":@"number",@"minimum":@0,@"maximum":@1},@"y":@{@"type":@"number",@"minimum":@0,@"maximum":@1},
+                    @"width":@{@"type":@"number",@"exclusiveMinimum":@0,@"maximum":@1},@"height":@{@"type":@"number",@"exclusiveMinimum":@0,@"maximum":@1}},
+                @"required":@[@"x",@"y",@"width",@"height"],@"additionalProperties":@NO},
+              @"revision":Field(@"string",@"Optional revision from retrieved evidence; rejects changed documents.")},@[@"path",@"page"]),
         Definition(@"show_document",@"Show an already-open document at a page and optionally highlight a literal passage on that page. Returns a reversible action receipt.",
             @{@"path":path,@"page":Field(@"integer",@"Page, one-based."),@"revision":Field(@"string",@"Optional revision from retrieved evidence."),@"layoutIdentity":Field(@"string",@"Optional layout fingerprint from text-document evidence."),@"query":@{@"type":@"string",@"maxLength":@512,@"description":@"Optional exact passage from the cited page to highlight using document search."}},@[@"path"]),
         Definition(@"organize_groups",@"Change groups using a validated existing agent command. Supported actions: create-group, update-group, move-tab, move-group, ungroup. Ask list_workspace first. Reversible unless the workspace changes afterwards.",
@@ -363,15 +369,21 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
             } else if ([name isEqual:@"open_collection"]) {
                 result=SPDFAICollectionOpenTarget(arguments[@"documentID"],[arguments[@"version"] isEqual:@"saved-copy"],progress);
             } else if ([name isEqual:@"render_page"]) {
-                NSDictionary* preview=SPDFAIPagePreviewForCandidate(selected,start,progress,&error);
+                NSMutableDictionary* options=[NSMutableDictionary dictionary];
+                for(NSString* key in @[@"region",@"maxDimension"])if(arguments[key])options[key]=arguments[key];
+                NSDictionary* preview=SPDFAIPagePreviewForCandidateWithOptions(selected,start,options,progress,&error);
                 if (preview) {
                     NSMutableDictionary* citation=[@{@"path":SPDFAIDocumentIdentifier(path),@"page":@(start),@"revision":preview[@"revision"]} mutableCopy];
                     if (selected[@"paginationPlan"]) {
                         NSDictionary* live=SPDFAIDocumentContextForCandidate(selected,start,1,progress,&error);
                         if (live[@"layoutIdentity"]) citation[@"layoutIdentity"]=live[@"layoutIdentity"];
                     }
-                    result=@{@"rendered":@YES,@"path":path,@"page":@(start),@"_localPreview":
-                        @{@"path":preview[@"path"],@"caption":[NSString stringWithFormat:@"%@ · page %lu",selected[@"title"],(unsigned long)start],
+                    NSString* source=Citation(path,@(start),preview[@"revision"],citation[@"layoutIdentity"],nil);
+                    result=@{@"rendered":@YES,@"path":path,@"page":@(start),@"revision":preview[@"revision"],@"citation":source,
+                        @"region":preview[@"region"],@"pixelWidth":preview[@"pixelWidth"],@"pixelHeight":preview[@"pixelHeight"],
+                        @"_localPreview":@{@"path":preview[@"path"],
+                          @"caption":[NSString stringWithFormat:@"%@ · page %lu%@",selected[@"title"],(unsigned long)start,arguments[@"region"] ? @" · detail" : @""],
+                          @"region":preview[@"region"],@"pixelWidth":preview[@"pixelWidth"],@"pixelHeight":preview[@"pixelHeight"],
                           @"citation":citation}};
                 }
             } else if ([name isEqual:@"read_pages"] || [name isEqual:@"show_document"]) {

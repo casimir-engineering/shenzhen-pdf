@@ -14,5 +14,18 @@ int main(void) { @autoreleasepool {
     if(models.count!=1 || ![models[0][@"id"] isEqual:@"deepseek/deepseek-v4.1-flash"]) return 6;
     NSData* malformed=[NSJSONSerialization dataWithJSONObject:@{@"data":@[@{@"id":@1},@{@"id":@"bad id",@"supported_parameters":@[@"tools"]}]} options:0 error:nil];
     if(SPDFMacAIModelsFromCatalog(malformed,nil).count) return 7;
+    NSData* vision=[NSJSONSerialization dataWithJSONObject:@{@"data":@[
+        @{@"id":@"fixture/vision",@"name":@"Vision",@"supported_parameters":@[@"tools"],
+          @"architecture":@{@"input_modalities":@[@"text",@"image"]}},
+        @{@"id":@"fixture/text",@"name":@"Text",@"supported_parameters":@[@"tools"],@"architecture":@"bad"}
+    ]} options:0 error:nil];
+    NSArray* choices=SPDFMacAIModelsFromCatalog(vision,nil);
+    NSDictionary* visual=nil; NSDictionary* plain=nil;
+    for(NSDictionary* choice in choices) {
+        if([choice[@"id"] isEqual:@"fixture/vision"]) visual=choice;
+        if([choice[@"id"] isEqual:@"fixture/text"]) plain=choice;
+    }
+    if(![visual[@"supportsImages"] boolValue] || ![visual[@"name"] isEqual:@"Vision · Images"] ||
+        [plain[@"supportsImages"] boolValue] || ![plain[@"name"] isEqual:@"Text"]) return 8;
     puts("AI model catalog: passed"); return 0;
 } }
