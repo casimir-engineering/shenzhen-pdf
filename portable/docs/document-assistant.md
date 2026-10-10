@@ -1,7 +1,7 @@
 # Document assistant (macOS)
 
 The document assistant answers questions about PDFs, Markdown and other open
-documents, with citations that lead back to retrieved pages. It can show page
+documents, with citations that open retrieved pages and highlight cited text through document search. It can show page
 previews, organize open tabs, adjust reader controls, edit PDF comments, and run
 some document jobs. It is optional and uses an OpenRouter model you connect.
 This guide describes the current macOS implementation; Linux and Windows do not
@@ -57,19 +57,31 @@ the current catalog and connection status are authoritative.
 
 ## Ask and manage chats
 
-Press **⌘K**, then press **Return** while the search field is empty to open a new
-chat. Type a question and press **Return** to send; **Shift-Return** inserts a
+Press **⌘K**, then press **Return** while the search field is empty to open
+chat. It returns to the current conversation; use **New chat** to start another. Type a question and press **Return** to send; **Shift-Return** inserts a
 line break. With text in the search field, Return keeps its usual search-result
 behavior. Use the explicit **Ask** action to start a new chat with that query as a draft, then press Return to send.
-Press **Escape** or **Close** to leave chat.
+Chat opens in its own resizable macOS window. **Escape**, **Close**, or **⌘W**
+hides it while preserving the conversation and unsent draft. The two pin buttons
+keep it above Shenzhen PDF windows or above all apps; click the selected button
+again to unpin. Window position, size and pin mode are remembered. Search can
+remain open independently.
 
 The chat toolbar offers **New chat**, **Chats**, **Undo action**, **Settings**,
-and **Close**. Chats are saved on this Mac. The Chats view lets you reopen a
+and **Close**, plus the two pin controls. Thinking, current-tool activity, errors,
+and readiness for your reply appear above the transcript. Your latest question
+stays visible there, and both user and assistant messages remain in the saved
+conversation, newest first. Chats are saved on this Mac. The Chats view lets you reopen a
 conversation or delete one or all conversations; deletion asks for confirmation
 and removes transcripts and their saved page previews, not documents or
 Collection history. Answers render Markdown and can include local page previews
 and clickable citations. A citation is accepted only when it matches evidence
 retrieved in that conversation and the document revision/layout remains valid.
+Text-search citations open the source tab, go to its cited page, and highlight the
+literal passage using the reader's normal search. The conversation stays open.
+Page-only citations remain available for diagrams and other visual evidence.
+Changed or unavailable sources produce an explanation instead of navigating to
+an unverified passage. Source links contain opaque document IDs, not local paths.
 
 Use **Stop** to cancel the current model request or queued tool work. A change
 that already completed remains in place; use **Undo action** to reverse the
