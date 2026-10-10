@@ -1,4 +1,5 @@
 #import "SPDFMacMarkdownSessionPrivate.h"
+#import "SPDFMacMarkdownSourceRevision.h"
 
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "SPDFMacMarkdownView.h"
@@ -77,6 +78,8 @@
         self.state == SPDFMacMarkdownSessionReady && !self.renderTrailsPreferences &&
         _pagedView.superview && _pagedView.alphaValue >= 1;
 }
+
+- (NSString*)loadedSourceRevision { return SPDFMacMarkdownSourceRevision(self.document.model); }
 
 - (SPDFMarkdownPaginationPlan*)paginationPlan {
     return _paginationPlan;
@@ -405,6 +408,7 @@
                                   jumpToNearest:NO
                                          reveal:NO];
                    if (status.length && mainSelf.statusHandler) mainSelf.statusHandler(status);
+                   if (mainSelf.renderInstalledHandler) mainSelf.renderInstalledHandler();
                  });
                }];
 }

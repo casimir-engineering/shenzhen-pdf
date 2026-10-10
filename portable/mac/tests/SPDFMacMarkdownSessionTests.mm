@@ -188,7 +188,7 @@ int main(void) {
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
         [session setZoom:1.6];
         assert(session.fitMode == SPDFMacMarkdownPageFitCustom);
-        __block NSUInteger fontScaleRenders = 0;
+        __block NSUInteger fontScaleRenders = 0, installedRenders = 0; session.renderInstalledHandler = ^{ installedRenders++; };
         session.statusHandler = ^(NSString* status) {
           if ([status isEqualToString:@"Text size updated."]) fontScaleRenders++;
         };
@@ -199,7 +199,7 @@ int main(void) {
               return fontScaleRenders == 1;
             },
             5.0));
-        NSRange scaledRange = [session.renderedDocument.attributedString.string rangeOfString:@"Alpha beta alpha"];
+        assert(installedRenders == 1); NSRange scaledRange = [session.renderedDocument.attributedString.string rangeOfString:@"Alpha beta alpha"];
         assert(scaledRange.location != NSNotFound);
         NSFont* scaledFont = [session.renderedDocument.attributedString attribute:NSFontAttributeName
                                                                           atIndex:scaledRange.location

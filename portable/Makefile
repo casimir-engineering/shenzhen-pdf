@@ -829,7 +829,7 @@ mac-ai-transport-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAITransportTests.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICredentials.mm mac/SPDFMacAISettings.mm mac/SPDFMacAIOpenRouterAuth.mm -framework Foundation -framework Security -framework LocalAuthentication -o "$(BUILD)/SPDFMacAITransportTests"
 	"$(BUILD)/SPDFMacAITransportTests"
 mac-ai-chat-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatSessionTests.mm mac/SPDFMacAIChatSession.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacAITransport.mm -framework Foundation -o "$(BUILD)/SPDFMacAIChatSessionTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatSessionTests.mm mac/SPDFMacAIChatSession.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICitations.mm -framework Foundation -o "$(BUILD)/SPDFMacAIChatSessionTests"
 	"$(BUILD)/SPDFMacAIChatSessionTests"
 mac-unified-settings-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacUnifiedSettingsTests.mm mac/SPDFMacUnifiedSettings.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm -framework Cocoa -o "$(BUILD)/SPDFMacUnifiedSettingsTests"
@@ -838,3 +838,10 @@ mac-unified-settings-tests: | $(BUILD)
 mac-ai-model-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIModelCatalogTests.mm mac/SPDFMacAIModelCatalog.mm -framework Foundation -o "$(BUILD)/SPDFMacAIModelCatalogTests"
 	"$(BUILD)/SPDFMacAIModelCatalogTests"
+
+# Registered here so release discovery includes the production-linked AI suites.
+include mac/tests/ai-reader-tests.mk
+include mac/tests/ai-document-job-tests.mk
+.PHONY: mac-ai-reader-tests mac-ai-document-job-tests
+mac-ai-reader-tests: mac-ai-reader-acceptance
+mac-ai-document-job-tests: mac-ai-document-job-acceptance

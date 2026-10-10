@@ -1,3 +1,4 @@
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacCollectionImportIntegration.h"
 #import "SPDFMacCollectionIntegration.h"
 #import "SPDFMacCollectionReaderNavigation.h"
@@ -8,7 +9,7 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import <objc/runtime.h>
 #import "SPDFMacTabGroups.h"
-static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
+static char kCollectionCompanion, kCollectionImported, kCollectionSettingsObserver, kCollectionContinuity, kCollectionPendingSave;
 @implementation ShenzhenMacDelegate (SPDFMacCollectionIntegration)
 - (void)collectionAllowImportRetryAfterFailure {
     objc_setAssociatedObject(self,&kCollectionImported,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -83,27 +84,7 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
         }
         NSString* choice = [store settings][@"choice"];
         if ([choice isEqual:@"unset"] || !choice.length) {
-            if (objc_getAssociatedObject(self, &kCollectionPromptPending)) return;
-            if (self->_window.attachedSheet || !self->_window.visible) {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                    if ([self indexOfTabForPath:source] >= 0) [self collectionDidOpenPath:source];
-                });
-                return;
-            }
-            objc_setAssociatedObject(self, &kCollectionPromptPending, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            NSAlert* alert = [[NSAlert alloc] init];
-            alert.messageText = @"Keep a local copy and history of documents you open?";
-            alert.informativeText = @"You will continue using the originals. Copies stay on this Mac; change this in Settings.";
-            [alert addButtonWithTitle:@"Keep Enabled"]; [alert addButtonWithTitle:@"Turn Off"];
-            [alert beginSheetModalForWindow:self->_window completionHandler:^(NSModalResponse result) {
-                NSError* error = nil;
-                [store updateSettings:@{@"choice":result == NSAlertFirstButtonReturn ? @"enabled" : @"disabled"} error:&error];
-                objc_setAssociatedObject(self, &kCollectionPromptPending, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                if (error) [self->_window presentError:error];
-                else if (store.isEnabled) {
-                    for (SPDFDocumentTab* tab in self->_tabs) [self collectionDidOpenPath:tab.path];
-                }
-            }];
+            [self showUnifiedSettings:nil];
             return;
         }
         if (!store.isEnabled) {
@@ -190,6 +171,12 @@ static char kCollectionCompanion, kCollectionPromptPending, kCollectionImported,
         ? [sender representedObject] : _path;
 }
 - (void)showCollectionManager:(id)sender { (void)sender; [self showCollectionManagerForQuery:nil]; }
+- (void)showCollectionSettings:(id)sender {
+    (void)sender; [self showCollectionManagerForQuery:nil];
+    SPDFCollectionCompanionHost* companion=objc_getAssociatedObject(self,&kCollectionCompanion);
+    NSError* error=nil;
+    if (companion && ![companion showSettingsWithError:&error] && error) [_window presentError:error];
+}
 - (void)showCollectionManagerForQuery:(NSString*)query { [self showCollectionManagerForDocumentID:nil query:query]; }
 - (void)showCollectionManagerForDocumentID:(NSString*)documentID query:(NSString*)query {
     [self collectionObserveSettings];

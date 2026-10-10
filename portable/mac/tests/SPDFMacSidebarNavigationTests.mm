@@ -153,12 +153,15 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     [surface layoutSubtreeIfNeeded];
     NSRect tools = NSZeroRect;
     for (NSButton* row in navigation.accessibilityChildren) {
-        if (row == collapse || row == navigation.accessibilityChildren.firstObject) continue;
+        if (row == collapse || row == navigation.accessibilityChildren.firstObject || [row.accessibilityLabel isEqual:@"Chats"]) continue;
         tools = NSIsEmptyRect(tools) ? row.frame : NSUnionRect(tools,row.frame);
         Check(NSWidth(row.frame)>=22,"document tools remain usable with the toggle present");
     }
     NSButton* groupButton = navigation.accessibilityChildren.firstObject;
-    CGFloat leftSeparator = NSMaxX(collapse.frame)+8, rightSeparator = NSMinX(groupButton.frame)-8;
+    NSButton* chats=nil;
+    for (NSButton* row in navigation.accessibilityChildren) if ([row.accessibilityLabel isEqual:@"Chats"]) chats=row;
+    Check(chats!=nil && NSMaxX(chats.frame)<=NSMinX(groupButton.frame),"Chats sits separately beside Groups");
+    CGFloat leftSeparator = NSMaxX(collapse.frame)+8, rightSeparator = NSMinX(chats.frame)-8;
     Check(fabs(NSMidX(tools)-(leftSeparator+rightSeparator)/2)<.01,"document tools are centered between separators");
     Check(NSMinX(tools)>=leftSeparator && NSMaxX(tools)<=rightSeparator,"document tools stay between separators");
     Check(NSEqualRects(collapse.frame,NSMakeRect(0,4,28,28)),"centering preserves panel toggle position");
@@ -193,7 +196,7 @@ int main(void) {
         }
         NSString* directory = NSProcessInfo.processInfo.environment[@"SPDF_SIDEBAR_EVIDENCE_DIR"];
         if (directory.length) [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
-        Exercise(176,296,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-minimum.png"] : nil);
+        Exercise(208,296,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-minimum.png"] : nil);
         Exercise(220,620,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-light-narrow.png"] : nil);
         Exercise(240,620,YES,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-dark.png"] : nil);
         Exercise(220,340,NO,NO,directory ? [directory stringByAppendingPathComponent:@"sidebar-short.png"] : nil);

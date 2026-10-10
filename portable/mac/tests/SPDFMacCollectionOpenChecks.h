@@ -54,10 +54,10 @@ static void CheckCollectionOpenTargets(SPDFMacCollectionWindow* manager, SPDFMac
     while (!opened && deadline.timeIntervalSinceNow > 0)
         [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Expect(@"Open Collection Copy never substitutes the available original",
-        opened && ![opened isEqual:document[@"path"]] && archived && [store isArchivePath:opened]);
+        opened && ![opened isEqual:document[@"path"]] && archived && [store editableInfoForPath:opened]!=nil);
     Expect(@"Collection copy contains the saved bytes",opened &&
         [[NSData dataWithContentsOfFile:opened] isEqual:[NSData dataWithContentsOfFile:document[@"path"]]]);
     NSNumber* mode = [NSFileManager.defaultManager attributesOfItemAtPath:opened error:nil][NSFilePosixPermissions];
-    Expect(@"saved copy is read-only before any deferred reader lookup",mode && (mode.unsignedIntegerValue & 0222) == 0);
+    Expect(@"Collection opens an independent writable copy while preserved snapshots remain immutable",mode && (mode.unsignedIntegerValue & 0200) != 0 && ![store isArchivePath:opened]);
     manager.openHandler = previous;
 }

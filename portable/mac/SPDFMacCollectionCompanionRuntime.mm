@@ -44,6 +44,15 @@ static SPDFCollectionCompanionRuntime* activeRuntime;
         dispatch_async(dispatch_get_main_queue(), ^{ [self.manager refreshFromStore]; });
         return;
     }
+    if ([message[@"kind"] isEqual:@"destination"]) {
+        // Explicit navigation from unified Settings also works in an already-open
+        // companion; its saved/default destination must not override this action.
+        if (![message[@"destination"] isEqual:@"Settings"]) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.manager showDestination:@"Settings"]; [self.manager persistManagerPreferences];
+        });
+        return;
+    }
     if (![message[@"kind"] isEqual:@"show"]) return;
     dispatch_async(dispatch_get_main_queue(), ^{
         NSString* root=message[@"root"];

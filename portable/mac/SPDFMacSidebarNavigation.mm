@@ -6,6 +6,7 @@ static const CGFloat RowHeight = 28;
 static NSString* Symbol(NSInteger mode) {
     switch (mode) {
         case -1: return @"sidebar.left";
+        case -2: return @"bubble.left.and.bubble.right";
         case SPDFSidebarModeComments: return @"text.bubble";
         case SPDFSidebarModeSearch: return @"magnifyingglass";
         case SPDFSidebarModeHistory: return @"clock.arrow.circlepath";
@@ -88,6 +89,7 @@ static NSString* Symbol(NSInteger mode) {
 @implementation SPDFSidebarNavigationControl {
     NSMutableArray<SPDFSidebarNavigationRow*>* _rows;
     NSButton* _collapse;
+    NSButton* _chats;
     NSMutableArray<NSString*>* _labels;
     NSMutableArray<NSNumber*>* _tags;
     NSMutableArray<NSNumber*>* _enabled;
@@ -110,6 +112,13 @@ static NSString* Symbol(NSInteger mode) {
     _documentTitle = [title copy]; self.needsDisplay = YES;
 }
 - (void)setCollapseTarget:(id)target action:(SEL)action {
+    if (!_chats) {
+        SPDFSidebarNavigationRow* chats=[SPDFSidebarNavigationRow new]; chats.mode=-2;
+        chats.ignoresMultiClick=NO; [chats setButtonType:NSButtonTypeMomentaryChange];
+        chats.target=target; chats.action=NSSelectorFromString(@"showAIChats:"); chats.bordered=NO;
+        chats.toolTip=@"Chats"; chats.accessibilityLabel=@"Chats"; _chats=chats; [self addSubview:chats];
+    }
+
     if (!_collapse) {
         SPDFSidebarNavigationRow* collapse = [SPDFSidebarNavigationRow new]; collapse.mode = -1;
         collapse.ignoresMultiClick=NO; [collapse setButtonType:NSButtonTypeMomentaryChange];
@@ -176,10 +185,11 @@ static NSString* Symbol(NSInteger mode) {
     NSArray* rows = [self visualRows];
     NSUInteger toolCount = rows.count ? rows.count - 1 : 0; // Groups stays anchored at the trailing edge.
     CGFloat left = _collapse ? 36 : 0;
-    CGFloat right = NSWidth(self.bounds)-36;
+    CGFloat right = NSWidth(self.bounds)-(_chats ? 68 : 36);
     CGFloat width = MIN(28, floor(MAX(0,right-left)/MAX(1,toolCount)));
     CGFloat x = left + (right-left-width*toolCount)/2;
     _collapse.frame = NSMakeRect(0,4,28,RowHeight);
+    _chats.frame=NSMakeRect(NSWidth(self.bounds)-60,4,28,RowHeight);
     for (SPDFSidebarNavigationRow* row in rows) {
         NSRect frame;
         if (row.mode == SPDFSidebarModeGroups) {
@@ -196,7 +206,7 @@ static NSString* Symbol(NSInteger mode) {
     (void)dirty; [[NSColor.labelColor colorWithAlphaComponent:.13] setFill];
     NSRectFill(NSMakeRect(-8,35,NSWidth(self.bounds)+16,.5));
     SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
-    NSRectFill(NSMakeRect(NSMinX(group.frame)-8,10,.5,16));
+    NSRectFill(NSMakeRect((_chats ? NSMinX(_chats.frame) : NSMinX(group.frame))-8,10,.5,16));
     if (_collapse) NSRectFill(NSMakeRect(NSMaxX(_collapse.frame)+8,10,.5,16));
     if (self.spdf_selectedSidebarMode != SPDFSidebarModeGroups) {
         NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -210,6 +220,7 @@ static NSString* Symbol(NSInteger mode) {
     NSPoint local = [self convertPoint:point fromView:self.superview];
     if (self.hidden || !NSPointInRect(local,self.bounds)) return nil;
     if (_collapse && NSPointInRect(local,_collapse.frame)) return _collapse;
+    if (_chats && NSPointInRect(local,_chats.frame)) return _chats;
     for (NSView* row in _rows) if (NSPointInRect(local,row.frame)) return row;
     return nil; // Empty header space belongs to the dedicated drag surface below.
 }
@@ -238,6 +249,9 @@ static NSString* Symbol(NSInteger mode) {
     for (NSInteger i=current+direction;i>=0 && i<(NSInteger)ordered.count;i+=direction)
         if ([ordered[i] isEnabled]) { [self chooseRow:ordered[i]]; return; }
 }
-- (NSArray*)accessibilityChildren { return _collapse ? [(NSArray*)[self visualRows] arrayByAddingObject:_collapse] : [self visualRows]; }
+- (NSArray*)accessibilityChildren {
+    NSMutableArray* items=[[self visualRows] mutableCopy];
+    if (_chats) [items addObject:_chats]; if (_collapse) [items addObject:_collapse]; return items;
+}
 - (NSString*)accessibilityRole { return NSAccessibilityTabGroupRole; }
 @end

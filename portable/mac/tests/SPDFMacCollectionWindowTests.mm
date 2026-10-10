@@ -282,7 +282,7 @@ int main(void) {
             while (!openedPath && previewDeadline.timeIntervalSinceNow>0)
                 [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
             Expect(@"missing original opens latest saved copy without a blocking locate prompt",
-                openedArchive && [store isArchivePath:openedPath]);
+                openedArchive && [store editableInfoForPath:openedPath]!=nil);
             [NSFileManager.defaultManager moveItemAtPath:displaced toPath:indexedPath error:nil];
             [store setKeep:YES versionID:oldVersion documentID:indexed[@"id"] error:nil];
             [latestOnly.viewPicker selectItemWithTag:3]; refreshLatest(latestOnly.viewPicker);

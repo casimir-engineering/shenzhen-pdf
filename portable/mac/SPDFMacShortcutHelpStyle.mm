@@ -4,6 +4,8 @@
 NSArray<NSDictionary*>* SPDFShortcutHelpCatalog(void) {
     return @[
         @{@"category":@"New!", @"highlighted":@YES, @"items":@[
+            @{@"title":@"New document chat", @"subtitle":@"Press Command-K, then Return with the search field empty"},
+            @{@"title":@"Send a chat message", @"subtitle":@"Shift-Return adds a new line", @"keys":@[@"Enter"]},
             @{@"title":@"Groups", @"subtitle":@"See your groups and their documents", @"keys":@[@"Cmd",@"G"]},
             @{@"title":@"Version history", @"keys":@[@"Cmd",@"H"]},
             @{@"title":@"Previous document", @"subtitle":@"Press again to return to this document", @"keys":@[@"Cmd",@"D"]}]},

@@ -64,6 +64,14 @@ int main(void) {
         Expect(@"helper Settings pane is available",!manager.settingsPane.hidden && [manager.destination isEqual:@"Settings"]);
         [manager showDestination:@"Documents"];
         Expect(@"helper Documents pane is available",manager.settingsPane.hidden && [manager.destination isEqual:@"Documents"]);
+        [runtime setValue:manager forKey:@"manager"];
+        [runtime receive:@{@"kind":@"destination",@"destination":@"Settings"}];
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]];
+        Expect(@"unified Settings route opens the companion Settings pane",[manager.destination isEqual:@"Settings"] && !manager.settingsPane.hidden);
+        [runtime receive:@{@"kind":@"destination",@"destination":@"arbitrary"}];
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Expect(@"companion ignores unsupported navigation destinations",[manager.destination isEqual:@"Settings"]);
+        [manager showDestination:@"Documents"];
         Expect(@"probe does not display a window",!manager.window.visible);
         NSString* markdown=[directory stringByAppendingPathComponent:@"Preview.md"];
         [@"# Companion fixture\n\nA **Markdown** page with readable text.\n" writeToFile:markdown atomically:YES
