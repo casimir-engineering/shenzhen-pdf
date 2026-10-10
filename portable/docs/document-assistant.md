@@ -42,7 +42,9 @@ you to the reader and does not make Settings appear at every startup. You can
 change chat and automatic analysis later under **Settings → Settings & AI… → AI settings**.
 Startup and background Keychain access are non-interactive: a locked or denied
 credential does not trigger a Keychain password prompt. Credentials remain in
-Keychain, and can be reconnected from AI settings when needed.
+Keychain. If macOS blocks a saved key, chat shows **Authorize & send…** beside
+the retained draft. Only clicking that button can show a system authorization
+prompt; cancelling keeps the message. You can also reconnect in AI settings.
 
 Turning chat off cancels an active chat request; turning automatic analysis off
 stops analysis work.

@@ -42,3 +42,45 @@ tracked so an edited regression header cannot leave a stale test object.
 The delivery build exited 0 (`/tmp/ai-return-delivery-build.log`), and deep strict
 code-signature verification passed with the stable Developer ID designated
 requirement. Output: `dist/ShenzhenPDF.app`.
+
+## Follow-up: the saved credential is blocked
+
+The user still saw no reply. A temporary probe compiled against the production
+credential implementation, signed with the exact same Developer ID designated
+requirement as the delivery app, attempted only a noninteractive read of the
+app's OpenRouter item. It returned `errSecAuthFailed` (-25293), no valid key, in
+18.431 ms. No credential bytes were printed, written or sent; the probe did not
+mutate Keychain or display authorization UI. Metadata existence had not proved
+that the current executable could use the saved credential.
+
+Event-lifecycle regressions found no swallowed Return: the palette monitor opens
+chat and is removed, the composer retains focus, and NSWindow responder dispatch
+sends once. Hidden panels do not receive ordinary forwarding from NSApplication;
+the harness records that limitation and separately exercises its local monitor
+and the window's real responder dispatch rather than claiming visible-app input.
+
+The error is now shown immediately above the composer, with **Authorize & send…**.
+Only that explicit button may permit a system Keychain authorization prompt. It
+returns the validated key directly to the pending send, with no second lookup.
+Cancel keeps the draft and sends nothing. Setup/enabled gates are checked before
+prompting and again before sending. The process-wide authorization policy is
+serialized and restored so all background operations remain noninteractive.
+No credential ACL is weakened and no key is copied to configuration files.
+
+![Headless native authorization recovery preview](images/chat-key-authorization.png)
+
+The preview uses fixture messages, not user content. Native rendering and hit
+testing pass at 520 and 650 points in both appearances, including all four inset
+corners of the action. No layout conflicts were logged. Full context acceptance
+passed at `/tmp/ai-composer-auth-render-run.log`; credential and interaction-policy
+regressions passed at `/tmp/ai-explicit-authorization-final-tests.log`. Tests cover
+ordinary Return never prompting, authorization cancellation, successful explicit
+grant sending exactly once without rereading Keychain, and opt-out laziness.
+The real interactive authorization remains for the user to approve; it was not
+silently invoked during verification.
+
+Recovery delivery: `make -C portable -j4 mac-app` with the existing Developer ID
+identity exited 0 (`/tmp/ai-authorization-delivery-build.log`); deep strict
+code-signature verification also passed. Native chat view tests passed separately
+(`/tmp/ai-authorization-view-tests.log`). The app in `dist/ShenzhenPDF.app` now
+contains the explicit recovery control. No running user app was restarted.
