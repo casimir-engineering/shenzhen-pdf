@@ -15,6 +15,7 @@ NSDictionary* _Nullable SPDFAIValidateAnalysis(id value, NSUInteger pageCount, B
     NSError** error);
 @interface SPDFMacAIAnalysisCache : NSObject
 - (instancetype)initWithRootURL:(NSURL*)rootURL;
+@property(nonatomic,readonly) NSURL* rootURL;
 // Hold this descriptor until the cache hit or network result is complete. Closing releases the process-safe lease.
 - (int)lockHash:(NSString*)hash progress:(NSProgress*)progress error:(NSError**)error;
 - (nullable NSDictionary*)analysisForHash:(NSString*)hash;
