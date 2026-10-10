@@ -3,6 +3,7 @@
 #import "../SPDFMacAIChatView.h"
 #import "../SPDFMacAIChatMarkdown.h"
 #import "../SPDFMacAIChatSession.h"
+#import "../SPDFMacAIChatSearch.h"
 static int failures;
 static NSEvent* pendingUp;
 @interface NSButton (AIChatSymbolProbe)
@@ -165,7 +166,31 @@ int main(void) { @autoreleasepool {
     Check([chatSearch.placeholderString isEqual:@"Search this chat"] && messages.arrangedSubviews.count==2,@"chat search filters only matching messages in this conversation");
     NSTextView* match=(id)messages.arrangedSubviews[1];
     NSRange hit=[match.string rangeOfString:@"polarity"];
-    Check(hit.location!=NSNotFound && [match.textStorage attribute:NSBackgroundColorAttributeName atIndex:hit.location effectiveRange:nil],@"matching term is highlighted in rendered message");
+    Check(hit.location!=NSNotFound && [match.layoutManager temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:hit.location effectiveRange:nil],@"matching term is highlighted in rendered message");
+    NSDictionary* originalChat=fixture.chat;
+    NSString* padding=[@"Context line with enough text to wrap at narrow widths.\n\n" stringByPaddingToLength:3500 withString:@"Context line with enough text to wrap at narrow widths.\n\n" startingAtIndex:0];
+    fixture.chat=@{@"id":@"search-deep",@"messages":@[@{@"role":@"assistant",@"content":[NSString stringWithFormat:@"%@First needle passage.\n\n%@Second needle passage.\n\n%@",padding,padding,padding]}]};
+    Check(SPDFMacAIChatHasTextMatch(fixture.chat,@"NEEDLE") && !SPDFMacAIChatHasTextMatch(fixture.chat,@"search-deep") &&
+        !SPDFMacAIChatHasTextMatch(@{@"messages":@[@{@"role":@"tool",@"content":@"needle"}]},@"needle"),
+        @"history content search finds visible speaker messages, excluding titles and internal tool results");
+    [view displaySession:(id)fixture];[view setChatSearchQuery:@"needle"];
+    void (^checkVisibleHit)(NSUInteger)=^(NSUInteger occurrence) {
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.08]];[view layoutSubtreeIfNeeded];
+        NSTextView* text=(id)messages.arrangedSubviews[1];NSRange hit=[text.string rangeOfString:@"needle"];
+        if(occurrence)hit=[text.string rangeOfString:@"needle" options:0 range:NSMakeRange(NSMaxRange(hit),text.string.length-NSMaxRange(hit))];
+        NSRange glyph=[text.layoutManager glyphRangeForCharacterRange:NSMakeRange(hit.location,1) actualCharacterRange:nil];
+        NSRect rect=[text.layoutManager boundingRectForGlyphRange:glyph inTextContainer:text.textContainer];
+        rect.origin.x+=text.textContainerOrigin.x;rect.origin.y+=text.textContainerOrigin.y;
+        rect=[text convertRect:rect toView:transcript.documentView];
+        Check(NSContainsRect(transcript.contentView.bounds,rect),@"chat search reveals exact glyph deep inside a long message");
+        Check([text.layoutManager temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:hit.location effectiveRange:nil]!=nil,
+            @"revealed search occurrence stays highlighted while field has focus");
+    };
+    checkVisibleHit(0);Capture(view,@"search-exact-passage");
+    Check([(id<NSSearchFieldDelegate>)view control:chatSearch textView:(id)chatSearch.currentEditor doCommandBySelector:@selector(insertNewline:)],@"Return in chat search navigates matches instead of submitting a message");
+    checkVisibleHit(1);
+    [(SPDFMacAIChatSearch*)[view valueForKey:@"chatFind"] moveBy:-1];checkVisibleHit(0);
+    fixture.chat=originalChat;[view displaySession:(id)fixture];
     [view setChatSearchQuery:@"nonexistent"];
     Check(!messages.arrangedSubviews.count && [[(NSTextField*)Find(view,@"chatActivityDetail") stringValue] isEqual:@"No matches in this chat"],@"no-match feedback remains local to current chat");
     [view setChatSearchQuery:@""];

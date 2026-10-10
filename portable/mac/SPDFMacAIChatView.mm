@@ -4,6 +4,7 @@
 #import "SPDFMacAIChatMarkdown.h"
 #import "SPDFMacGroupActionButton.h"
 #import "SPDFMacAIChatStore.h"
+#import "SPDFMacAIChatSearch.h"
 #import "SPDFMacPanelSearchField.h"
 @interface SPDFChatButton : SPDFGroupActionButton
 @end
@@ -134,6 +135,7 @@
 @end
 @implementation SPDFMacAIChatView {
     SPDFChatComposer* _composer; NSTextField* _status; NSTextField* _inputHelp; NSScrollView* _scroll; NSScrollView* _input; NSStackView* _messages;
+    SPDFMacAIChatSearch* _chatFind;
     NSLayoutConstraint* _inputHeight; NSLayoutConstraint* _stopTrailing; NSLayoutConstraint* _stopHistoryTrailing;
     NSStackView* _issue; NSTextField* _issueText; NSButton* _recovery; NSLayoutConstraint* _issueHeight;
     NSButton* _redo; NSSearchField* _chatSearch; NSTextField* _activityDetail; NSProgressIndicator* _progress;
@@ -154,7 +156,7 @@
     BOOL widthChanged=fabs(size.width-self.bounds.size.width)>.5;
     [super setFrameSize:size];
     if(widthChanged && _displayedSession) [self refreshActivityFromSession:_displayedSession];
-    if(atBottom && widthChanged) dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
+    if(atBottom && widthChanged && !_chatSearch.stringValue.length) dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
 }
 - (NSTextView*)composer { return _composer; }
 - (void)setChatSearchQuery:(NSString*)query {
@@ -178,6 +180,7 @@
     for(NSUInteger i=0;i<buttons.count;i++){NSButton* button=buttons[i];button.image=[NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:nil];button.title=@"";[button.widthAnchor constraintEqualToConstant:28].active=YES;}
     NSStackView* header=[NSStackView stackViewWithViews:buttons];header.spacing=8;header.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:header];
     _chatSearch=[NSSearchField new];SPDFConfigurePanelSearchField(_chatSearch);_chatSearch.placeholderString=@"Search this chat";
+    _chatSearch.toolTip=@"Search this chat · Return: next match · Shift-Return: previous match";
     _chatSearch.accessibilityLabel=_chatSearch.placeholderString;_chatSearch.delegate=self;_chatSearch.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:_chatSearch];
     [NSLayoutConstraint activateConstraints:@[[_chatSearch.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:12],
         [_chatSearch.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-12],[_chatSearch.topAnchor constraintEqualToAnchor:self.topAnchor constant:44],
@@ -199,6 +202,7 @@
     _messages.alignment=NSLayoutAttributeLeading; _messages.spacing=8; _messages.translatesAutoresizingMaskIntoConstraints=NO;
     NSView* doc=[SPDFChatFlippedView new]; doc.translatesAutoresizingMaskIntoConstraints=NO;
     [doc addSubview:_messages]; _scroll.documentView=doc; [self addSubview:_scroll];
+    _chatFind=[[SPDFMacAIChatSearch alloc] initWithScrollView:_scroll messages:_messages];
     SPDFChatInputScrollView* input=[SPDFChatInputScrollView new]; _input=input; input.translatesAutoresizingMaskIntoConstraints=NO;
     input.borderType=NSNoBorder; input.contentInsets=NSEdgeInsetsMake(2,2,2,2); input.drawsBackground=YES; input.backgroundColor=NSColor.textBackgroundColor;
     input.wantsLayer=YES; input.layer.cornerRadius=8; input.hasVerticalScroller=YES; [input updateBorder];
@@ -271,6 +275,10 @@
     return self;
 }
 - (void)controlTextDidChange:(NSNotification*)note { (void)note; [self setChatSearchQuery:_chatSearch.stringValue]; }
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)command {
+    if (control!=_chatSearch || textView.hasMarkedText || (command!=@selector(insertNewline:) && command!=@selector(insertLineBreak:) && command!=@selector(insertNewlineIgnoringFieldEditor:))) return NO;
+    [_chatFind moveBy:(NSApp.currentEvent.modifierFlags & NSEventModifierFlagShift) ? -1 : 1]; return YES;
+}
 - (void)submit {
     NSString* text=[_composer.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!text.length || !_send.enabled) return;
@@ -299,14 +307,6 @@
     // owns its inter-message spacing, so a final blank paragraph must not add it again.
     while(safe.length && [NSCharacterSet.newlineCharacterSet characterIsMember:[safe.string characterAtIndex:safe.length-1]])
         [safe deleteCharactersInRange:NSMakeRange(safe.length-1,1)];
-    NSString* query=_chatSearch.stringValue;
-    if(query.length) {
-        NSRange rest=NSMakeRange(0,safe.length), hit;
-        while(rest.length && (hit=[safe.string rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch range:rest]).location!=NSNotFound) {
-            [safe addAttribute:NSBackgroundColorAttributeName value:[NSColor colorWithSRGBRed:.70 green:.53 blue:.12 alpha:.38] range:hit];
-            rest=NSMakeRange(NSMaxRange(hit),safe.length-NSMaxRange(hit));
-        }
-    }
     SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(120,self.bounds.size.width-48),40)];
     view.verticallyResizable=NO; view.horizontallyResizable=NO;
     view.editable=NO; view.selectable=YES; view.drawsBackground=NO; view.delegate=self;
@@ -408,6 +408,7 @@
     NSAccessibilityPostNotification(_status,NSAccessibilityValueChangedNotification);
 }
 - (void)scrollToNewest {
+    if (_chatSearch.stringValue.length) return;
     // Rebuilt rich rows change document height. Resolve their layout before
     // clamping the scroll origin, otherwise the first label can be half hidden.
     [self layoutSubtreeIfNeeded]; [_scroll.documentView layoutSubtreeIfNeeded];
@@ -454,6 +455,8 @@
             else [self addText:message[@"content"] role:[message[@"role"] isEqual:@"user"] ? @"You" : @"Assistant"];
         }
     }
+    [_chatFind updateQuery:_chatSearch.stringValue];
+    if (_chatSearch.stringValue.length) return;
     if(!_preserveScroll && followBottom) {
         [self scrollToNewest];
         dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
@@ -461,12 +464,14 @@
         [self layoutSubtreeIfNeeded];
         dispatch_async(dispatch_get_main_queue(), ^{
             [self layoutSubtreeIfNeeded];
+            if (self->_chatSearch.stringValue.length) return;
             [self->_scroll.contentView scrollToPoint:previousOrigin];
             [self->_scroll reflectScrolledClipView:self->_scroll.contentView];
         });
     }
 }
 - (void)displayChats:(NSArray<NSDictionary*>*)chats {
+    [_chatFind updateQuery:@""];
     if(self.window.firstResponder==_composer) [self.window makeFirstResponder:nil];
     _history=YES; _send.enabled=NO; _stop.enabled=_running; _composer.editable=NO; [self clearRows]; _status.stringValue=@"Chats are saved on this Mac";
     if(_displayedSession) [self refreshActivityFromSession:_displayedSession];
