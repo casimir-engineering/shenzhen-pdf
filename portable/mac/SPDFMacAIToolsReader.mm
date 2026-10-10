@@ -202,7 +202,7 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
     return [self aiNavigateDocument:path page:page query:nil];
 }
 - (void)aiCancelPendingCitation { objc_setAssociatedObject(self,&citationNavigationKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
-- (void)aiHighlightCitation:(NSString*)query tab:(SPDFDocumentTab*)tab page:(NSInteger)page token:(id)token expected:(NSString*)expected progress:(NSProgress*)progress sourcePath:(NSString*)sourcePath revision:(NSString*)revision attempts:(NSUInteger)attempts {
+- (void)aiCompleteCitation:(NSString*)query tab:(SPDFDocumentTab*)tab page:(NSInteger)page token:(id)token expected:(NSString*)expected progress:(NSProgress*)progress sourcePath:(NSString*)sourcePath revision:(NSString*)revision attempts:(NSUInteger)attempts {
     if (progress.cancelled || objc_getAssociatedObject(self,&citationNavigationKey)!=token || [self selectedTab]!=tab ||
         ![[self aiWorkspaceFingerprint] isEqual:expected] ||
         ![revision isEqual:SPDFSearchFileStamp(sourcePath)]) return;
@@ -211,8 +211,13 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
         if (!attempts) return;
         __weak ShenzhenMacDelegate* weakSelf=self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
-            [weakSelf aiHighlightCitation:query tab:tab page:page token:token expected:expected progress:progress sourcePath:sourcePath revision:revision attempts:attempts-1];
+            [weakSelf aiCompleteCitation:query tab:tab page:page token:token expected:expected progress:progress sourcePath:sourcePath revision:revision attempts:attempts-1];
         }); return;
+    }
+    if (!query.length) {
+        if (session) [self markdownGoToPage:page-1];
+        else [self goToPage:page-1 preserveSinglePagePosition:NO];
+        return;
     }
     _searchField.stringValue=query; _findRegexCheckbox.state=NSControlStateValueOff; _findRegexMultiline=YES;
     _pendingFindPreferredPage=session ? -1 : page-1;
@@ -239,30 +244,40 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
     NSInteger index=NSNotFound;
     for (NSUInteger i=0;i<_tabs.count;i++) if ([_tabs[i].path isEqual:path]) { index=(NSInteger)i; break; }
     if (index==NSNotFound) return @{@"error":@"Document is no longer open."};
-    if (query.length) {
-        sourcePath=[sourcePath ?: (_tabs[(NSUInteger)index].workingPath ?: path) copy];
-        revision=[revision ?: SPDFSearchFileStamp(sourcePath) copy];
-    }
+    sourcePath=[sourcePath ?: (_tabs[(NSUInteger)index].workingPath ?: path) copy];
+    revision=[revision ?: SPDFSearchFileStamp(sourcePath) copy];
     // The caller validates the page against the file before mutation. Seed the
     // pending tab so asynchronous opening restores the requested page as well.
     if (page<1) return @{@"error":@"Page must be positive."};
-    if (index!=_selectedTabIndex) { _tabs[(NSUInteger)index].pageIndex=page-1; [self selectTabAtIndex:index]; }
+    SPDFDocumentTab* target=_tabs[(NSUInteger)index];
+    // A citation is an explicit destination, not a request to resume reading.
+    // Opening captures scrollOrigin for deferred layout; leaving it intact moves
+    // the viewport back after goToPage and makes a second click appear necessary.
+    target.pageIndex=page-1; target.hasScrollOrigin=NO; target.markdownAnchor=nil;
+    if (index!=_selectedTabIndex) [self selectTabAtIndex:index];
     SPDFMacMarkdownSession* session=[self isMarkdownActive] ? [self activeMarkdownSession] : nil;
     NSInteger count=session ? session.pageCount : (_doc ? spdf_page_count(_doc) : 0);
     if (count>0 && page<=count) {
         if (session) [self markdownGoToPage:page-1]; else [self goToPage:page-1 preserveSinglePagePosition:NO];
     }
     id token=[NSObject new]; objc_setAssociatedObject(self,&citationNavigationKey,token,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    BOOL loading=!count || (session && !session.isNavigationReady);
+    if (loading) _pageIndex=page-1;
     if (query.length) {
         // Install the desired reader state before the receipt is fingerprinted.
         // Deferred extraction must not mutate state after a human edit or Undo.
         SPDFDocumentTab* tab=[self selectedTab];
         tab.searchText=[query copy]; tab.searchRegex=NO; tab.searchRegexMultiline=YES; tab.findMatchIndex=-1;
         _searchField.stringValue=query; _findRegexCheckbox.state=NSControlStateValueOff; _findRegexMultiline=YES;
-        if (!count) _pageIndex=page-1;
-        [self aiHighlightCitation:tab.searchText tab:tab page:page token:token expected:[self aiWorkspaceFingerprint] progress:progress sourcePath:sourcePath revision:revision attempts:400];
+        [self aiCompleteCitation:tab.searchText tab:tab page:page token:token expected:[self aiWorkspaceFingerprint] progress:progress sourcePath:sourcePath revision:revision attempts:400];
     }
-    [self rememberActiveTabState]; [self savePersistentState];
-    return @{@"path":path,@"page":@(page),@"opened":@YES,@"loading":@(count==0)};
+    if (!query.length && loading)
+        [self aiCompleteCitation:nil tab:target page:page token:token expected:[self aiWorkspaceFingerprint]
+            progress:progress sourcePath:sourcePath revision:revision attempts:400];
+    // Loading a tab can otherwise save the outgoing/empty viewport over the
+    // destination before asynchronous adoption reads it.
+    if (!loading) [self rememberActiveTabState];
+    [self savePersistentState];
+    return @{@"path":path,@"page":@(page),@"opened":@YES,@"loading":@(loading)};
 }
 @end
