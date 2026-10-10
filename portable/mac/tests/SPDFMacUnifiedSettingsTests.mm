@@ -169,6 +169,9 @@ int main(void) { @autoreleasepool {
     Check(![(NSButton*)Find(controller.window.contentView,@"connect") isEnabled],@"connection cannot be started twice");
     [controller updateState:@{@"connecting":@NO,@"connected":@YES}];
     Check(Find(controller.window.contentView,@"disconnect")!=nil,@"connected account exposes disconnect");
+    Check(Find(controller.window.contentView,@"saveCredential")==nil && [controller valueForKey:@"secret"]==nil,@"completed key connection removes credential entry controls");
+    [controller updateState:@{@"connected":@NO}];
+    Check(Find(controller.window.contentView,@"revealKey")!=nil,@"disconnect immediately restores the API-key alternative");
     [controller windowWillClose:[NSNotification notificationWithName:NSWindowWillCloseNotification object:controller.window]];
     Check([action isEqual:@"dismissed"],@"closing Settings never implies Collection consent");
     SPDFMacUnifiedSettingsController* wizard=[[SPDFMacUnifiedSettingsController alloc] initWithState:@{@"setupWizard":@YES,@"wizardStep":@0}];
@@ -177,10 +180,23 @@ int main(void) { @autoreleasepool {
     wizard.settingsChanged=^(NSDictionary* value){ wizardChange=value; };
     for(NSInteger step=0;step<4;step++) {
         [wizard setValue:@(step) forKey:@"wizardStep"]; [wizard showSetupWizard]; [wizard.window.contentView layoutSubtreeIfNeeded];
+        Check(NSHeight(wizard.window.contentView.bounds)==520,@"all wizard steps retain the compact window height");
+        NSStackView* wizardContent=[wizard valueForKey:@"content"];
+        NSRect scrollFrame=wizardContent.enclosingScrollView.frame;
+        Check(fabs(NSHeight(wizard.window.contentView.bounds)-NSMaxY(scrollFrame)-24)<1,@"wizard removes hidden-navigation top space");
         Inspect(wizard.window.contentView);
         NSBitmapImageRep* rep=[wizard.window.contentView bitmapImageRepForCachingDisplayInRect:wizard.window.contentView.bounds];
         [wizard.window.contentView cacheDisplayInRect:wizard.window.contentView.bounds toBitmapImageRep:rep];
         [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-wizard-%ld.png",(long)step] atomically:YES];
+    }
+    [wizard.window setContentSize:NSMakeSize(650,478)];
+    wizard.window.appearance=[NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    for(NSInteger step=0;step<4;step++) {
+        [wizard setValue:@(step) forKey:@"wizardStep"]; [wizard showSetupWizard]; [wizard.window.contentView layoutSubtreeIfNeeded];
+        Inspect(wizard.window.contentView);
+        NSView* root=wizard.window.contentView;
+        NSBitmapImageRep* rep=[root bitmapImageRepForCachingDisplayInRect:root.bounds]; [root cacheDisplayInRect:root.bounds toBitmapImageRep:rep];
+        [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-wizard-loop2-narrow-%ld.png",(long)step] atomically:YES];
     }
     [wizard setValue:@0 forKey:@"wizardStep"]; [wizard showSetupWizard];
     Check(Find(wizard.window.contentView,@"fullDiskAccess")!=nil,@"wizard begins with Full Disk Access");

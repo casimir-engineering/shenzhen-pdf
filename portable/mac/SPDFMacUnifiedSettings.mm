@@ -27,11 +27,13 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
     NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:5 yRadius:5];
-    [SPDFCollectionColor(self.highlighted || self.state==NSControlStateValueOn || [self.identifier isEqual:@"done"] ? @"selected" : @"control") setFill];
-    [shape fill];
+    BOOL alternative=[@[@"revealKey",@"hideKey"] containsObject:self.identifier];
+    BOOL primary=[@[@"done",@"connect"] containsObject:self.identifier];
+    [SPDFCollectionColor(self.highlighted || self.state==NSControlStateValueOn || primary ? @"selected" : @"control") setFill];
+    if(!alternative || self.highlighted) [shape fill];
     NSMutableParagraphStyle* style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter;
     NSDictionary* attributes=@{NSFontAttributeName:self.font,NSForegroundColorAttributeName:
-        SPDFCollectionColor(self.enabled ? @"text" : @"secondary"),NSParagraphStyleAttributeName:style};
+        SPDFCollectionColor(self.enabled ? (alternative ? @"accent" : @"text") : @"secondary"),NSParagraphStyleAttributeName:style};
     CGFloat h=[self.title sizeWithAttributes:attributes].height;
     [self.title drawInRect:NSMakeRect(8,floor((self.bounds.size.height-h)/2),self.bounds.size.width-16,h)
         withAttributes:attributes];
@@ -66,11 +68,12 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 @property(nonatomic) NSTextField* storageBudget;
 @property(nonatomic) NSTextField* storageLocation;
 @property(nonatomic) NSTextField* storageError;
+@property(nonatomic) NSLayoutConstraint* contentTop;
 @end
 
 @implementation SPDFMacUnifiedSettingsController
 - (instancetype)initWithState:(NSDictionary*)state {
-    NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,612)
+    NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,[state[@"setupWizard"] boolValue] ? 520 : 612)
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
     if (!(self=[super initWithWindow:window])) return nil;
@@ -102,13 +105,14 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSStackView* footer=[NSStackView stackViewWithViews:@[show,self.back,self.progress,[NSView new],done]];
     footer.spacing=16; footer.translatesAutoresizingMaskIntoConstraints=NO;
     for (NSView* view in @[nav,scroll,footer]) [root addSubview:view];
+    self.contentTop=[scroll.topAnchor constraintEqualToAnchor:root.topAnchor constant:66];
     [NSLayoutConstraint activateConstraints:@[
         [nav.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:24],
         [nav.topAnchor constraintEqualToAnchor:root.topAnchor constant:18],
         [nav.trailingAnchor constraintLessThanOrEqualToAnchor:root.trailingAnchor constant:-24],
         [scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:24],
         [scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor constant:-24],
-        [scroll.topAnchor constraintEqualToAnchor:nav.bottomAnchor constant:20],
+        self.contentTop,
         [scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor constant:-12],
         [content.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],
         [content.heightAnchor constraintGreaterThanOrEqualToAnchor:scroll.contentView.heightAnchor],
@@ -121,6 +125,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (NSButton*)button:(NSString*)title action:(SEL)action key:(NSString*)key {
     SPDFSettingsButton* button=[[SPDFSettingsButton alloc] initWithFrame:NSZeroRect];
     button.title=title; button.font=[NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+    if([@[@"revealKey",@"hideKey"] containsObject:key]) button.font=[NSFont systemFontOfSize:12];
     button.target=self; button.action=action; button.bordered=NO;
     button.identifier=key; button.accessibilityLabel=title; button.translatesAutoresizingMaskIntoConstraints=NO;
     [button.heightAnchor constraintEqualToConstant:28].active=YES;
@@ -202,6 +207,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         detail:self.state[@"connectionStatus"] ?: (connected ? @"Your credential is stored in macOS Keychain." : @"Sign in in your browser. Your credential stays in macOS Keychain.") control:connect];
     NSStackView* connectionWords=connectionRow.arrangedSubviews.firstObject;
     self.connectionTitle=connectionWords.arrangedSubviews.firstObject; self.connectionDetail=connectionWords.arrangedSubviews.lastObject;
+    if(!connected && !self.usesAPIKey) [self.content setCustomSpacing:4 afterView:connectionRow];
     [self buildKeyAlternative];
     [self divider];
     SPDFMacSearchablePicker* model=[[SPDFMacSearchablePicker alloc] initWithFrame:NSZeroRect];
@@ -227,7 +233,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (void)buildKeyAlternative {
     if([self.state[@"connected"] boolValue]) return;
     if(!self.usesAPIKey) {
-        [self row:@"" detail:@"" control:[self button:@"Connect with API key" action:@selector(revealKey:) key:@"revealKey"]]; return;
+        [self row:@"" detail:@"" control:[self button:@"Use an API key instead" action:@selector(revealKey:) key:@"revealKey"]]; return;
     }
     self.secret=[NSSecureTextField new]; self.secret.placeholderString=@"OpenRouter API key";
     self.secret.accessibilityLabel=@"OpenRouter API key"; self.secret.font=[NSFont systemFontOfSize:13];
@@ -266,9 +272,17 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSMutableDictionary* state=[self.state mutableCopy]; [state addEntriesFromDictionary:change]; self.state=state;
     if(self.settingsChanged) self.settingsChanged(change);
 }
-- (void)showSetupWizard { self.setupWizard=YES; [self refreshMode]; }
-- (void)showSettings { self.setupWizard=NO; [self refreshMode]; }
+- (void)showSetupWizard {
+    if(!self.setupWizard) [self.window setContentSize:NSMakeSize(760,520)];
+    self.setupWizard=YES; [self refreshMode];
+}
+- (void)showSettings {
+    if(self.setupWizard) [self.window setContentSize:NSMakeSize(760,612)];
+    self.setupWizard=NO; [self refreshMode];
+}
 - (void)refreshMode {
+    self.contentTop.constant=self.setupWizard ? 24 : 66;
+    self.window.minSize=NSMakeSize(650,self.setupWizard ? 500 : 540);
     self.navigation.hidden=self.setupWizard; self.showAtLaunch.hidden=YES;
     self.back.hidden=!self.setupWizard; self.back.enabled=self.wizardStep>0;
     self.progress.hidden=!self.setupWizard;
@@ -406,9 +420,12 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     if (secret.length && self.credentialHandler) self.credentialHandler(secret);
 }
 - (void)updateState:(NSDictionary*)state {
+    BOOL connectionChanged=state[@"connected"] && [state[@"connected"] boolValue]!=[self.state[@"connected"] boolValue];
     NSMutableDictionary* merged=[self.state mutableCopy]; [merged addEntriesFromDictionary:state]; self.state=merged;
     // Status callbacks must not destroy a field editor or erase an in-progress
-    // API-key draft. Update the existing controls; rebuild only on section changes.
+    // API-key draft. Rebuild only when the section or connection availability changes.
+    // Completing/disconnecting credentials changes the available connection controls.
+    if(connectionChanged && [self.section isEqual:@"ai"]) { self.usesAPIKey=NO; [self selectSection:@"ai"]; }
     for(NSString* key in @[@"showSettingsOnLaunch",@"collectionEnabled",@"keepImageColors",@"aiEnabled",@"autoAnalyze"])
         if(state[key]) [(NSButton*)self.controls[key] setState:[merged[key] boolValue]];
     NSButton* overview=(NSButton*)self.controls[@"showAI"];
