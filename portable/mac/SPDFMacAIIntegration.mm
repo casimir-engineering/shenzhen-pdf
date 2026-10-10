@@ -21,19 +21,25 @@
 @property NSView* searchContent;
 @property id monitor;
 @property BOOL history;
+@property NSString* submissionIssue;
+@property BOOL setupRequired;
 @end
 @implementation SPDFReaderAIState
 - (void)dealloc { if (_monitor) [NSEvent removeMonitor:_monitor]; [_session cancel]; }
 @end
 static char stateKey;
 @implementation ShenzhenMacDelegate (SPDFMacAIIntegration)
+- (SPDFMacAITransport*)aiChatTransport {
+    return [[SPDFMacAITransport alloc] initWithConfiguration:NSURLSessionConfiguration.ephemeralSessionConfiguration];
+}
+- (NSString*)aiAPIKeyForSending:(NSError**)error { return [SPDFMacAICredentials APIKeyWithError:error]; }
 - (SPDFReaderAIState*)readerAIState {
     SPDFReaderAIState* state=objc_getAssociatedObject(self,&stateKey);
     if (!state) {
         state=[SPDFReaderAIState new];
         state.store=[[SPDFMacAIChatStore alloc] initWithDirectory:SPDFMacAIChatStore.defaultDirectory];
         SPDFMacAITools* tools=[[SPDFMacAITools alloc] initWithReader:self]; state.tools=tools;
-        state.session=[[SPDFMacAIChatSession alloc] initWithTransport:[[SPDFMacAITransport alloc] initWithConfiguration:NSURLSessionConfiguration.ephemeralSessionConfiguration]
+        state.session=[[SPDFMacAIChatSession alloc] initWithTransport:[self aiChatTransport]
             tools:(id<SPDFMacAIChatTools>)tools definitions:SPDFMacAITools.toolDefinitions store:state.store];
         state.view=[[SPDFMacAIChatView alloc] initWithFrame:NSMakeRect(0,0,650,520)];
         objc_setAssociatedObject(self,&stateKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -91,21 +97,45 @@ static char stateKey;
     state.history=YES; [state.view displayChats:[state.store chats]];
 }
 - (BOOL)aiSendText:(NSString*)text {
+    if(![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)return NO;
+    SPDFReaderAIState* state=[self readerAIState];
+    if(state.session.running)return NO;
+    state.setupRequired=NO;
+    BOOL (^reject)(NSString*)=^BOOL(NSString* reason) {
+        state.submissionIssue=reason; [state.view showSubmissionError:reason]; return NO;
+    };
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];
-    NSError* error=nil; [settings load:&error];
-    if(settings.onboardingRevision<SPDFUnifiedSettingsExperienceVersion) { [self showUnifiedSettingsMode:YES]; return NO; }
-    if(!settings.connectionConfigured) { [self showAIConnectionSettingsWithReason:@"Connect OpenRouter to send your message. Your draft is kept."]; return NO; }
-    if (!settings.enabled) { [self showAIConnectionSettingsWithReason:@"Enable document chat to send your message. Your draft is waiting in the chat."]; return NO; }
-    NSString* key=[SPDFMacAICredentials APIKeyWithError:&error];
-    if (!key.length) { [self showAIConnectionSettingsWithReason:@"Connect OpenRouter to send your message. Your draft is waiting in the chat."]; return NO; }
-    SPDFReaderAIState* state=[self readerAIState]; state.history=NO;
+    NSError* error=nil;
+    if(![settings load:&error])return reject(@"AI settings could not be read. Your draft is kept; try again.");
+    if(settings.onboardingRevision<SPDFUnifiedSettingsExperienceVersion) {
+        state.setupRequired=YES;
+        return reject(@"Finish setup using Settings above before sending. Your draft is kept.");
+    }
+    if(!settings.enabled)return reject(@"Document chat is disabled. Enable it in Settings above. Your draft is kept.");
+    // An explicit send checks the credential itself. A stale status flag must not
+    // redirect an already connected user to Settings before trying their saved key.
+    NSString* key=[self aiAPIKeyForSending:&error];
+    if(!key.length)return reject(error ?
+        @"The saved OpenRouter key is unavailable. Reconnect in Settings above. Your draft is kept." :
+        @"Connect OpenRouter in Settings above to send. Your draft is kept.");
+    if(!settings.connectionConfigured) {
+        settings.connectionConfigured=YES;
+        if(![settings save:&error])return reject(@"The connection could not be saved. Your draft is kept; try again.");
+        [NSDistributedNotificationCenter.defaultCenter postNotificationName:@"ShenzhenPDFAISettingsChanged" object:nil userInfo:nil deliverImmediately:YES];
+    }
+    state.submissionIssue=nil; [state.view showSubmissionError:nil]; state.history=NO;
     NSUInteger before=[state.session.chat[@"messages"] count];
     [state.session send:text model:settings.model apiKey:key]; return [state.session.chat[@"messages"] count]>before;
 }
 - (void)aiChatAction:(NSString*)action {
     SPDFReaderAIState* state=[self readerAIState];
     if ([action isEqual:@"close"]) { [self closeAIChat]; return; }
-    if ([action isEqual:@"settings"]) { [self showUnifiedSettings:nil]; return; }
+    if ([action isEqual:@"settings"]) {
+        if(state.setupRequired)[self showUnifiedSettingsMode:YES];
+        else if(state.submissionIssue.length)[self showAIConnectionSettingsWithReason:state.submissionIssue];
+        else [self showUnifiedSettings:nil];
+        return;
+    }
     if ([action isEqual:@"current"]) { state.history=NO; [state.view displaySession:state.session]; [_palettePanel makeFirstResponder:state.view.composer]; return; }
     if ([action isEqual:@"new"]) { state.history=NO; state.view.composer.string=@""; [state.session newChat]; [_palettePanel makeFirstResponder:state.view.composer]; return; }
     if ([action isEqual:@"stop"]) { [state.session cancel]; return; }
