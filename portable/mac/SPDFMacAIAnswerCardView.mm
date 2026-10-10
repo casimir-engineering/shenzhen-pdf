@@ -1,66 +1,87 @@
 #import "SPDFMacAIAnswerCardView.h"
 #import "SPDFMacGroupActionButton.h"
+#import "SPDFMacIconGeometry.h"
+static NSColor* AnswerColor(CGFloat r,CGFloat g,CGFloat b) { return [NSColor colorWithSRGBRed:r/255 green:g/255 blue:b/255 alpha:1]; }
 @interface SPDFAnswerEvidenceButton : SPDFGroupActionButton @end
-@implementation SPDFAnswerEvidenceButton
+@implementation SPDFAnswerEvidenceButton {
+    NSTrackingArea* _hoverArea; BOOL _hovered;
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas]; if (_hoverArea) [self removeTrackingArea:_hoverArea];
+    _hoverArea=[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited|NSTrackingActiveAlways|NSTrackingInVisibleRect owner:self userInfo:nil];
+    [self addTrackingArea:_hoverArea];
+}
+- (void)mouseEntered:(NSEvent*)event { (void)event; _hovered=YES; self.needsDisplay=YES; }
+- (void)mouseExited:(NSEvent*)event { (void)event; _hovered=NO; self.needsDisplay=YES; }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
-    NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:6 yRadius:6];
-    [[NSColor colorWithSRGBRed:.12 green:.29 blue:.24 alpha:self.highlighted ? .23 : .10] setFill]; [shape fill];
-    [[NSColor colorWithSRGBRed:.12 green:.29 blue:.24 alpha:.22] setStroke]; [shape stroke];
-    NSDictionary* attributes=@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],
-        NSForegroundColorAttributeName:[NSColor colorWithSRGBRed:.10 green:.24 blue:.19 alpha:1]};
+    NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,1,1) xRadius:14 yRadius:14];
+    [(self.highlighted ? AnswerColor(38,28,52) : _hovered ? AnswerColor(79,64,101) : AnswerColor(59,48,77)) setFill]; [shape fill];
+    NSColor* text=AnswerColor(250,247,255);
+    NSDictionary* attributes=@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium],NSForegroundColorAttributeName:text};
     NSSize size=[self.title sizeWithAttributes:attributes];
-    [self.title drawAtPoint:NSMakePoint(round((NSWidth(self.bounds)-size.width)/2),round((NSHeight(self.bounds)-size.height)/2)) withAttributes:attributes];
-    if (self.window.firstResponder==self) {
+    [self.title drawAtPoint:NSMakePoint(13,round((NSHeight(self.bounds)-size.height)/2)) withAttributes:attributes];
+    NSImageSymbolConfiguration* config=[[NSImageSymbolConfiguration configurationWithPointSize:12 weight:NSFontWeightMedium]
+        configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[text]]];
+    NSImage* arrow=[[NSImage imageWithSystemSymbolName:@"arrow.right" accessibilityDescription:nil] imageWithSymbolConfiguration:config];
+    SPDFDrawVectorIcon(arrow,NSMakeRect(NSWidth(self.bounds)-26,(NSHeight(self.bounds)-12)/2,12,12),YES);
+    if(self.window.firstResponder==self) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
 }
 @end
 @implementation SPDFMacAIAnswerCardView {
     NSButton* _evidence; NSLayoutConstraint* _height; BOOL _measurementPending;
-    void (^_openLink)(NSURL*); NSURL* _citation;
+    void (^_openLink)(NSURL*); NSURL* _citation; NSRange _valueRange; BOOL _inlineEvidence;
 }
 - (instancetype)initWithCard:(NSDictionary*)card width:(CGFloat)width openLink:(void (^)(NSURL*))openLink {
-    if (!(self=[super initWithFrame:NSMakeRect(0,0,MAX(180,width),150)])) return nil;
+    if (!(self=[super initWithFrame:NSMakeRect(0,0,MAX(180,width),120)])) return nil;
     self.identifier=@"answerCard"; self.editable=NO; self.selectable=YES; self.drawsBackground=NO;
     self.verticallyResizable=NO; self.horizontallyResizable=NO;
-    self.textContainerInset=NSMakeSize(16,14); self.textContainer.lineFragmentPadding=0;
+    self.textContainerInset=NSMakeSize(18,16); self.textContainer.lineFragmentPadding=0;
     self.textContainer.widthTracksTextView=YES;
-    NSColor* ink=[NSColor colorWithSRGBRed:.10 green:.24 blue:.19 alpha:1];
-    NSMutableParagraphStyle* labelStyle=[NSMutableParagraphStyle new]; labelStyle.paragraphSpacing=5;
+    NSMutableParagraphStyle* labelStyle=[NSMutableParagraphStyle new]; labelStyle.paragraphSpacing=7;
     NSMutableAttributedString* text=[[NSMutableAttributedString alloc] initWithString:[card[@"label"] stringByAppendingString:@"\n"]
-        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium],NSForegroundColorAttributeName:ink,NSParagraphStyleAttributeName:labelStyle}];
+        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium],NSForegroundColorAttributeName:AnswerColor(101,85,116),NSParagraphStyleAttributeName:labelStyle}];
+    _valueRange=NSMakeRange(text.length,[card[@"value"] length]);
     [text appendAttributedString:[[NSAttributedString alloc] initWithString:card[@"value"]
-        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:32 weight:NSFontWeightSemibold],NSForegroundColorAttributeName:ink}]];
+        attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:_valueRange.length>24 ? 28 : _valueRange.length>14 ? 34 : 36 weight:NSFontWeightSemibold],
+            NSForegroundColorAttributeName:AnswerColor(46,37,63)}]];
     [self.textStorage setAttributedString:text];
     self.accessibilityLabel=[NSString stringWithFormat:@"Answer: %@, %@",card[@"label"],card[@"value"]];
     _citation=[NSURL URLWithString:card[@"citation"]]; _openLink=[openLink copy];
-    _evidence=[[SPDFAnswerEvidenceButton alloc] initWithFrame:NSMakeRect(16,106,120,28)];
+    _evidence=[[SPDFAnswerEvidenceButton alloc] initWithFrame:NSMakeRect(18,72,132,31)];
     _evidence.identifier=@"answerEvidence"; _evidence.title=@"View evidence"; _evidence.bordered=NO;
     _evidence.target=self; _evidence.action=@selector(openEvidence:); _evidence.accessibilityLabel=@"View evidence for this answer";
     _evidence.toolTip=@"Open the cited document passage"; [self addSubview:_evidence];
     self.translatesAutoresizingMaskIntoConstraints=NO;
-    _height=[self.heightAnchor constraintEqualToConstant:150]; _height.active=YES;
+    _height=[self.heightAnchor constraintEqualToConstant:120]; _height.active=YES;
     [self measure]; return self;
 }
 - (void)openEvidence:(id)sender { (void)sender; if (_openLink && _citation) _openLink(_citation); }
 - (void)drawRect:(NSRect)dirty {
     BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
-    [(dark ? [NSColor colorWithSRGBRed:.72 green:.85 blue:.79 alpha:1] :
-        [NSColor colorWithSRGBRed:.86 green:.94 blue:.89 alpha:1]) setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:10 yRadius:10] fill];
+    [(dark ? AnswerColor(216,205,233) : AnswerColor(238,232,247)) setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:12 yRadius:12] fill];
     [super drawRect:dirty];
 }
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay=YES; }
 - (void)measure {
-    CGFloat width=NSWidth(self.bounds)-32; if (width<=0 || !_height) return;
+    CGFloat width=NSWidth(self.bounds)-36; if (width<=0 || !_height) return;
     self.textContainer.containerSize=NSMakeSize(width,CGFLOAT_MAX);
     [self.layoutManager ensureLayoutForTextContainer:self.textContainer];
-    CGFloat height=MAX(138,ceil(NSMaxY([self.layoutManager usedRectForTextContainer:self.textContainer]))+14+12+28+14);
-    if (fabs(_height.constant-height)>.5) _height.constant=height;
+    NSRange glyphs=[self.layoutManager glyphRangeForCharacterRange:_valueRange actualCharacterRange:NULL];
+    NSRect value=[self.layoutManager boundingRectForGlyphRange:glyphs inTextContainer:self.textContainer];
+    CGFloat naturalWidth=[[self.textStorage attributedSubstringFromRange:_valueRange] size].width;
+    _inlineEvidence=NSWidth(self.bounds)>=340 && ceil(naturalWidth)+16+132<=width;
+    CGFloat textBottom=ceil(NSMaxY([self.layoutManager usedRectForTextContainer:self.textContainer]))+16;
+    CGFloat buttonY=_inlineEvidence ? round(16+NSMidY(value)-31/2.0) : textBottom+12;
+    _evidence.frame=NSMakeRect(NSWidth(self.bounds)-18-132,buttonY,132,31);
+    CGFloat height=ceil(MAX(textBottom,NSMaxY(_evidence.frame)))+16;
+    if(fabs(_height.constant-height)>.5) _height.constant=height;
 }
 - (void)setFrameSize:(NSSize)size {
-    [super setFrameSize:size]; _evidence.frame=NSMakeRect(16,size.height-42,120,28);
+    [super setFrameSize:size];
     if (_measurementPending || !_height || self.hiddenOrHasHiddenAncestor) return;
     _measurementPending=YES;
     __weak SPDFMacAIAnswerCardView* weakSelf=self;
