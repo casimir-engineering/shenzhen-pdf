@@ -69,6 +69,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 @property(nonatomic) NSTextField* storageLocation;
 @property(nonatomic) NSTextField* storageError;
 @property(nonatomic) NSLayoutConstraint* contentTop;
+@property(nonatomic) NSUInteger sectionGeneration;
 @end
 
 @implementation SPDFMacUnifiedSettingsController
@@ -169,6 +170,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 }
 - (void)divider { [self add:SPDFCollectionDivider()]; }
 - (void)selectSection:(NSString*)section {
+    self.sectionGeneration++;
     self.section=section; self.secret.stringValue=@""; self.secret=nil;
     self.storageBudget=nil; self.storageLocation=nil; self.storageError=nil;
     for (NSView* view in [self.content.arrangedSubviews copy]) { [self.content removeArrangedSubview:view]; [view removeFromSuperview]; }
@@ -337,6 +339,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     self.storageLocation.identifier=@"collectionLocation";
 }
 - (void)storageModeChanged:(NSPopUpButton*)sender {
+    NSUInteger generation=self.sectionGeneration;
     NSString* mode=@[@"dynamic",@"static",@"unlimited"][(NSUInteger)sender.indexOfSelectedItem];
     NSMutableDictionary* changes=[@{@"collectionStorageMode":mode} mutableCopy];
     if([mode isEqual:@"static"]) {
@@ -345,7 +348,9 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         changes[@"collectionStorageGiB"]=@(amount>0 ? amount : 10);
     }
     [self emit:changes];
-    [self selectSection:@"collection"];
+    // Host persistence can process another navigation event before returning.
+    // Only refresh the page that owned this control; never restore a stale step.
+    if(self.sectionGeneration==generation && [self.section isEqual:@"collection"]) [self selectSection:@"collection"];
 }
 - (void)storageAmountChanged:(NSTextField*)sender {
     NSString* text=[sender.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

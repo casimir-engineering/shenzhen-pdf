@@ -239,6 +239,18 @@ int main(void) { @autoreleasepool {
     Check(Find(wizard.window.contentView,@"defaultReader:pdf")!=nil && Find(wizard.window.contentView,@"noMatchingFormats")==nil,@"file-type search accepts a dotted extension");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
     Check([wizardAction isEqual:@"wizardDone"] && !wizard.window.visible,@"wizard Done closes instead of opening settings");
+    SPDFMacUnifiedSettingsController* reentrant=[[SPDFMacUnifiedSettingsController alloc]
+        initWithState:@{@"setupWizard":@YES,@"wizardStep":@1,@"collectionStorageMode":@"static",@"collectionStorageGiB":@10}];
+    __weak SPDFMacUnifiedSettingsController* weakReentrant=reentrant;
+    reentrant.settingsChanged=^(NSDictionary* value) {
+        [weakReentrant updateState:value];
+        // The real host can process Continue during synchronous persistence/status work.
+        if(value[@"collectionStorageMode"]) [(NSButton*)Find(weakReentrant.window.contentView,@"done") performClick:nil];
+    };
+    NSPopUpButton* reentrantMode=(id)Find(reentrant.window.contentView,@"collectionStorageMode");
+    [reentrantMode selectItemAtIndex:0]; [NSApp sendAction:reentrantMode.action to:reentrantMode.target from:reentrantMode];
+    Check(reentrant.wizardStep==2 && Find(reentrant.window.contentView,@"model")!=nil &&
+        Find(reentrant.window.contentView,@"collectionStorageMode")==nil,@"storage callback cannot repaint Collection after Continue advances to AI");
     Check(!controller.window.visible,@"verification never shows a window");
     fprintf(stderr,"Unified settings: %d failures\n",failures); return failures?1:0;
 } }

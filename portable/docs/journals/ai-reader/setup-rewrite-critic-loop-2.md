@@ -47,3 +47,20 @@ separately attributed rather than assumed from these tests.
 - Parent reports the earlier apparent live launch hang was a transient initial
   accessibility timeout and that all four steps were traversed in the isolated
   application. No app interaction was performed by this implementation agent.
+
+## Live follow-up: reentrant storage callback
+
+After the design review, the parent found a production interaction defect:
+switching Static to Dynamic and quickly continuing could leave the Collection
+content visible under the Step 3 footer. The storage-mode handler called the host
+and then unconditionally repainted Collection. The host could process Continue
+before that callback returned, so the old handler overwrote the newly shown AI
+step.
+
+A new headless regression invokes Continue inside the synchronous settings-change
+callback. It reproduces the mismatch against the old handler: one failure,
+`/tmp/sz-settings-reentrant-before.log`. The handler now captures its section
+generation and refreshes only if navigation has not changed while the host ran.
+The same suite then passes with zero failures and exit 0:
+`/tmp/sz-settings-reentrant-after.log`. This fixes the reproduced callback ordering;
+the parent will repeat the rapid path in the rebuilt isolated application.
