@@ -13,7 +13,7 @@
 @end
 typedef NS_ENUM(NSInteger, SPDFMacAIChatActivityState) {
     SPDFMacAIChatActivityIdle, SPDFMacAIChatActivityThinking, SPDFMacAIChatActivityWorking,
-    SPDFMacAIChatActivityCompleted, SPDFMacAIChatActivityError, SPDFMacAIChatActivityStopped
+    SPDFMacAIChatActivityCompleted, SPDFMacAIChatActivityError, SPDFMacAIChatActivityStopped, SPDFMacAIChatActivityPaused
 };
 @interface SPDFMacAIChatSession : NSObject
 @property(nonatomic, copy) void (^changed)(void);

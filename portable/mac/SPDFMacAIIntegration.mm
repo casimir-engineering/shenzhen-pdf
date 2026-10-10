@@ -67,7 +67,6 @@ static char stateKey;
         };
         state.view.sendText=^BOOL(NSString* text) { return [owner aiSendText:text]; };
         state.view.action=^(NSString* action) { [owner aiChatAction:action]; };
-        state.view.searchChats=^(NSString* query){ query=[query copy];[owner showAIChats:nil];weakState.historyView.search.stringValue=query;[owner searchAIChats:query]; };
         state.view.openLink=^(NSURL* URL) { [owner aiOpenCitation:URL]; };
     }
     return state;
@@ -89,7 +88,6 @@ static char stateKey;
         state.drafts[state.session.chat[@"id"]]=[state.view.composer.string copy] ?: @"";
         [state.session newChat];state.view.composer.string=query;
     }
-    [state.view setHistorySearchQuery:state.historyView.search.stringValue];
     [state.dock setVisible:YES];[self applyWorkspacePanelPolicy];[state.view displaySession:state.session];
     [self relayoutDocumentForViewportChange];[_window makeFirstResponder:state.view.composer];
 }
@@ -133,13 +131,12 @@ static char stateKey;
 }
 - (void)searchAIChats:(NSString*)query {
     SPDFReaderAIState* state=objc_getAssociatedObject(self,&stateKey);if(!state.historyView || state.historyView.hidden || !_sidebarPreferredVisible)return;
-    [state.view setHistorySearchQuery:query];
     NSUInteger generation=++state.searchGeneration;query=[query copy] ?: @"";
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,150*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
         if(generation!=state.searchGeneration || state.historyView.hidden || !self->_sidebarPreferredVisible)return;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-            NSArray* chats=[state.store chatsMatchingQuery:query];
-            dispatch_async(dispatch_get_main_queue(),^{if(generation==state.searchGeneration)[state.historyView displayChats:chats selectedID:state.session.chat[@"id"]];});
+            NSArray* chats=[state.store chatsMatchingQuery:query];NSArray* folders=[state.store folders];
+            dispatch_async(dispatch_get_main_queue(),^{if(generation==state.searchGeneration){[state.historyView displayFolders:folders];[state.historyView displayChats:chats selectedID:state.session.chat[@"id"]];}});
         });
     });
 }
@@ -182,6 +179,7 @@ static char stateKey;
     [state.session send:text model:settings.model apiKey:key]; return [state.session.chat[@"messages"] count]>before;
 }
 - (void)aiChatAction:(NSString*)action {
+    if([self handleAIChatOrganizationAction:action])return;
     SPDFReaderAIState* state=[self readerAIState];
     if ([action isEqual:@"close"]) { [self closeAIChat]; return; }
     if ([action isEqual:@"authorize"]) {
@@ -229,6 +227,35 @@ static char stateKey;
             [self searchAIChats:state.historyView.search.stringValue];
         }];
     }
+}
+- (BOOL)handleAIChatOrganizationAction:(NSString*)action {
+    NSArray* parts=[action componentsSeparatedByString:@":"];NSString* command=parts.firstObject;
+    if(![@[@"rename",@"move",@"newFolder",@"renameFolder",@"deleteFolder",@"toggleFolder"] containsObject:command])return NO;
+    SPDFReaderAIState* state=[self readerAIHistoryState];NSString* identifier=parts.count>1 ? parts[1] : @"";
+    NSDictionary* folder=nil;for(NSDictionary* item in state.store.folders)if([item[@"id"] isEqual:identifier])folder=item;
+    void (^refresh)(BOOL,NSError*)=^(BOOL ok,NSError* error){
+        if(!ok){[self->_window presentError:error ?: [NSError errorWithDomain:@"ShenzhenPDF.Chat" code:3 userInfo:@{NSLocalizedDescriptionKey:@"Could not update chat organization. Use a unique name of 1–160 characters and try again."}]];}
+        [self searchAIChats:state.historyView.search.stringValue];
+    };
+    NSError* error=nil;
+    if([command isEqual:@"move"]) {BOOL ok=parts.count==3 && [state.store moveChat:identifier toFolder:parts[2] error:&error];refresh(ok,error);return YES;}
+    if([command isEqual:@"toggleFolder"]) {BOOL ok=folder && [state.store setFolder:identifier collapsed:![folder[@"collapsed"] boolValue] error:&error];refresh(ok,error);return YES;}
+    if([command isEqual:@"deleteFolder"]) {BOOL ok=[state.store removeFolder:identifier error:&error];refresh(ok,error);return YES;}
+    BOOL chat=[command isEqual:@"rename"], create=[command isEqual:@"newFolder"];
+    NSDictionary* saved=chat ? [state.store chatWithID:identifier] : nil;
+    if((chat && !saved) || (!chat && !create && !folder))return YES;
+    NSAlert* alert=[NSAlert new];alert.messageText=chat ? @"Rename chat" : create ? @"New folder" : @"Rename folder";
+    [alert addButtonWithTitle:create ? @"Create" : @"Rename"];[alert addButtonWithTitle:@"Cancel"];
+    NSTextField* field=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,24)];
+    field.stringValue=chat ? saved[@"title"] : create ? @"New folder" : folder[@"name"];field.accessibilityLabel=@"Name";
+    alert.accessoryView=field;
+    [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response){
+        if(response!=NSAlertFirstButtonReturn)return;NSError* issue=nil;BOOL ok=NO;
+        if(chat)ok=[state.store renameChat:identifier title:field.stringValue error:&issue];
+        else if(create)ok=[state.store createFolderNamed:field.stringValue error:&issue]!=nil;
+        else ok=[state.store renameFolder:identifier name:field.stringValue error:&issue];
+        refresh(ok,issue);
+    }];[alert.window makeFirstResponder:field];[field selectText:nil];return YES;
 }
 - (void)aiOpenCitation:(NSURL*)URL {
     if ([URL.scheme.lowercaseString isEqual:@"https"]) { [NSWorkspace.sharedWorkspace openURL:URL]; return; }

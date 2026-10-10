@@ -28,6 +28,7 @@ static NSString* Symbol(NSInteger mode) {
 @end
 @interface SPDFSidebarNavigationRow : NSButton
 @property NSInteger mode;
+@property BOOL navigationSelected;
 @end
 @implementation SPDFSidebarNavigationRow {
     NSTrackingArea* _hoverArea;
@@ -52,10 +53,10 @@ static NSString* Symbol(NSInteger mode) {
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
-    BOOL selected = self.mode >= 0 && self.state == NSControlStateValueOn;
+    BOOL selected = self.navigationSelected;
     NSRect bounds = NSInsetRect(self.bounds,.5,.5);
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7 yRadius:7];
-    if (self.mode >= 0 && (selected || self.highlighted || _hovered)) {
+    if (self.mode != -1 && (selected || self.highlighted || _hovered)) {
         BOOL dark = [[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
         NSColor* fill = selected ? (dark ? [NSColor colorWithSRGBRed:.216 green:.294 blue:.380 alpha:1] : [NSColor colorWithSRGBRed:.859 green:.898 blue:.941 alpha:1]) : [NSColor.labelColor colorWithAlphaComponent:self.highlighted ? .065 : .035];
         [fill setFill]; [shape fill];
@@ -82,8 +83,8 @@ static NSString* Symbol(NSInteger mode) {
 }
 - (NSRect)focusRingMaskBounds { return NSInsetRect(self.bounds,.5,.5); }
 - (void)drawFocusRingMask { [[NSBezierPath bezierPathWithRoundedRect:self.focusRingMaskBounds xRadius:7 yRadius:7] fill]; }
-- (NSString*)accessibilityRole { return self.mode < 0 ? NSAccessibilityButtonRole : NSAccessibilityRadioButtonRole; }
-- (id)accessibilityValue { return self.mode < 0 ? nil : @(self.state == NSControlStateValueOn); }
+- (NSString*)accessibilityRole { return self.mode == -1 ? NSAccessibilityButtonRole : NSAccessibilityRadioButtonRole; }
+- (id)accessibilityValue { return self.mode == -1 ? nil : @(self.navigationSelected); }
 @end
 
 @implementation SPDFSidebarNavigationControl {
@@ -116,7 +117,7 @@ static NSString* Symbol(NSInteger mode) {
         SPDFSidebarNavigationRow* chats=[SPDFSidebarNavigationRow new]; chats.mode=-2;
         chats.ignoresMultiClick=NO; [chats setButtonType:NSButtonTypeMomentaryChange];
         chats.target=target; chats.action=NSSelectorFromString(@"showAIChats:"); chats.bordered=NO;
-        chats.toolTip=@"Chats"; chats.accessibilityLabel=@"Chats"; _chats=chats; [self addSubview:chats];
+        chats.toolTip=@"Chats"; chats.accessibilityLabel=@"Chats"; _chats=chats; [self addSubview:chats]; [self syncRows];
     }
 
     if (!_collapse) {
@@ -149,7 +150,8 @@ static NSString* Symbol(NSInteger mode) {
     if (retainedFocus) [self.window makeFirstResponder:self];
 }
 - (void)syncRows {
-    _chats.state=self.spdf_selectedSidebarMode==SPDFSidebarModeChats ? NSControlStateValueOn : NSControlStateValueOff;
+    ((SPDFSidebarNavigationRow*)_chats).navigationSelected=self.spdf_selectedSidebarMode==SPDFSidebarModeChats;
+    _chats.needsDisplay=YES;
     for (NSUInteger i=0;i<_rows.count;i++) {
         SPDFSidebarNavigationRow* row = _rows[i];
         row.hidden=[self tagForSegment:i]==SPDFSidebarModeChats;
@@ -157,7 +159,7 @@ static NSString* Symbol(NSInteger mode) {
         row.accessibilityLabel = row.title; row.toolTip = row.mode == SPDFSidebarModeHistory ? @"History (⌘H)" : row.title;
         row.enabled = [self isEnabledForSegment:i];
         row.state = self.selectedSegment == (NSInteger)i ? NSControlStateValueOn : NSControlStateValueOff;
-        row.needsDisplay = YES;
+        row.navigationSelected=self.selectedSegment == (NSInteger)i; row.needsDisplay = YES;
     }
 }
 // The container deliberately has no NSSegmentedCell: AppKit's segmented hit

@@ -3,18 +3,36 @@
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacAITransport.h"
 #import "SPDFMacUnifiedSettings.h"
-static NSUInteger composerRequests;
+static NSUInteger composerRequests, composerTitleRequests;
 static NSURLRequest* composerRequest;
 @interface ComposerReplyProtocol : NSURLProtocol @end
 @implementation ComposerReplyProtocol
 + (BOOL)canInitWithRequest:(NSURLRequest*)request { (void)request;return YES; }
 + (NSURLRequest*)canonicalRequestForRequest:(NSURLRequest*)request { return request; }
 - (void)startLoading {
-    @synchronized(ComposerReplyProtocol.class) { composerRequests++;composerRequest=self.request; }
+    NSData* data=self.request.HTTPBody;
+    if(!data && self.request.HTTPBodyStream) {
+        NSInputStream* stream=self.request.HTTPBodyStream;[stream open];NSMutableData* bytes=[NSMutableData data];
+        uint8_t buffer[2048];NSInteger count;
+        while((count=[stream read:buffer maxLength:sizeof(buffer)])>0)[bytes appendBytes:buffer length:(NSUInteger)count];
+        [stream close];data=bytes;
+    }
+    NSDictionary* payload=data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    Check(payload!=nil,"offline composer transport receives valid request JSON");
+    NSString* instruction=[payload[@"messages"] firstObject][@"content"];
+    BOOL title=[instruction hasPrefix:@"Summarize this conversation in a plain title"];
+    // Count real chat sends separately, so an intentional lazy title request can
+    // never hide a duplicate Return submission or make it look like one.
+    @synchronized(ComposerReplyProtocol.class) {
+        if(title)composerTitleRequests++;
+        else {composerRequests++;composerRequest=self.request;}
+    }
+    if(title)Check(![payload[@"tools"] count],"title request cannot execute app tools");
     NSHTTPURLResponse* response=[[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:200 HTTPVersion:@"HTTP/1.1"
         headerFields:@{@"Content-Type":@"application/json"}];
     [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-    NSData* reply=[@"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Offline acceptance reply\"}}]}" dataUsingEncoding:NSUTF8StringEncoding];
+    NSData* reply=[NSJSONSerialization dataWithJSONObject:@{@"choices":@[@{@"message":
+        @{@"role":@"assistant",@"content":title ? @"Offline document discussion" : @"Offline acceptance reply"}}]} options:0 error:nil];
     [self.client URLProtocol:self didLoadData:reply];[self.client URLProtocolDidFinishLoading:self];
 }
 - (void)stopLoading {}
@@ -68,6 +86,9 @@ static BOOL ComposerWait(BOOL (^predicate)(void)) {
 static NSUInteger ComposerRequestCount(void) {
     @synchronized(ComposerReplyProtocol.class) { return composerRequests; }
 }
+static NSUInteger ComposerTitleRequestCount(void) {
+    @synchronized(ComposerReplyProtocol.class) { return composerTitleRequests; }
+}
 static NSEvent* ComposerReturn(BOOL shift,NSInteger windowNumber) {
     return [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
         modifierFlags:shift ? NSEventModifierFlagShift : 0 timestamp:0 windowNumber:windowNumber
@@ -101,12 +122,16 @@ static void CheckComposerAcceptance(void) {
     window.releasedWhenClosed=NO;window.contentView=view;[window makeFirstResponder:view.composer];
     [view displaySession:session];
     SaveComposerSettings(NO,YES,YES);
-    NSUInteger initialRequests=ComposerRequestCount();view.composer.string=@"Send from Return with a stale flag";
+    NSUInteger initialRequests=ComposerRequestCount(),initialTitles=ComposerTitleRequestCount();view.composer.string=@"Send from Return with a stale flag";
     [view.composer keyDown:ComposerReturn(NO,window.windowNumber)];
     Check(ComposerWait(^BOOL{return session.chat[@"messages"] && [session.chat[@"messages"] count]==2 && !session.running;}),
         "actual composer Return receives offline assistant reply through production integration");
     Check(ComposerRequestCount()==initialRequests+1 && reader.keyReads==1 && !view.composer.string.length,
         "Return sends exactly once and clears accepted draft");
+    Check(ComposerWait(^BOOL{return [session.chat[@"title"] isEqual:@"Offline document discussion"];}),
+        "lazy title request finishes independently after the accepted answer");
+    Check(ComposerTitleRequestCount()==initialTitles+1 && ComposerRequestCount()==initialRequests+1,
+        "one answer schedules one title without another real chat send");
     Check(!reader.settingsOpens,"stale connection flag never opens Settings");
     SPDFMacAISettings* repaired=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];[repaired load:nil];
     Check(repaired.connectionConfigured,"valid saved key repairs false connection flag");

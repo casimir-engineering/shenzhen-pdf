@@ -145,7 +145,7 @@ int main(void) { @autoreleasepool {
     view.action=^(NSString* action){[actions addObject:action];};
     fixture.canUndo=YES;fixture.canRedo=YES;[view refreshActivityFromSession:(id)fixture];
     [window setContentSize:NSMakeSize(360,600)];[view layoutSubtreeIfNeeded];
-    for(NSString* key in @[@"new",@"history",@"undo",@"redo",@"settings",@"close"]) {
+    for(NSString* key in @[@"close",@"new",@"undo",@"redo",@"settings"]) {
         NSButton* button=(id)Find(view,key);
         Check(button.image && button.toolTip.length,@"panel actions have vector symbols and hover help");
         NSRect icon=[button rectForSymbol:button.image];
@@ -154,17 +154,24 @@ int main(void) { @autoreleasepool {
         Click(window,button,NSMakePoint(2,2));
         Click(window,button,NSMakePoint(NSWidth(button.bounds)-2,NSHeight(button.bounds)-2));
     }
-    Check(actions.count==12,@"each header action responds at both corners at narrow width");
+    Check(actions.count==10,@"each header action responds at both corners at narrow width");
     NSEvent* redoKey=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift timestamp:0 windowNumber:window.windowNumber context:nil characters:@"Z" charactersIgnoringModifiers:@"Z" isARepeat:NO keyCode:6];
     [window makeFirstResponder:nil];[view.composer performKeyEquivalent:redoKey];
-    Check(actions.count==12,@"composer cannot steal Undo or Redo from another focused control");
+    Check(actions.count==10,@"composer cannot steal Undo or Redo from another focused control");
     [window makeFirstResponder:view.composer];
-    Check([view.composer performKeyEquivalent:redoKey] && [actions.lastObject isEqual:@"redo"] && actions.count==13,@"uppercase Cmd Shift Z reaches agent Redo from empty composer");
-    NSSearchField* chatSearch=[view valueForKey:@"chatSearch"];chatSearch.stringValue=@"needle";
-    __weak SPDFMacAIChatView* queryView=view;
-    view.searchChats=^(NSString* query){[queryView setHistorySearchQuery:@"different"];Check([query isEqual:@"needle"],@"search handoff preserves the typed query while sidebar opens");};
+    Check([view.composer performKeyEquivalent:redoKey] && [actions.lastObject isEqual:@"redo"] && actions.count==11,@"uppercase Cmd Shift Z reaches agent Redo from empty composer");
+    NSSearchField* chatSearch=[view valueForKey:@"chatSearch"]; chatSearch.stringValue=@"polarity";
     [(id<NSSearchFieldDelegate>)view controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:chatSearch]];
-    view.searchChats=nil;[view setHistorySearchQuery:@""];
+    Check([chatSearch.placeholderString isEqual:@"Search this chat"] && messages.arrangedSubviews.count==2,@"chat search filters only matching messages in this conversation");
+    NSTextView* match=(id)messages.arrangedSubviews[1];
+    NSRange hit=[match.string rangeOfString:@"polarity"];
+    Check(hit.location!=NSNotFound && [match.textStorage attribute:NSBackgroundColorAttributeName atIndex:hit.location effectiveRange:nil],@"matching term is highlighted in rendered message");
+    [view setChatSearchQuery:@"nonexistent"];
+    Check(!messages.arrangedSubviews.count && [[(NSTextField*)Find(view,@"chatActivityDetail") stringValue] isEqual:@"No matches in this chat"],@"no-match feedback remains local to current chat");
+    [view setChatSearchQuery:@""];
+    Check(messages.arrangedSubviews.count==4 && !Find(view,@"history"),@"clearing local search restores both speakers; duplicate history action removed");
+    NSRect hideRect=[Find(view,@"close") convertRect:Find(view,@"close").bounds toView:view];
+    Check(NSMinY(hideRect)==4 && NSHeight(hideRect)==28 && NSMinX(hideRect)<NSMinX([Find(view,@"new") convertRect:Find(view,@"new").bounds toView:view]),@"Hide is first in the aligned36point toolbar");
     Capture(view,@"docked-compact");
     fixture.running=YES; fixture.activityState=SPDFMacAIChatActivityWorking;
     fixture.status=@"Reading · Schematic, page 2"; fixture.activityDetail=fixture.status; [view displaySession:(id)fixture];
@@ -211,12 +218,15 @@ int main(void) { @autoreleasepool {
     Check(NSHeight(compact.frame)<=40 && NSMinY(nextRect)-NSMaxY(bodyRect)>=15 && NSMinY(nextRect)-NSMaxY(bodyRect)<=20,
         @"short messages include comfortable padding and consistent16–20point separation");
     Check([compact.string hasSuffix:@"Board layout?"] && ![compact.string hasSuffix:@"\n"],@"only renderer-added terminal blank lines are removed");
-    Check(InspectTargets(view)>=14,@"minimum-height chat keeps every header and footer action reachable");
+    Check(InspectTargets(view)>=12,@"minimum-height chat keeps every header and footer action reachable");
     Check(NSHeight(transcript.frame)>80 && NSContainsRect(view.bounds,view.composer.enclosingScrollView.frame),@"minimum-height chat keeps transcript and composer usable");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Ready for your reply"] && send.enabled,@"finished question explicitly invites the user’s reply");
     fixture.activityState=SPDFMacAIChatActivityThinking; fixture.activityDetail=@"Waiting for the model…"; fixture.running=YES;
     [view displaySession:(id)fixture]; Capture(view,@"thinking");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] isEqual:@"Thinking…"],@"thinking is a prominent explicit state");
+    fixture.activityState=SPDFMacAIChatActivityPaused; fixture.activityDetail=@"Changes saved. Ask a follow-up to continue."; fixture.running=NO;
+    [view displaySession:(id)fixture];
+    Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] hasPrefix:@"Paused"] && ![[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Error"],@"step limit shows paused instead of incorrectly labelling successful changes an error");
     fixture.activityState=SPDFMacAIChatActivityError; fixture.activityDetail=@"Chat changed in another window. Reopen the latest conversation to continue."; fixture.running=NO;
     [view displaySession:(id)fixture]; Capture(view,@"error");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Error"] &&
@@ -226,7 +236,7 @@ int main(void) { @autoreleasepool {
     Capture(view,@"authorize-minimum");
     NSView* issue=Find(view,@"chatSubmissionIssue");
     Check(NSContainsRect(view.bounds,issue.frame) && NSContainsRect(view.bounds,view.composer.enclosingScrollView.frame) &&
-        NSHeight(transcript.frame)>20 && InspectTargets(view)>=16,@"authorization recovery and preserved draft fit at520×400");
+        NSHeight(transcript.frame)>20 && InspectTargets(view)>=14,@"authorization recovery and preserved draft fit at520×400");
     [view showSubmissionError:nil]; view.composer.string=@"";
     fixture.chat=@{@"id":@"question",@"messages":@[
         @{@"role":@"user",@"content":@"Use the board layout."},
@@ -239,6 +249,9 @@ int main(void) { @autoreleasepool {
     fixture.chat=@{@"id":@"long",@"messages":longMessages}; [view displaySession:(id)fixture];
     NSButton* older=(id)Find(view,@"older"); Check(older!=nil,@"long conversations reveal older-message affordance");
     Capture(view,@"older-messages");
+    [view setChatSearchQuery:@"Message 0"];
+    Check(messages.arrangedSubviews.count==2 && [[(NSTextView*)messages.arrangedSubviews[1] string] isEqual:@"Message 0"],@"search includes older messages beyond the initial40message viewport");
+    [view setChatSearchQuery:@""]; older=(id)Find(view,@"older");
     [older performClick:nil]; Check(Find(view,@"older")==nil && messages.arrangedSubviews.count==90,@"older messages remain available on demand");
     NSString* scratch=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     setenv("SPDF_STATE_DIR",scratch.UTF8String,1);
@@ -258,6 +271,7 @@ int main(void) { @autoreleasepool {
     Check(ImageCount(view)==0,@"preview outside chat assets cannot load a local file");
     fixture.chat=@{@"id":@"empty",@"messages":@[]}; fixture.status=@""; fixture.activityState=SPDFMacAIChatActivityIdle; fixture.activityDetail=@"";
     [view displaySession:(id)fixture]; Capture(view,@"empty");
+    Check(messages.arrangedSubviews.count==1 && [messages.arrangedSubviews.firstObject isKindOfClass:NSTextField.class],@"empty chat uses plain helper text without an empty message bubble");
     [NSFileManager.defaultManager removeItemAtPath:scratch error:nil];
         Check(!window.visible,@"probe never shows an app window");
     CheckChatDock();

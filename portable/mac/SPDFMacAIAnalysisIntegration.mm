@@ -234,7 +234,7 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
     for (NSDictionary* chapter in analysis[@"chapters"]) {
         NSInteger page=[chapter[@"page"] integerValue]-1;
         if (page<0) continue;
-        [rows addObject:@{@"kind":@"chapter",@"title":[@"✧ " stringByAppendingString:chapter[@"title"] ?: @"Chapter"],
+        [rows addObject:@{@"kind":@"chapter",@"title":chapter[@"title"] ?: @"Chapter",
             @"page":@(page),@"level":chapter[@"level"] ?: @0,@"generated":@YES}];
     }
     return rows;

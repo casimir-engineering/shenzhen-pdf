@@ -8,6 +8,14 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Chat history now has folders, timestamps and short generated titles. Right-click
+  to rename a chat or move it; removing a folder keeps its conversations.
+- History search shows highlighted message excerpts. Search inside a chat is
+  separate. Chat actions align with the reader toolbar, Hide comes first, and
+  Chats shows its selected state. Empty chats no longer show a blank dark block.
+- Generated chapters use plain, more descriptive titles. A successful final
+  tool action no longer becomes an Error solely because the step limit was reached.
+
 - AI chats now use a searchable history sidebar and a separate resizable chat
   panel next to the document. The Chats icon opens history; hide/reopen preserves
   the current conversation and draft. Saved conversations can be continued later.

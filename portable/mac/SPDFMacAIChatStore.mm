@@ -14,7 +14,7 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
 - (NSURL*)URLForID:(NSString*)identifier {
     return ValidID(identifier) ? [_directory URLByAppendingPathComponent:[identifier stringByAppendingPathExtension:@"json"]] : nil;
 }
-- (NSDictionary*)chatWithID:(NSString*)identifier {
+- (NSDictionary*)rawChatWithID:(NSString*)identifier {
     NSURL* URL=[self URLForID:identifier]; if (!URL) return nil;
     NSNumber* size=nil; [URL getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
     if (size.unsignedLongLongValue>8*1024*1024) return nil;
@@ -58,20 +58,44 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
         @"content":@"{\"cancelled\":true,\"reason\":\"Previous session ended\"}"}];
     return chat;
 }
+- (NSDictionary*)chatWithID:(NSString*)identifier {
+    NSMutableDictionary* chat=[[self rawChatWithID:identifier] mutableCopy];if(!chat)return nil;
+    NSDictionary* metadata=[self organization][@"chats"][identifier];
+    if ([metadata[@"title"] isKindOfClass:NSString.class]) chat[@"title"]=metadata[@"title"];
+    chat[@"folder"]=metadata[@"folder"] ?: @"";
+    return chat;
+}
 - (NSArray<NSDictionary*>*)chats { return [self chatsMatchingQuery:@""]; }
 - (NSArray<NSDictionary*>*)chatsMatchingQuery:(NSString*)query {
     NSMutableArray* chats=[NSMutableArray array];
+    NSDictionary* organization=[self organization];
     NSArray* URLs=[NSFileManager.defaultManager contentsOfDirectoryAtURL:_directory includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
     for (NSURL* URL in URLs) {
         if (![URL.pathExtension isEqual:@"json"]) continue;
-        NSDictionary* chat=[self chatWithID:URL.lastPathComponent.stringByDeletingPathExtension];
-        if(query.length && chat) {
-            BOOL found=[chat[@"title"] localizedCaseInsensitiveContainsString:query];
-            for(NSDictionary* message in chat[@"messages"]) if(!found && [@[@"user",@"assistant"] containsObject:message[@"role"]])
-                found=[message[@"content"] isKindOfClass:NSString.class] && [message[@"content"] localizedCaseInsensitiveContainsString:query];
-            if(!found)continue;
+        NSMutableDictionary* chat=[[self rawChatWithID:URL.lastPathComponent.stringByDeletingPathExtension] mutableCopy];
+        if (!chat) continue;
+        NSDictionary* metadata=organization[@"chats"][chat[@"id"]];
+        if(metadata[@"title"])chat[@"title"]=metadata[@"title"];
+        chat[@"folder"]=metadata[@"folder"] ?: @"";
+        NSString* snippet=@"";
+        if(query.length && ![chat[@"title"] localizedCaseInsensitiveContainsString:query]) {
+            for(NSDictionary* message in [chat[@"messages"] reverseObjectEnumerator]) {
+                NSString* text=message[@"content"];
+                if (![@[@"user",@"assistant"] containsObject:message[@"role"]] || ![text isKindOfClass:NSString.class]) continue;
+                NSRange match=[text rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch];
+                if(match.location==NSNotFound) continue;
+                NSUInteger start=match.location>55 ? match.location-55 : 0;
+                NSUInteger end=MIN(text.length,NSMaxRange(match)+100);
+                NSRange range=[text rangeOfComposedCharacterSequencesForRange:NSMakeRange(start,end-start)];
+                NSString* context=[text substringWithRange:range];
+                context=[[context componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] componentsJoinedByString:@" "];
+                snippet=[NSString stringWithFormat:@"%@%@%@",range.location ? @"…" : @"",context,NSMaxRange(range)<text.length ? @"…" : @""];
+                break;
+            }
+            if (!snippet.length) continue;
         }
-        if (chat) [chats addObject:@{@"id":chat[@"id"],@"title":chat[@"title"] ?: @"New chat",@"updated":chat[@"updated"] ?: @0}];
+        [chats addObject:@{@"id":chat[@"id"],@"title":chat[@"title"] ?: @"New chat",@"updated":chat[@"updated"] ?: @0,
+            @"folder":chat[@"folder"] ?: @"",@"snippet":snippet,@"query":query ?: @""}];
     }
     return [chats sortedArrayUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) { return [b[@"updated"] compare:a[@"updated"]]; }];
 }
@@ -106,6 +130,126 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     if (removed && error) *error=[NSError errorWithDomain:@"ShenzhenPDF.Chat" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This chat was deleted in another window. Start a new chat."}];
     if (ok) chmod(URL.fileSystemRepresentation,0600);
     flock(fd,LOCK_UN); close(fd); return ok;
+}
+// Explicit history operations only; constructing the store does no I/O.
+- (NSMutableDictionary*)organization {
+    NSURL* URL=[_directory URLByAppendingPathComponent:@".organization.json"];
+    if(![NSFileManager.defaultManager fileExistsAtPath:URL.path])
+        return [@{@"folders":[NSMutableArray array],@"chats":[NSMutableDictionary dictionary]} mutableCopy];
+    NSNumber* size=nil;[URL getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+    if(!size || size.unsignedLongLongValue>1024*1024)return nil;
+    NSData* data=[NSData dataWithContentsOfURL:URL];
+    id value=data.length ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
+    if (![value isKindOfClass:NSMutableDictionary.class] || ![value[@"folders"] isKindOfClass:NSMutableArray.class] ||
+        ![value[@"chats"] isKindOfClass:NSMutableDictionary.class])return nil;
+    NSMutableSet* identifiers=[NSMutableSet set];
+    for(id folder in value[@"folders"]) {
+        if(![folder isKindOfClass:NSDictionary.class] || !ValidID(folder[@"id"]) ||
+            ![folder[@"name"] isKindOfClass:NSString.class] || ![folder[@"name"] length] ||
+            (folder[@"collapsed"] && ![folder[@"collapsed"] isKindOfClass:NSNumber.class]) ||
+            [identifiers containsObject:folder[@"id"]])return nil;
+        [identifiers addObject:folder[@"id"]];
+    }
+    for(NSString* identifier in value[@"chats"]) {
+        id metadata=value[@"chats"][identifier];
+        if(!ValidID(identifier) || ![metadata isKindOfClass:NSDictionary.class])return nil;
+        for(NSString* key in @[@"title",@"folder"])if(metadata[key] && ![metadata[key] isKindOfClass:NSString.class])return nil;
+        for(NSString* key in @[@"customTitle",@"titleSuggested"])if(metadata[key] && ![metadata[key] isKindOfClass:NSNumber.class])return nil;
+    }
+    return value;
+}
+- (BOOL)writeOrganization:(NSDictionary*)organization error:(NSError**)error {
+    if(!organization)return NO;
+    NSData* data=[NSJSONSerialization dataWithJSONObject:organization options:0 error:error];
+    if(!data || data.length>1024*1024){
+        if(error && !*error)*error=[NSError errorWithDomain:@"ShenzhenPDF.Chat" code:4 userInfo:@{NSLocalizedDescriptionKey:@"Chat organization is too large to save. Existing folders and titles are unchanged."}];
+        return NO;
+    }
+    NSURL* URL=[_directory URLByAppendingPathComponent:@".organization.json"];
+    BOOL ok=[data writeToURL:URL options:NSDataWritingAtomic error:error];
+    if(ok)chmod(URL.fileSystemRepresentation,0600);return ok;
+}
+- (BOOL)organizationChatExists:(NSString*)identifier {
+    return ValidID(identifier) && ![NSFileManager.defaultManager fileExistsAtPath:[self tombstone:identifier].path] &&
+        [NSFileManager.defaultManager fileExistsAtPath:[self URLForID:identifier].path];
+}
+- (BOOL)editOrganization:(BOOL (^)(NSMutableDictionary*))edit error:(NSError**)error {
+    int fd=[self lockStore:error]; if(fd<0)return NO;
+    BOOL ok=NO;
+    @try {
+        NSMutableDictionary* organization=[self organization];
+        if(!organization && error)*error=[NSError errorWithDomain:@"ShenzhenPDF.Chat" code:5 userInfo:@{NSLocalizedDescriptionKey:@"Chat organization could not be read. Its saved file has been preserved; no folders or titles were changed."}];
+        if(organization && edit(organization))ok=[self writeOrganization:organization error:error];
+    } @finally {flock(fd,LOCK_UN);close(fd);}
+    return ok;
+}
+- (NSString*)cleanName:(NSString*)name {
+    if(![name isKindOfClass:NSString.class])return nil;
+    name=[[name componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" "];
+    name=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return name.length && name.length<=160 ? name : nil;
+}
+- (NSArray<NSDictionary*>*)folders {return [[self organization][@"folders"] copy] ?: @[];}
+- (NSString*)createFolderNamed:(NSString*)name error:(NSError**)error {
+    name=[self cleanName:name];if(!name)return nil;NSString* identifier=NSUUID.UUID.UUIDString;
+    BOOL ok=[self editOrganization:^BOOL(NSMutableDictionary* org){
+        for(NSDictionary* folder in org[@"folders"])if([folder[@"name"] localizedCaseInsensitiveCompare:name]==NSOrderedSame)return NO;
+        [org[@"folders"] addObject:[@{@"id":identifier,@"name":name,@"collapsed":@NO} mutableCopy]];return YES;
+    } error:error];return ok ? identifier : nil;
+}
+- (BOOL)renameFolder:(NSString*)identifier name:(NSString*)name error:(NSError**)error {
+    name=[self cleanName:name];if(!name)return NO;
+    return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        for(NSDictionary* folder in org[@"folders"])if(![folder[@"id"] isEqual:identifier] && [folder[@"name"] localizedCaseInsensitiveCompare:name]==NSOrderedSame)return NO;
+        for(NSMutableDictionary* folder in org[@"folders"])if([folder[@"id"] isEqual:identifier]){folder[@"name"]=name;return YES;}return NO;
+    } error:error];
+}
+- (BOOL)removeFolder:(NSString*)identifier error:(NSError**)error {
+    return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        NSMutableArray* folders=org[@"folders"];
+        NSUInteger index=[folders indexOfObjectPassingTest:^BOOL(NSDictionary* folder,NSUInteger i,BOOL* stop){(void)i;(void)stop;return [folder[@"id"] isEqual:identifier];}];
+        if(index==NSNotFound)return NO;[folders removeObjectAtIndex:index];
+        for(NSMutableDictionary* metadata in [org[@"chats"] allValues])if([metadata[@"folder"] isEqual:identifier])[metadata removeObjectForKey:@"folder"];
+        return YES;
+    } error:error];
+}
+- (BOOL)setFolder:(NSString*)folderID collapsed:(BOOL)collapsed error:(NSError**)error {
+    return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        for(NSMutableDictionary* folder in org[@"folders"])if([folder[@"id"] isEqual:folderID]){folder[@"collapsed"]=@(collapsed);return YES;}return NO;
+    } error:error];
+}
+- (BOOL)moveChat:(NSString*)identifier toFolder:(NSString*)folderID error:(NSError**)error {
+    if(![self chatWithID:identifier])return NO;
+    return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        if(![self organizationChatExists:identifier])return NO;
+        BOOL found=!folderID.length;for(NSDictionary* folder in org[@"folders"])if([folder[@"id"] isEqual:folderID])found=YES;
+        if(!found)return NO;
+        if(![self organizationChatExists:identifier])return NO;
+        NSMutableDictionary* metadata=org[@"chats"][identifier] ?: [NSMutableDictionary dictionary];
+        metadata[@"folder"]=folderID ?: @"";org[@"chats"][identifier]=metadata;return YES;
+    } error:error];
+}
+- (BOOL)renameChat:(NSString*)identifier title:(NSString*)title error:(NSError**)error {
+    title=[self cleanName:title];if(!title || ![self chatWithID:identifier])return NO;
+    return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        if(![self organizationChatExists:identifier])return NO;
+        NSMutableDictionary* metadata=org[@"chats"][identifier] ?: [NSMutableDictionary dictionary];
+        metadata[@"title"]=title;metadata[@"customTitle"]=@YES;org[@"chats"][identifier]=metadata;return YES;
+    } error:error];
+}
+- (BOOL)shouldSuggestTitleForChatID:(NSString*)identifier {
+    if(!ValidID(identifier))return NO;NSDictionary* organization=[self organization];if(!organization)return NO;
+    NSDictionary* metadata=organization[@"chats"][identifier];
+    return ![metadata[@"customTitle"] boolValue] && ![metadata[@"titleSuggested"] boolValue];
+}
+- (BOOL)setSuggestedTitle:(NSString*)title forChatID:(NSString*)identifier error:(NSError**)error {
+    title=[self cleanName:title];if(!title || ![self chatWithID:identifier])return NO;
+    return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        if(![self organizationChatExists:identifier])return NO;
+        NSMutableDictionary* metadata=org[@"chats"][identifier] ?: [NSMutableDictionary dictionary];
+        if([metadata[@"customTitle"] boolValue] || [metadata[@"titleSuggested"] boolValue])return NO;
+        metadata[@"title"]=title;metadata[@"titleSuggested"]=@YES;org[@"chats"][identifier]=metadata;return YES;
+    } error:error];
 }
 - (NSDictionary*)savePreview:(NSDictionary*)preview chatID:(NSString*)identifier {
     if (!ValidID(identifier) || ![preview[@"path"] isKindOfClass:NSString.class]) return nil;
@@ -152,7 +296,10 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
 }
 - (BOOL)deleteChatWithID:(NSString*)identifier error:(NSError**)error {
     int fd=[self lockStore:error]; if (fd<0) return NO;
-    BOOL ok=[self deleteUnlocked:identifier error:error]; flock(fd,LOCK_UN); close(fd); return ok;
+    BOOL ok=[self deleteUnlocked:identifier error:error];
+    NSMutableDictionary* org=[self organization];
+    if(ok && org){[org[@"chats"] removeObjectForKey:identifier];ok=[self writeOrganization:org error:error];}
+    flock(fd,LOCK_UN); close(fd); return ok;
 }
 - (BOOL)deleteAll:(NSError**)error {
     int fd=[self lockStore:error]; if (fd<0) return NO;
@@ -165,6 +312,8 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     }
     BOOL ok=URLs!=nil;
     for (NSString* identifier in identifiers) if (![self deleteUnlocked:identifier error:error]) ok=NO;
+    NSMutableDictionary* org=[self organization];
+    if(ok && org){[org[@"chats"] removeAllObjects];ok=[self writeOrganization:org error:error];}
     flock(fd,LOCK_UN); close(fd); return ok;
 }
 @end

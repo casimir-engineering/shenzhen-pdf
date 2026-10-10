@@ -275,6 +275,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
     NSDictionary* generated=@{@"model":settings.model,@"chapters":@[@{@"title":@"Generated",@"page":@1,@"level":@1}]};
     [reader aiInstallAnalysis:generated error:nil candidate:snapshot settings:settings];
     Check([reader aiGeneratedChapterRows].count==1,"generated analysis installs for current exact snapshot");
+    Check([[reader aiGeneratedChapterRows].firstObject[@"title"] isEqual:@"Generated"],"generated chapter rows preserve plain title without decorative sparkle");
     SPDFMacAISettings* unrelated=[[SPDFMacAISettings alloc] initWithURL:[root URLByAppendingPathComponent:@"unrelated.yaml"]];
     unrelated.enabled=settings.enabled;unrelated.automaticAnalysis=settings.automaticAnalysis;unrelated.model=settings.model;
     [reader configureAIAnalysis:unrelated];

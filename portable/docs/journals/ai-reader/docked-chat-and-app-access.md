@@ -101,3 +101,9 @@ Geometry remains immediate; a 200 ms settling debounce saves only the final widt
 The production-linked composer fixture verifies three width changes cause zero
 synchronous writes and one eventual save containing the final value. Context
 acceptance passed again after this change.
+
+## Follow-up correction
+
+The user's subsequent screenshots exposed combined-layout faults that the
+assessment above missed. See [the corrective journal](chat-history-and-layout-corrections.md)
+for the more representative layered fixtures, root causes and follow-up review.
