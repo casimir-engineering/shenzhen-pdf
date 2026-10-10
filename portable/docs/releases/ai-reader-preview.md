@@ -216,5 +216,5 @@ are identified explicitly. Text-only models are not silently replaced.
 - Truncated model responses get one bounded retry with more output room.
   Incomplete tool actions are never executed, Stop remains available, and empty
   answers no longer appear as successful completions.
-- The assistant distinguishes movement from the full swept envelope when the
-  user's question concerns a clearance or enclosure opening.
+- Chat answers now default to 1–3 short sentences with citations. Detailed
+  explanations, derivations and tables are provided when requested.

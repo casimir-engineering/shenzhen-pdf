@@ -62,7 +62,7 @@ int main(void) { @autoreleasepool {
     [session send:@"Explain this document" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
     CHECK(transport.sends==1 && session.running,"explicit send starts request");
     NSString* system=transport.messages.firstObject[@"content"];
-    CHECK(tools.contextReads==1 && [system containsString:@"doc:active-fixture"] && [system containsString:@"extension lines"] && [system containsString:@"extreme positions"],"explicit send carries focused context and general dimension interpretation instructions");
+    CHECK(tools.contextReads==1 && [system containsString:@"doc:active-fixture"] && [system containsString:@"active document"] && [system containsString:@"Use render_page for drawings or scans"],"explicit send carries focused context and general dimension interpretation instructions");
     CHECK([system containsString:@"Be as brief as possible"] && [system containsString:@"follow the user's specifications closely"] &&
         [system containsString:@"Perform requested actions with tools"] && [system containsString:@"without emojis"] &&
         [system containsString:@"do not repeat the same arguments"],"system prompt requires brief, faithful, action-oriented responses");

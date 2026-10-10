@@ -4,10 +4,10 @@ static void CheckReasoning(NSURL* root) {
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
     [session send:@"Read the drawing" model:@"fake/reasoning" apiKey:@"test"];
     NSString* prompt=transport.messages.firstObject[@"content"];
-    CHECK([prompt containsString:@"Answer the quantity and scope the user asked for"] &&
-          [prompt containsString:@"Use the first readable capture to answer."] &&
-          [prompt containsString:@"both endpoints"] && [prompt containsString:@"title-block/general notes"],
-          "request prompt requires scoped visual evidence, bounded captures and general tolerance checks");
+    CHECK(prompt.length<1800 && [prompt containsString:@"Default to 1-3 short sentences"] &&
+          [prompt containsString:@"detailed reasoning, derivations, tables or extra suggestions only when the user asks"] &&
+          [prompt containsString:@"Stop inspecting once you can answer"],
+          "compact request prompt defaults to a short cited answer without unsolicited exposition");
     CHECK(![prompt containsString:@"3.1 mm"] && ![prompt containsString:@"MSK13"],
           "general evidence rules do not hardcode a document or expected answer");
     NSArray* details=@[@{@"type":@"reasoning.encrypted",@"data":@"opaque-fixture-state",@"format":@"fixture"}];

@@ -48,3 +48,16 @@ navigation, existing old-message search, and highlighting. Reader acceptance,
 launch-work policy and updater tests pass. No running user app was launched,
 quit or captured. Live provider behavior remains unverified: the standalone
 probe cannot access the saved Keychain credential noninteractively.
+
+## Shorter default answers
+
+The user confirmed that the latest answer was acceptable but too long. Replaced
+765 words of general chat instructions with 193 words (including the language
+suffix). The default is now 1–3 short sentences containing the answer, citation,
+and essential qualifications. Detailed reasoning, derivations, tables and extra
+suggestions require an explicit request. Retrieval stops once evidence suffices.
+The prompt still preserves source honesty, language overrides, reversible tool
+actions, plain chapter titles and untrusted-document boundaries. No answer value
+or document-specific example is embedded. Chat session/request tests pass,
+including a prompt-size ceiling and checks that the brevity rule reaches the
+provider request. This checks wiring, not a guarantee of live model compliance.
