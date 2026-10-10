@@ -10,7 +10,7 @@
 - (NSSize)intrinsicContentSize { return NSMakeSize(ceil([self.title sizeWithAttributes:@{NSFontAttributeName:self.font}].width)+20,28); }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty; NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:5 yRadius:5];
-    if(self.highlighted || [self.identifier isEqual:@"send"]) {
+    if(self.highlighted || [self.identifier isEqual:@"send"] || [self.identifier isEqual:@"authorize"]) {
         [SPDFCollectionColor(self.highlighted ? @"selected" : @"control") setFill]; [shape fill];
     }
     NSMutableParagraphStyle* p=[NSMutableParagraphStyle new]; p.alignment=self.alignment; p.lineBreakMode=NSLineBreakByTruncatingTail;
@@ -91,6 +91,7 @@
 @implementation SPDFMacAIChatView {
     SPDFChatComposer* _composer; NSTextField* _status; NSTextField* _inputHelp; NSScrollView* _scroll; NSScrollView* _input; NSStackView* _messages;
     NSLayoutConstraint* _inputHeight; NSLayoutConstraint* _stopTrailing; NSLayoutConstraint* _stopHistoryTrailing;
+    NSStackView* _issue; NSTextField* _issueText; NSButton* _recovery; NSLayoutConstraint* _issueHeight;
     NSString* _submissionError; NSButton* _send; NSButton* _stop; NSButton* _undo; NSUInteger _visibleLimit; NSUInteger _messageCount; NSString* _chatID; BOOL _history; BOOL _running; BOOL _preserveScroll; __weak SPDFMacAIChatSession* _displayedSession;
 }
 - (BOOL)isFlipped { return YES; }
@@ -148,6 +149,14 @@
     [inputHelp.trailingAnchor constraintLessThanOrEqualToAnchor:_stop.leadingAnchor constant:-12].active=YES;
     __weak __typeof__(self) weakSelf=self;
     _composer.submit=^{ [weakSelf submit]; }; _composer.undoAction=^{ if (weakSelf.action) weakSelf.action(@"undo"); };
+    _issueText=SPDFCollectionText(@"",12,NSFontWeightMedium,NO); _issueText.maximumNumberOfLines=3;
+    _issueText.identifier=@"chatSubmissionError";
+    _recovery=[self button:@"AI settings…" action:@"settings"];
+    [_recovery setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_recovery setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    _issue=[NSStackView stackViewWithViews:@[_issueText,_recovery]]; _issue.spacing=12;
+    _issue.identifier=@"chatSubmissionIssue"; _issue.translatesAutoresizingMaskIntoConstraints=NO; _issue.hidden=YES;
+    _issueHeight=[_issue.heightAnchor constraintEqualToConstant:0]; [self addSubview:_issue];
     _inputHeight=[input.heightAnchor constraintEqualToConstant:68];
     _stopTrailing=[_stop.trailingAnchor constraintEqualToAnchor:_send.leadingAnchor constant:-8];
     _stopHistoryTrailing=[_stop.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16];
@@ -161,7 +170,10 @@
         [_scroll.topAnchor constraintEqualToAnchor:_status.bottomAnchor constant:12],
         [_scroll.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:16],
         [_scroll.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16],
-        [_scroll.bottomAnchor constraintEqualToAnchor:input.topAnchor constant:-12],
+        [_scroll.bottomAnchor constraintEqualToAnchor:_issue.topAnchor constant:-8],
+        [_issue.leadingAnchor constraintEqualToAnchor:input.leadingAnchor],
+        [_issue.trailingAnchor constraintEqualToAnchor:input.trailingAnchor],
+        [_issue.bottomAnchor constraintEqualToAnchor:input.topAnchor constant:-4], _issueHeight,
         [doc.widthAnchor constraintEqualToAnchor:_scroll.contentView.widthAnchor],
         [_messages.leadingAnchor constraintEqualToAnchor:doc.leadingAnchor],
         [_messages.trailingAnchor constraintEqualToAnchor:doc.trailingAnchor constant:-8],
@@ -244,11 +256,19 @@
     (void)textView; (void)index; NSURL* URL=[link isKindOfClass:NSURL.class] ? link : [NSURL URLWithString:[link description]];
     if (self.openLink && SPDFMacAIChatLinkAllowed(URL)) self.openLink(URL); return YES;
 }
-- (void)showSubmissionError:(NSString*)message {
-    _submissionError=[message copy]; [self refreshActivityFromSession:_displayedSession];
+- (void)showSubmissionError:(NSString*)message { [self showSubmissionError:message recoveryAction:@"settings"]; }
+- (void)showSubmissionError:(NSString*)message recoveryAction:(NSString*)action {
+    _submissionError=[message copy]; _issueText.stringValue=message ?: @"";
+    _recovery.identifier=action ?: @"settings";
+    _recovery.title=[action isEqual:@"authorize"] ? @"Authorize & send…" : @"AI settings…";
+    _recovery.accessibilityLabel=_recovery.title; _recovery.toolTip=_recovery.title;
+    [_recovery invalidateIntrinsicContentSize]; [self refreshActivityFromSession:_displayedSession];
+    if(message.length)NSAccessibilityPostNotification(_issueText,NSAccessibilityValueChangedNotification);
 }
 - (void)refreshActivityFromSession:(SPDFMacAIChatSession*)session {
     _displayedSession=session; _running=session.running;
+    BOOL issueVisible=!_history && _submissionError.length>0;
+    _issue.hidden=!issueVisible; _issueHeight.constant=issueVisible ? 60 : 0;
     NSString* fallback=_history ? @"Chats are saved on this Mac" : @"Answers cite your documents · newest messages first";
     _status.stringValue=!_history && _submissionError.length ? _submissionError : session.status.length ? session.status : fallback;
     _status.accessibilityLabel=_status.stringValue;

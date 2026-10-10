@@ -7,6 +7,7 @@
 @property(nonatomic, copy) void (^openLink)(NSURL*);
 @property(nonatomic, readonly) NSTextView* composer;
 - (void)showSubmissionError:(NSString*)message;
+- (void)showSubmissionError:(NSString*)message recoveryAction:(NSString*)action;
 - (void)refreshActivityFromSession:(SPDFMacAIChatSession*)session;
 - (void)displaySession:(SPDFMacAIChatSession*)session;
 - (void)displayChats:(NSArray<NSDictionary*>*)chats;
