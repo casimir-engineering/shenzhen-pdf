@@ -1,6 +1,7 @@
 #import "SPDFMacCollectionCredentials.h"
 #import "SPDFMacPassword.h"
 #import <LocalAuthentication/LocalAuthentication.h>
+#import "SPDFMacKeychainNoninteractiveChecks.h"
 static int failures;
 static void Expect(NSString* label,BOOL ok) { if(!ok){fprintf(stderr,"FAIL %s\n",label.UTF8String); failures++;} }
 #import "SPDFMacCollectionCredentialTestKeychain.h"
@@ -11,6 +12,7 @@ static NSString* Password(SPDFPasswordCredential* credential) {
 }
 int main(void) {
     @autoreleasepool {
+        CheckNoninteractiveGuard(^(BOOL ok,NSString* label){Expect(label,ok);});
         MemoryKeychain* memory=[MemoryKeychain new];
         SPDFMacCollectionCredentials* store=[[SPDFMacCollectionCredentials alloc] initWithKeychain:memory];
         Expect(@"constructing credentials does no Keychain work",memory.reads+memory.adds+memory.updates==0);
@@ -27,6 +29,7 @@ int main(void) {
         Expect(@"local generic password only",[memory.lastQuery[(__bridge id)kSecClass] isEqual:(__bridge id)kSecClassGenericPassword] &&
             [memory.lastQuery[(__bridge id)kSecAttrSynchronizable] isEqual:@NO]);
         Expect(@"Keychain background access never prompts",[(LAContext*)memory.lastQuery[(__bridge id)kSecUseAuthenticationContext] interactionNotAllowed]);
+        Expect(@"Collection add disallows authentication UI",NoninteractiveQuery(memory.lastQuery));
         BOOL wiped=YES; const unsigned char* transfer=(const unsigned char*)memory.transferredBytes.bytes;
         for(NSUInteger i=0;i<memory.transferredBytes.length;i++) if(transfer[i]) wiped=NO;
         Expect(@"temporary password transfer buffer is wiped",wiped);
@@ -36,9 +39,11 @@ int main(void) {
         Expect(@"password survives a new backend instance and Unicode roundtrips",[Password([relaunched credentialForHash:hash.lowercaseString error:&error]) isEqual:@"秘密 café"] && !error);
         Expect(@"lookup requests only one item's secret",[memory.lastQuery[(__bridge id)kSecReturnData] isEqual:@YES] &&
             [memory.lastQuery[(__bridge id)kSecMatchLimit] isEqual:(__bridge id)kSecMatchLimitOne]);
+        Expect(@"Collection read disallows authentication UI",NoninteractiveQuery(memory.lastQuery));
         Expect(@"unrelated document never reuses password",![relaunched credentialForHash:second error:&error] && !error);
         credential=[[SPDFPasswordCredential alloc] initWithPassword:@"updated"];
         Expect(@"duplicate item updates without deleting protection",[store storeCredential:credential forHash:hash error:&error] && memory.updates==1);
+        Expect(@"Collection update disallows authentication UI",NoninteractiveQuery(memory.lastQuery));
         Expect(@"updated credential retrieved",[Password([store credentialForHash:hash error:&error]) isEqual:@"updated"]);
         memory.failure=errSecInteractionNotAllowed;
         Expect(@"locked Keychain returns actionable error",![store credentialForHash:hash error:&error] && error.code==errSecInteractionNotAllowed);

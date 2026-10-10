@@ -2,6 +2,7 @@
 #import "SPDFMacAISettings.h"
 #import "SPDFMacAICredentials.h"
 #import "SPDFMacAIOpenRouterAuth.h"
+#import "SPDFMacKeychainNoninteractiveChecks.h"
 #import <arpa/inet.h>
 #import <sys/socket.h>
 #import <unistd.h>
@@ -39,19 +40,22 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 @property(nonatomic) NSInteger calls;
 @property(nonatomic) NSData* stored;
 @property(nonatomic) NSDictionary* last;
+@property(nonatomic) OSStatus failure;
 @end
 @implementation FakeKeychain
 - (OSStatus)copyMatching:(NSDictionary*)query result:(NSData**)result {
-    self.calls++; self.last=query; if(result)*result=self.stored; return self.stored ? errSecSuccess : errSecItemNotFound;
+    self.calls++; self.last=query; if(self.failure)return self.failure;
+    if(result)*result=self.stored; return self.stored ? errSecSuccess : errSecItemNotFound;
 }
 - (OSStatus)add:(NSDictionary*)attributes {
-    self.calls++; self.last=attributes; if(self.stored)return errSecDuplicateItem;
+    self.calls++; self.last=attributes; if(self.failure)return self.failure;if(self.stored)return errSecDuplicateItem;
     self.stored=[attributes[(__bridge id)kSecValueData] copy];return errSecSuccess;
 }
 - (OSStatus)update:(NSDictionary*)query attributes:(NSDictionary*)attributes {
-    (void)query;self.calls++;self.stored=[attributes[(__bridge id)kSecValueData] copy];return errSecSuccess;
+    self.calls++;self.last=query;if(self.failure)return self.failure;
+    self.stored=[attributes[(__bridge id)kSecValueData] copy];return errSecSuccess;
 }
-- (OSStatus)remove:(NSDictionary*)query {self.calls++;self.last=query;self.stored=nil;return errSecSuccess;}
+- (OSStatus)remove:(NSDictionary*)query {self.calls++;self.last=query;if(self.failure)return self.failure;self.stored=nil;return errSecSuccess;}
 @end
 static NSDictionary* RequestJSON(NSURLRequest* request) {
     NSData* data=request.HTTPBody;
@@ -77,6 +81,7 @@ static NSString* Callback(NSURL* URL,NSString* code,NSString* state) {
     return n>0 ? [[NSString alloc] initWithBytes:response length:(NSUInteger)n encoding:NSUTF8StringEncoding] : nil;
 }
 int main(void) { @autoreleasepool {
+    CheckNoninteractiveGuard(^(BOOL ok,NSString* label){Check(ok,label.UTF8String);});
     NSURLSessionConfiguration* config=NSURLSessionConfiguration.ephemeralSessionConfiguration;
     config.protocolClasses=@[FakeProtocol.class]; SPDFMacAITransport* transport=[[SPDFMacAITransport alloc] initWithConfiguration:config];
     FakeKeychain* keychain=[FakeKeychain new];SPDFMacAICredentials* credentials=[[SPDFMacAICredentials alloc] initWithKeychain:keychain];
@@ -104,10 +109,17 @@ int main(void) { @autoreleasepool {
     settings.model=@"x\napi_key: secret";Check(![settings save:&error],"reject YAML injection");
     Check(![credentials storeAPIKey:@"bad" error:&error] && keychain.calls==0,"reject invalid key before Keychain");
     NSString* key=@"sk-or-v1-offline-test-key-value";
-    Check([credentials storeAPIKey:key error:&error] && [[credentials APIKeyWithError:&error] isEqual:key],"secure key roundtrip");
+    Check([credentials storeAPIKey:key error:&error] && NoninteractiveQuery(keychain.last),"secure key add disables UI");
+    Check([[credentials APIKeyWithError:&error] isEqual:key] && NoninteractiveQuery(keychain.last),"secure key read disables UI");
     Check([keychain.last[(__bridge id)kSecAttrSynchronizable] isEqual:@NO],"credential remains local");
-    Check([credentials storeAPIKey:key error:&error],"replace existing credential");
-    Check([credentials removeAPIKeyWithError:&error] && ![credentials APIKeyWithError:&error],"disconnect removes credential");
+    Check([credentials storeAPIKey:key error:&error] && NoninteractiveQuery(keychain.last),"replace existing credential without UI");
+    keychain.failure=errSecInteractionNotAllowed;
+    Check(![credentials APIKeyWithError:&error] && error.code==errSecInteractionNotAllowed,"locked AI key fails without pretending connected");
+    Check(![credentials storeAPIKey:key error:&error] && error.code==errSecInteractionNotAllowed,"locked AI key cannot pretend save succeeded");
+    Check(![credentials removeAPIKeyWithError:&error] && error.code==errSecInteractionNotAllowed && keychain.stored.length,"denied disconnect preserves the credential");
+    keychain.failure=errSecSuccess;
+    Check([credentials removeAPIKeyWithError:&error] && NoninteractiveQuery(keychain.last),"disconnect removes credential without UI");
+    Check(![credentials APIKeyWithError:&error],"disconnected credential stays absent");
     NSArray* messages=@[@{@"role":@"user",@"content":@"Test"}];
     NSURLRequest* request=SPDFMacAIChatRequest(messages,@[],SPDFMacAIDefaultModel,key,&error);
     NSDictionary* body=RequestJSON(request);
