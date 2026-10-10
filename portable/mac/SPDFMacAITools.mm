@@ -1,4 +1,5 @@
 #import "SPDFMacAITools.h"
+#import "SPDFMacAICurrentView.h"
 #import "SPDFMacAIToolsReader.h"
 #import "SPDFMacAIToolsComments.h"
 #import "SPDFMacAIReaderControls.h"
@@ -110,6 +111,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
               @"language":Field(@"string",@"OCR language code; defaults to eng."),
               @"sourceLanguage":Field(@"string",@"Translation source language code."),
               @"targetLanguage":Field(@"string",@"Required target language code for translation.")},@[@"path",@"kind",@"revision"]),
+        Definition(@"current_view",@"See the current document viewport exactly as displayed, including zoom, scroll, selected text and highlights. Use when the user refers to what they are looking at. Captures only the reader content, on demand; does not navigate or capture other applications.",@{},@[]),
         Definition(@"reader_state",@"Discover the current document's page, zoom, reading appearance, panels and all supported reader-control choices.",@{},@[]),
         Definition(@"reader_control",@"Reversibly control the displayed document. Read reader_state first. Controls: page, zoom, theme, keep-image-colors, text-size, sidebar, map, find, rotate. Value is a choice string or numeric percentage/page written as a string. PDF rotation requires revision.",
             @{@"path":path,@"control":Field(@"string",@"A control listed by reader_state."),@"value":Field(@"string",@"The desired control value."),
@@ -251,6 +253,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
             });
         }); return;
     }
+    if ([name isEqual:@"current_view"]) { [self performCurrentViewWithCompletion:completion]; return; }
     if ([name isEqual:@"reader_state"]) { completion([self.reader aiReaderControls]); return; }
     if ([name isEqual:@"reopen_document"]) {
         NSDictionary* action=nil;

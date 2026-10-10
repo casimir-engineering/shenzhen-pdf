@@ -18,7 +18,7 @@ static NSString* Caption(NSDictionary* preview,NSString* callID) {
     if (![preview isKindOfClass:NSDictionary.class]) preview=@{};
     if (![callID isKindOfClass:NSString.class]) callID=nil;
     NSMutableDictionary* evidence=[NSMutableDictionary dictionary];
-    for (NSString* key in @[@"title",@"caption",@"page",@"region",@"width",@"height",@"pixelWidth",@"pixelHeight"])
+    for (NSString* key in @[@"kind",@"title",@"caption",@"page",@"region",@"width",@"height",@"pixelWidth",@"pixelHeight"])
         if (preview[key]) evidence[key]=preview[key];
     id citation=preview[@"citation"];
     if ([citation isKindOfClass:NSDictionary.class]) {

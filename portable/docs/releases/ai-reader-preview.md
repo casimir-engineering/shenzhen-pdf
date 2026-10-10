@@ -235,3 +235,8 @@ are identified explicitly. Text-only models are not silently replaced.
   title-block text from being presented as the complete page. The tool labels
   text-only coverage and other sparse pages requiring inspection. This runs
   only during an explicit assistant read, with no launch or document-open work.
+- Ask the assistant to look at your current document view. It can inspect the
+  visible page area, selection and highlights without changing your position.
+- AI: `current_view` returns on-demand viewport pixels, reading controls,
+  visible page regions and exact source citations, including live Markdown
+  layout identity. It captures document content only, not other applications.
