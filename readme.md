@@ -15,7 +15,7 @@
 
 <p align="center">Type anywhere to search. Jump anywhere with the map. Launches instantly. Relaunches exactly as you left it.</p>
 
-**Shenzhen PDF Reader (ShenzhenPDF)** opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)** and **[AI control guide](portable/docs/agent-interface.md)**.
+**Shenzhen PDF Reader (ShenzhenPDF)** opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)**, [document assistant guide](portable/docs/document-assistant.md), and [AI control guide](portable/docs/agent-interface.md).
 
 <sub><a href="#reading">Reading</a> · <a href="#collection">Collection</a> · <a href="#markdown">Markdown &amp; code</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
 
@@ -68,7 +68,7 @@
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
 - **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine or executable JavaScript. Remote HTTPS images load lazily when their document is active.
 
-For AI integrations, see the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md): CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
+The optional macOS document assistant uses a connected OpenRouter model for cited answers and reversible workspace actions; its setup, privacy choices and exact limits are in the [document assistant guide](portable/docs/document-assistant.md). For external AI agents, see the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md): CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
 
 ## <a id="search"></a>Search-oriented architecture
 
