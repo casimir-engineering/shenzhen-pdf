@@ -22,5 +22,6 @@
 - (BOOL)shouldSuggestTitleForChatID:(NSString*)identifier;
 - (BOOL)setSuggestedTitle:(NSString*)title forChatID:(NSString*)identifier error:(NSError**)error;
 - (NSDictionary*)savePreview:(NSDictionary*)preview chatID:(NSString*)identifier;
+- (NSData*)previewData:(NSDictionary*)preview chatID:(NSString*)identifier;
 + (void)discardTemporaryPreview:(NSDictionary*)preview;
 @end

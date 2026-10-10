@@ -7,6 +7,22 @@ static BOOL ValidModel(NSString* model) {
     return [model isKindOfClass:NSString.class] && model.length>0 && model.length<=160 &&
         [model rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].location==NSNotFound;
 }
+static NSUInteger ImageBytes(NSArray* messages,NSUInteger* count) {
+    NSUInteger bytes=0; if (count) *count=0;
+    if (![messages isKindOfClass:NSArray.class]) return 0;
+    for (NSDictionary* message in messages) {
+        if (![message isKindOfClass:NSDictionary.class]) continue;
+        if (![message[@"content"] isKindOfClass:NSArray.class]) continue;
+        for (NSDictionary* part in message[@"content"]) {
+            if (![part isKindOfClass:NSDictionary.class] || ![part[@"type"] isEqual:@"image_url"]) continue;
+            if (count) ++*count;
+            id image=part[@"image_url"]; id url=[image isKindOfClass:NSDictionary.class] ? image[@"url"] : nil;
+            if (![url isKindOfClass:NSString.class] || ![url hasPrefix:@"data:image/png;base64,"]) return NSUIntegerMax;
+            bytes += [url lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        }
+    }
+    return bytes;
+}
 NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDictionary*>* tools,
                                  NSString* model,NSString* apiKey,NSError** error) {
     if (error) *error=nil;
@@ -22,8 +38,10 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
     if (![NSJSONSerialization isValidJSONObject:body]) {
         if(error)*error=SPDFMacAIError(2,@"The conversation contains unsupported data."); return nil;
     }
-    NSData* data=[NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
-    if (!data || data.length>1024*1024) {
+    NSData* data=[NSJSONSerialization dataWithJSONObject:body options:NSJSONWritingWithoutEscapingSlashes error:nil];
+    NSUInteger imageCount=0,imageBytes=ImageBytes(messages,&imageCount);
+    if (!data || imageBytes==NSUIntegerMax || imageCount>4 || imageBytes>12*1024*1024+128 ||
+        data.length>13*1024*1024 || data.length-imageBytes>1024*1024) {
         if(error)*error=SPDFMacAIError(3,@"This conversation is too large. Start a new chat or narrow the document context.");
         return nil;
     }
@@ -49,6 +67,7 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
 @property(nonatomic) NSMutableData* bytes;
 @property(nonatomic) NSError* failure;
 @property(nonatomic) NSInteger status;
+@property(nonatomic) BOOL hasImages;
 @property(nonatomic) SPDFMacAIRequestToken* token;
 @property(nonatomic,copy) void (^completion)(NSDictionary*,NSError*);
 @end
@@ -85,6 +104,8 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
             self.status==402 ? @"Your OpenRouter account needs credits." :
             self.status==429 ? @"OpenRouter is busy or your account limit was reached. Try again shortly." :
             @"OpenRouter could not complete the request with the required privacy settings. Try another model.";
+        if (self.hasImages && (self.status==400 || self.status==404 || self.status==422))
+            text=@"The selected model/provider could not accept page images with the required privacy settings. Choose an image-capable model in AI Settings and retry. Your selected model has not been changed.";
         failure=SPDFMacAIError(self.status,text);
     }
     if(!failure) {
@@ -112,17 +133,30 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
 }
 - (SPDFMacAIRequestToken*)sendMessages:(NSArray<NSDictionary*>*)messages tools:(NSArray<NSDictionary*>*)tools
     model:(NSString*)model apiKey:(NSString*)apiKey completion:(void (^)(NSDictionary*,NSError*))completion {
-    SPDFMacAIRequestToken* token=[SPDFMacAIRequestToken new]; NSError* error=nil;
-    NSURLRequest* request=SPDFMacAIChatRequest(messages,tools,model,apiKey,&error);
-    if(!request) {
-        dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,error); }); return token;
-    }
-    NSURLSessionConfiguration* configuration=_configuration ? [_configuration copy] : NSURLSessionConfiguration.ephemeralSessionConfiguration;
-    configuration.URLCache=nil; configuration.HTTPCookieStorage=nil; configuration.URLCredentialStorage=nil;
-    configuration.timeoutIntervalForRequest=90; configuration.timeoutIntervalForResource=120;
-    SPDFMacAIResponse* response=[SPDFMacAIResponse new]; response.bytes=[NSMutableData data];
-    response.token=token; response.completion=completion;
-    NSURLSession* session=[NSURLSession sessionWithConfiguration:configuration delegate:response delegateQueue:nil];
-    NSURLSessionDataTask* task=[session dataTaskWithRequest:request]; token.task=task; [task resume]; return token;
+    SPDFMacAIRequestToken* token=[SPDFMacAIRequestToken new];
+    void (^start)(void)=^{
+        if (token.cancelled) {
+            dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]); }); return;
+        }
+        NSError* error=nil;
+        NSURLRequest* request=SPDFMacAIChatRequest(messages,tools,model,apiKey,&error);
+        if(!request) {
+            dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,error); }); return;
+        }
+        if (token.cancelled) {
+            dispatch_async(dispatch_get_main_queue(),^{ if(completion) completion(nil,[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]); }); return;
+        }
+        NSURLSessionConfiguration* configuration=_configuration ? [_configuration copy] : NSURLSessionConfiguration.ephemeralSessionConfiguration;
+        configuration.URLCache=nil; configuration.HTTPCookieStorage=nil; configuration.URLCredentialStorage=nil;
+        configuration.timeoutIntervalForRequest=90; configuration.timeoutIntervalForResource=120;
+        SPDFMacAIResponse* response=[SPDFMacAIResponse new]; response.bytes=[NSMutableData data];
+        response.token=token; response.completion=completion; response.hasImages=ImageBytes(messages,NULL)>0;
+        NSURLSession* session=[NSURLSession sessionWithConfiguration:configuration delegate:response delegateQueue:nil];
+        NSURLSessionDataTask* task=[session dataTaskWithRequest:request]; token.task=task; if (!token.cancelled) [task resume];
+    };
+    // Large multipart JSON is serialized off-main, along with the explicit request.
+    if (ImageBytes(messages,NULL)) dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),start);
+    else start();
+    return token;
 }
 @end

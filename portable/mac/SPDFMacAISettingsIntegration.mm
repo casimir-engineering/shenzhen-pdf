@@ -108,7 +108,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         objc_setAssociatedObject(reader,&catalogKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if(models)objc_setAssociatedObject(reader,&catalogModelsKey,models,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [controller updateState:@{@"models":models ?: @[],@"modelsLoading":@NO,
-            @"modelStatus":error ? @"Could not load models. Open the list to retry." : @"Models supporting document tools"}];
+            @"modelStatus":error ? @"Could not load models. Open the list to retry." : @"Models with Images can inspect page images and diagrams."}];
     });
     objc_setAssociatedObject(self,&catalogKey,task,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }

@@ -19,6 +19,7 @@
 #include <assert.h>
 #undef main
 static void Check(BOOL value, const char* message) { if (!value) { fprintf(stderr,"FAIL: %s\n",message); abort(); } }
+#import "SPDFMacAIPageRegionChecks.h"
 #import "SPDFMacAIAppAccessChecks.h"
 #import "SPDFMacAIComposerAcceptanceChecks.h"
 #import "SPDFMacAIWizardCredentialChecks.h"
@@ -123,6 +124,7 @@ static NSString* FixturePDF(NSString* root) {
 static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
+#import "SPDFMacAIPageToolChecks.h"
 #import "SPDFMacAICitationNavigationChecks.h"
 #import "SPDFMacAICollectionRenameChecks.h"
 #import "SPDFMacAIMetadataHistoryChecks.h"
@@ -171,6 +173,8 @@ int main(void) { @autoreleasepool {
     NSString* hash=SPDFAIContentHash(path,progress,nil); Check(hash.length==64,"streamed hash");
     [progress cancel]; Check(!SPDFAIDocumentContext(path,NO,1,5,progress,nil),"cancelled read rejected");
     progress=[NSProgress progressWithTotalUnitCount:1];
+    PageRegionChecks(root);
+    CheckPageImageTool(path);
     NSDictionary* preview=SPDFAIPagePreview(path,NO,1,progress,&error);
     Check(preview && [NSData dataWithContentsOfFile:preview[@"path"]].length>0,"trusted preview generated");
     [NSFileManager.defaultManager removeItemAtPath:[preview[@"path"] stringByDeletingLastPathComponent] error:nil];

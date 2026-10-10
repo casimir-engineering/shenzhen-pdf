@@ -274,6 +274,31 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     } @finally { [SPDFMacAIChatStore discardTemporaryPreview:preview]; }
     return result;
 }
+// This is the only model-facing saved-preview read. Saved JSON is not a trusted path.
+- (NSData*)previewData:(NSDictionary*)preview chatID:(NSString*)identifier {
+    if (![preview isKindOfClass:NSDictionary.class]) return nil;
+    NSString* path=preview[@"path"];
+    if (!ValidID(identifier) || ![path isKindOfClass:NSString.class]) return nil;
+    NSString* root=_directory.path.stringByResolvingSymlinksInPath;
+    NSString* assets=[root stringByAppendingPathComponent:[identifier stringByAppendingString:@"-assets"]];
+    NSString* name=path.lastPathComponent;
+    if (![name.pathExtension isEqual:@"png"] || !ValidID(name.stringByDeletingPathExtension) ||
+        ![path.stringByResolvingSymlinksInPath.stringByDeletingLastPathComponent isEqual:assets]) return nil;
+    int directory=open(assets.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+    if (directory<0) return nil;
+    int file=openat(directory,name.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK); close(directory);
+    if (file<0) return nil;
+    struct stat info; NSData* result=nil;
+    if (fstat(file,&info)==0 && S_ISREG(info.st_mode) && info.st_size>0 && info.st_size<=8*1024*1024) {
+        NSMutableData* data=[NSMutableData dataWithLength:(NSUInteger)info.st_size]; NSUInteger offset=0;
+        while (offset<data.length) {
+            ssize_t count=read(file,(char*)data.mutableBytes+offset,data.length-offset);
+            if (count<=0) break; offset+=(NSUInteger)count;
+        }
+        if (offset==data.length) result=data;
+    }
+    close(file); return result;
+}
 + (void)discardTemporaryPreview:(NSDictionary*)preview {
     NSString* path=preview[@"path"];
     if (![path isKindOfClass:NSString.class]) return;

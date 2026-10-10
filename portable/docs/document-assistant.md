@@ -28,7 +28,7 @@ ready. It does not appear on every launch after you finish. The steps are:
 3. **OpenRouter.** Connect in your browser, or reveal the API-key field when
    you choose to use a key. Keys are stored in this Mac's Keychain. Open the
    model picker to load its searchable catalog; it includes models that support
-   tool calls. The default model ID is `deepseek/deepseek-v4.1-flash`, subject
+   tool calls. Models marked **Images** also accept page images for inspecting drawings, tables and scans. The default model ID is `deepseek/deepseek-v4.1-flash`, subject
    to current catalog availability.
 4. **Default reader.** Search supported file types and set ShenzhenPDF as the
    default independently for each type you choose.
@@ -98,6 +98,14 @@ Page-only citations remain available for diagrams and other visual evidence.
 Changed or unavailable sources produce an explanation instead of navigating to
 an unverified passage. Source links contain opaque document IDs, not local paths.
 
+For drawings, dimensions, scans and tables, the assistant can request the actual
+page pixels with `render_page`, then zoom into a region for small details. The
+image is both shown in chat and sent to the selected model. This needs a model
+marked **Images** in the searchable model picker; ShenzhenPDF never silently
+switches models. Existing saved previews are restored as image evidence when you
+continue a chat, subject to the image budget. Missing or omitted pixels are
+explicitly reported to the model instead of being presented as inspected evidence.
+
 Use **Stop** to cancel the current model request or queued tool work. A change
 that already completed remains in place; use **Undo action** to reverse the
 latest assistant action when the result has not changed since. Undo never
@@ -136,7 +144,7 @@ workspace, then retrieves evidence as needed. Its tools can:
 - page through groups and open tabs without reading their files, then request
   cached summaries, keywords, tags and chapters for a selected document;
 - search open documents and read bounded page text;
-- render a requested page preview and show a document at a cited page;
+- inspect a full page or a cropped region as an image, show its preview in chat, and open a document at a cited page;
 - create, rename, move, collapse, hide or expand tab groups;
 - read the current reader state and change supported controls such as page,
   zoom, theme, sidebar, map, find query, text size and rotation;
@@ -229,7 +237,12 @@ layout invalidates an in-flight result.
 
 Chat has a 32,000-character message limit, a 160-message conversation limit,
 up to 12 model/tool rounds per send, and a 400,000-byte serialized context
-limit. Start a new chat or narrow the question when a limit is reached. Tool
+limit for text. Page images are requested lazily, up to four recent images and
+9 MiB of PNG data per request (12 MiB after base64 encoding). Each full page or
+crop has a default longest edge of 1600 pixels, configurable from 256 to 2400;
+individual PNGs are capped at 8 MiB. Older images can be requested again. Image
+processing runs off the main thread, and no image work is added to launch or
+document opening. Start a new chat or narrow the question when a limit is reached. Tool
 requests are also bounded: workspace discovery returns 50 items by default
 (up to 100) with independent continuation cursors for groups and documents;
 page reads return at most 20 pages per call; a

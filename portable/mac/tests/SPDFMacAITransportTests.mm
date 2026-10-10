@@ -22,7 +22,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 - (void)startLoading {
     @synchronized(FakeProtocol.class) { requests++; captured=self.request; }
     if(mode==1)return;
-    NSInteger status=mode==2 ? 401 : 200;
+    NSInteger status=mode==2 ? 401 : mode==5 ? 400 : 200;
     [self.client URLProtocol:self didReceiveResponse:[[NSHTTPURLResponse alloc] initWithURL:self.request.URL
         statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type":@"application/json"}]
         cacheStoragePolicy:NSURLCacheStorageNotAllowed];
@@ -155,6 +155,12 @@ int main(void) { @autoreleasepool {
     Check([body[@"max_tokens"] integerValue]==4096 && request.timeoutInterval==90,"bounded token and timeout budget");
     NSString* huge=[@"x" stringByPaddingToLength:1024*1024+1 withString:@"x" startingAtIndex:0];
     Check(!SPDFMacAIChatRequest(@[@{@"role":@"user",@"content":huge}],nil,SPDFMacAIDefaultModel,key,&error),"oversized request rejected");
+    NSString* imageURL=[@"data:image/png;base64," stringByAppendingString:[@"A" stringByPaddingToLength:2*1024*1024 withString:@"A" startingAtIndex:0]];
+    NSDictionary* imagePart=@{@"type":@"image_url",@"image_url":@{@"url":imageURL}};
+    NSArray* imageMessages=@[@{@"role":@"user",@"content":@[@{@"type":@"text",@"text":@"Inspect page"},imagePart]}];
+    NSURLRequest* imageRequest=SPDFMacAIChatRequest(imageMessages,nil,@"test/vision",key,&error);
+    Check(imageRequest && [RequestJSON(imageRequest)[@"messages"][0][@"content"][1][@"image_url"][@"url"] isEqual:imageURL],"multipart PNG reaches serialized HTTP body above old text limit");
+    Check(!SPDFMacAIChatRequest(@[@{@"role":@"user",@"content":@[imagePart,imagePart,imagePart,imagePart,imagePart]}],nil,@"test/vision",key,&error),"more than four images rejected at transport boundary");
     __block BOOL done=NO;__block NSDictionary* result=nil;__block NSError* failure=nil;
     void (^completion)(NSDictionary*,NSError*)=^(NSDictionary* message,NSError* e){result=message;failure=e;done=YES;Check(NSThread.isMainThread,"completion on main thread");};
     [transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
@@ -165,6 +171,11 @@ int main(void) { @autoreleasepool {
         Check(Wait(^BOOL{return done;}) && failure && !result,"HTTP, oversized and malformed response safely rejected");
         Check([failure.localizedDescription rangeOfString:key].location==NSNotFound,"errors exclude credentials");
     }
+    mode=5;done=NO;failure=nil;
+    [transport sendMessages:imageMessages tools:nil model:@"test/text-only" apiKey:key completion:completion];
+    Check(Wait(^BOOL{return done;}) && [failure.localizedDescription containsString:@"image-capable model"] &&
+        [failure.localizedDescription containsString:@"has not been changed"],"incompatible image model gives actionable error without silent fallback");
+    Check([RequestJSON(captured)[@"model"] isEqual:@"test/text-only"],"image request preserves selected model");
     mode=1;done=NO;failure=nil;
     SPDFMacAIRequestToken* token=[transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
     [token cancel];Check(Wait(^BOOL{return done;}) && token.cancelled && failure.code==NSURLErrorCancelled,"cancellation completes without result");

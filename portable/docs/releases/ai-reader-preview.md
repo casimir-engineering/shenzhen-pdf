@@ -106,7 +106,7 @@ Model-facing tools use opaque IDs, and document text is untrusted evidence. The
 assistant can page through the current workspace without opening document
 files, then retrieve cached analysis and chapters with `document_metadata`;
 read at most 20 pages per call;
-search a bounded set of open documents; render page previews; navigate to
+search a bounded set of open documents; inspect full-page images or normalized cropped regions using `render_page` with an image-capable model; navigate to
 revision-checked evidence; organize groups; inspect and alter supported reader
 state; read/edit comments; list/open Collection documents; close/reopen tabs;
 rename eligible files; update saved generated chapter/summary/tag/language metadata with Undo/Redo; discover and operate native app menus and visible controls; and run explicitly requested `document_job` operations
@@ -168,3 +168,20 @@ default remains unchanged. Language changes do not bulk-process the library.
 One background request produces all document metadata together, including up to
 six tags. File Properties shows the cached tags, summary and language. Existing
 chapters are preserved, and older Collection revisions are not summarized.
+
+### Visual document evidence
+
+The assistant can now receive actual page pixels, rather than only displaying a
+preview to the user. It can inspect a whole page and request a higher-detail
+crop for drawing dimensions or small table cells. The model picker labels
+image-capable models **Images**. Crops retain page/revision citations and appear
+in the transcript. Image work is lazy, cancellable and bounded; saved PNG assets
+are reused on chat resume without embedding base64 in stored transcripts.
+
+`render_page` accepts `page`, optional `revision`, optional `maxDimension`
+(256–2400, default 1600), and optional `region` with normalized top-left `x`, `y`,
+`width`, `height`. Omit `region` for the entire page. The tool returns the exact
+region, pixel dimensions and a clickable page citation. Rendering always uses
+original colors independently of the reader theme. Four recent images and
+9 MiB total PNG bytes can be included in one request; unavailable/omitted images
+are identified explicitly. Text-only models are not silently replaced.

@@ -16,7 +16,11 @@ NSArray<NSDictionary*>* SPDFMacAIModelsFromCatalog(NSData* data,NSError** error)
             ![parameters isKindOfClass:NSArray.class] || ![parameters containsObject:@"tools"]) continue;
         NSString* name=[model[@"name"] isKindOfClass:NSString.class] ? model[@"name"] : identifier;
         if (name.length>200) name=identifier;
-        [seen addObject:identifier]; [result addObject:@{@"id":identifier,@"name":name,@"supported_parameters":@[@"tools"]}];
+        id architecture=model[@"architecture"];
+        id inputs=[architecture isKindOfClass:NSDictionary.class] ? architecture[@"input_modalities"] : nil;
+        BOOL images=[inputs isKindOfClass:NSArray.class] && [inputs containsObject:@"image"];
+        [seen addObject:identifier]; [result addObject:@{@"id":identifier,@"name":images ? [name stringByAppendingString:@" · Images"] : name,
+            @"supportsImages":@(images),@"supported_parameters":@[@"tools"]}];
     }
     [result sortUsingComparator:^NSComparisonResult(NSDictionary* a,NSDictionary* b) {
         return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]];
