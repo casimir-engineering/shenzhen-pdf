@@ -9,6 +9,13 @@ This guide describes the controls shipped in **26.10.5-1**. It is the public
 integration reference; implementation details live in the
 [Markdown engine contract](../mac/markdown/README.md).
 
+ShenzhenPDF also has a separate macOS in-reader [document assistant](document-assistant.md)
+for cited chat, page previews, workspace organization, reader controls,
+comments, Collection access, and supported OCR/translation/export jobs. This
+guide below documents the command-line and stdio MCP interfaces only; their
+commands do not send content to a model. The assistant guide covers its setup,
+privacy, undo behavior and boundaries.
+
 - [Native inspection and layout settings](#native-command)
 - [Author, inspect and refine Markdown output](#author-inspect-and-refine-markdown-output)
 - [Navigate and highlight](#navigate-and-highlight)
@@ -24,10 +31,12 @@ integration reference; implementation details live in the
 | Create, name, recolor, order, hide or expand groups | Group actions / MCP group tools below |
 | Persist group organization | Normal reader session YAML, shared with the UI |
 
-The reader is a viewer. Author or edit Markdown using your normal file-writing
-tools, then inspect it or open it in ShenzhenPDF. There is no agent command for
-editing document contents, exporting a complete PDF, running OCR, translation,
-or managing Collection; do not infer such tools from the reader's UI features.
+For this command-line/MCP interface, author or edit Markdown using your normal
+file-writing tools, then inspect it or open it in ShenzhenPDF. These commands
+do not edit document contents, export a complete PDF, run OCR or translation,
+or manage Collection. Those operations are available only through the
+separately documented in-reader assistant where explicitly supported; do not
+infer broader capabilities from either interface.
 
 ## Native command
 
