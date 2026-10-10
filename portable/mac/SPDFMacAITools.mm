@@ -41,12 +41,13 @@ static id Externalize(id value, NSString* key) {
     if ([value isKindOfClass:NSString.class] && [value isAbsolutePath] && [key isEqual:@"title"]) return [value lastPathComponent];
     return value;
 }
-static NSString* Citation(NSString* path, NSNumber* page, NSString* revision, NSString* layout) {
+static NSString* Citation(NSString* path, NSNumber* page, NSString* revision, NSString* layout, NSString* passage) {
     NSURLComponents* link=[NSURLComponents new]; link.scheme=@"spdf-ai"; link.host=@"document";
     NSMutableArray* query=[@[[NSURLQueryItem queryItemWithName:@"path" value:SPDFAIDocumentIdentifier(path)],
         [NSURLQueryItem queryItemWithName:@"page" value:page.stringValue]] mutableCopy];
     if (revision.length) [query addObject:[NSURLQueryItem queryItemWithName:@"revision" value:revision]];
     if (layout.length) [query addObject:[NSURLQueryItem queryItemWithName:@"layoutIdentity" value:layout]];
+    if (passage.length && passage.length<=512) [query addObject:[NSURLQueryItem queryItemWithName:@"query" value:passage]];
     link.queryItems=query;
     return link.URL.absoluteString ?: @"";
 }
@@ -82,13 +83,13 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         Definition(@"read_pages",@"Read exact page text and authored chapters. At most 20 pages per request; use nextPage for continuation.",
             @{@"path":path,@"page":Field(@"integer",@"First page, one-based."),@"count":Field(@"integer",@"1–20 pages."),
               @"revision":Field(@"string",@"Optional exact revision from a prior result; changed documents are rejected.")},@[@"path"]),
-        Definition(@"search_documents",@"Search text in open documents. Returns exact matching snippets and pages, with partial coverage disclosed. Scope by path when known.",
-            @{@"query":Field(@"string",@"Literal text to find."),@"path":path,
+        Definition(@"search_documents",@"Search text in open documents. Returns exact matching snippets, pages and clickable citations that highlight the query. Use a short exact passage for precise source links, and preserve the returned citation URL unchanged. Partial coverage is disclosed. Scope by path when known.",
+            @{@"query":@{@"type":@"string",@"maxLength":@512,@"description":@"Short literal passage to find and highlight."},@"path":path,
               @"page":Field(@"integer",@"First page to search, one-based.")},@[@"query"]),
         Definition(@"render_page",@"Show a page image in the chat to illustrate a diagram, table or passage. Render only pages relevant to the user's request.",
             @{@"path":path,@"page":Field(@"integer",@"Page, one-based.")},@[@"path",@"page"]),
-        Definition(@"show_document",@"Show an already-open document at a page. Returns a reversible action receipt.",
-            @{@"path":path,@"page":Field(@"integer",@"Page, one-based."),@"revision":Field(@"string",@"Optional revision from retrieved evidence."),@"layoutIdentity":Field(@"string",@"Optional layout fingerprint from text-document evidence.")},@[@"path"]),
+        Definition(@"show_document",@"Show an already-open document at a page and optionally highlight a literal passage on that page. Returns a reversible action receipt.",
+            @{@"path":path,@"page":Field(@"integer",@"Page, one-based."),@"revision":Field(@"string",@"Optional revision from retrieved evidence."),@"layoutIdentity":Field(@"string",@"Optional layout fingerprint from text-document evidence."),@"query":@{@"type":@"string",@"maxLength":@512,@"description":@"Optional exact passage from the cited page to highlight using document search."}},@[@"path"]),
         Definition(@"organize_groups",@"Change groups using a validated existing agent command. Supported actions: create-group, update-group, move-tab, move-group, ungroup. Ask list_workspace first. Reversible unless the workspace changes afterwards.",
             @{@"command":@{@"type":@"object",@"description":@"Existing group command: action plus paths/name/color or groupID/path/beforePath/beforeGroupID/collapsed/hidden as applicable."}},@[@"command"]),
         Definition(@"list_collection",@"Find documents saved in Collection by title, including documents not currently open. Results use opaque documentID values. Returns 50 at a time.",
@@ -122,6 +123,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
 }
 - (BOOL)canUndo { return self.actions.count>0; }
 - (void)cancel {
+    [self.reader aiCancelPendingCitation];
     self.generation++; [self.progress cancel]; [self.queue cancelAllOperations];
 }
 - (BOOL)undoLastAction:(NSError**)error {
@@ -165,7 +167,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
     for (NSString* key in arguments) {
         if (![key isKindOfClass:NSString.class] || !properties[key]) return ToolError(@"Unknown tool argument.");
         NSString* type=properties[key][@"type"]; id value=arguments[key];
-        if (([type isEqual:@"string"] && (![value isKindOfClass:NSString.class] || [value length]>4096 ||
+        if (([type isEqual:@"string"] && (![value isKindOfClass:NSString.class] || [value length]>(properties[key][@"maxLength"] ? [properties[key][@"maxLength"] unsignedIntegerValue] : 4096) ||
             [value rangeOfString:@"\0"].location!=NSNotFound)) ||
             ([type isEqual:@"object"] && ![value isKindOfClass:NSDictionary.class]) ||
             ([type isEqual:@"integer"] && (![value isKindOfClass:NSNumber.class] ||
@@ -316,7 +318,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         completion(ToolError(@"Document revision changed. Read the workspace again.")); return;
     }
     if ([name isEqual:@"show_document"] && SPDFIsRenderedTextDocumentPath(selected[@"readPath"]) && !selected[@"paginationPlan"]) {
-        if (arguments[@"layoutIdentity"] || (arguments[@"page"] && [arguments[@"page"] integerValue]!=1)) {
+        if ([arguments[@"query"] length] || arguments[@"layoutIdentity"] || (arguments[@"page"] && [arguments[@"page"] integerValue]!=1)) {
             completion(ToolError(@"Show page 1 first to load this text document's actual layout, then read and navigate its pages.")); return;
         }
         NSDictionary* before=[self.reader aiCaptureWorkspace];
@@ -359,10 +361,15 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
                     context=nil; error=[NSError errorWithDomain:@"ShenzhenPDF.AI.Tool" code:1
                         userInfo:@{NSLocalizedDescriptionKey:@"Document layout changed. Retrieve this passage again before navigating."}];
                 }
+                if ([name isEqual:@"show_document"] && [arguments[@"query"] length] && context &&
+                    (![context[@"pages"] count] || !SPDFAISearchContext(@{@"pages":@[context[@"pages"][0]],@"revision":context[@"revision"]},arguments[@"query"],1).count)) {
+                    context=nil; error=[NSError errorWithDomain:@"ShenzhenPDF.AI.Tool" code:1
+                        userInfo:@{NSLocalizedDescriptionKey:@"The cited passage is not on this page. Retrieve its source again."}];
+                }
                 NSMutableDictionary* value=[context mutableCopy]; value[@"path"]=path;
                 NSMutableArray* pages=[NSMutableArray array];
                 for (NSDictionary* item in context[@"pages"]) { NSMutableDictionary* row=[item mutableCopy];
-                    row[@"citation"]=Citation(path,item[@"page"],context[@"revision"],context[@"layoutIdentity"]); [pages addObject:row]; }
+                    row[@"citation"]=Citation(path,item[@"page"],context[@"revision"],context[@"layoutIdentity"],nil); [pages addObject:row]; }
                 value[@"pages"]=pages; result=value;
             } else {
                 NSMutableArray* results=[NSMutableArray array], *coverage=[NSMutableArray array]; NSUInteger visited=0;
@@ -373,7 +380,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
                     NSDictionary* context=SPDFAIDocumentContextForCandidate(candidate,start,100,progress,&docError);
                     if (!context) { [coverage addObject:@{@"path":candidate[@"path"],@"error":docError.localizedDescription ?: @"Unavailable"}]; continue; }
                     for (NSDictionary* hit in SPDFAISearchContext(context,arguments[@"query"],50-results.count)) {
-                        NSMutableDictionary* row=[hit mutableCopy]; row[@"path"]=candidate[@"path"]; row[@"title"]=candidate[@"title"]; row[@"citation"]=Citation(candidate[@"path"],hit[@"page"],context[@"revision"],context[@"layoutIdentity"]);
+                        NSMutableDictionary* row=[hit mutableCopy]; row[@"path"]=candidate[@"path"]; row[@"title"]=candidate[@"title"]; row[@"citation"]=Citation(candidate[@"path"],hit[@"page"],context[@"revision"],context[@"layoutIdentity"],arguments[@"query"]);
                         [results addObject:row];
                     }
                     [coverage addObject:@{@"path":candidate[@"path"],@"nextPage":context[@"nextPage"],@"truncated":context[@"truncated"]}];
@@ -401,7 +408,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
                         completion(ToolError(@"Document changed before navigation.")); return;
                     }
                     NSDictionary* before=[self.reader aiCaptureWorkspace];
-                    completion([self recordResult:[self.reader aiNavigateDocument:path page:(NSInteger)start] before:before]);
+                    completion([self recordResult:[self.reader aiNavigateDocument:path page:(NSInteger)start query:arguments[@"query"] progress:progress sourcePath:selected[@"readPath"] revision:result[@"revision"]] before:before]);
                 } else completion(result);
             });
         }

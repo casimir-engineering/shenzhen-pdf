@@ -4,13 +4,14 @@ NSDictionary* SPDFMacAICitationArguments(NSURL* URL) {
         URL.user || URL.password || URL.port || URL.fragment || URL.path.length) return nil;
     NSMutableDictionary* args=[NSMutableDictionary dictionary];
     for (NSURLQueryItem* item in [NSURLComponents componentsWithURL:URL resolvingAgainstBaseURL:NO].queryItems) {
-        if (!item.value.length || args[item.name] || ![@[@"path",@"page",@"revision",@"layoutIdentity"] containsObject:item.name]) return nil;
+        if (!item.value.length || args[item.name] || ![@[@"path",@"page",@"revision",@"layoutIdentity",@"query"] containsObject:item.name]) return nil;
         args[item.name]=item.value;
     }
     if (![args[@"path"] hasPrefix:@"doc:"] || ![args[@"revision"] length]) return nil;
     NSString* raw=args[@"page"]; if (!raw) return nil;
     NSScanner* scanner=[NSScanner scannerWithString:raw]; scanner.charactersToBeSkipped=nil;
     NSInteger page=0; if (![scanner scanInteger:&page] || !scanner.isAtEnd || page<1 || page>1000000) return nil;
+    if ([args[@"query"] length]>512) return nil;
     args[@"page"]=@(page); return args;
 }
 static BOOL Contains(id value, NSDictionary* arguments, NSUInteger depth) {

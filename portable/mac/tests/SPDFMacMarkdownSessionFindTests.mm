@@ -189,6 +189,36 @@ int main(void) {
             assert([[session.renderedDocument.attributedString.string substringWithRange:match.range]
                 isEqualToString:@"target alpha"]);
 
+        // Re-render installs a fresh paged view; inspect the live publication surface.
+        for (NSView* view in session.rootView.subviews)
+            if ([view isKindOfClass:SPDFMacMarkdownPagedView.class]) pagedView=(id)view;
+        // Citation publication is revalidated after extraction, before highlight or reveal.
+        for (NSString* mode in @[@"complete",@"manual-page",@"cancel"]) {
+            [session clearSearch]; [session goToPageAtIndex:0];
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
+            NSInteger expectedPage=session.currentPageIndex;
+            NSProgress* progress=[NSProgress progressWithTotalUnitCount:1];
+            __block BOOL finished=NO;
+            session.searchUpdateHandler=^(NSUInteger count,NSInteger index,BOOL searching){
+                (void)count;(void)index;if(!searching)finished=YES;
+            };
+            dispatch_suspend(sessionQueue);
+            [session searchForQuery:@"target alpha" regex:NO preferredIndex:0 jumpToNearest:NO reveal:YES
+                publicationAllowed:^BOOL { return !progress.cancelled && session.currentPageIndex==expectedPage; }];
+            assert([[session valueForKey:@"activeSearchQuery"] length]==0); // automatic reflow cannot replay an uncommitted citation
+            if([mode isEqual:@"cancel"]) [progress cancel];
+            if([mode isEqual:@"manual-page"]) [session goToPageAtIndex:session.pageCount-1];
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
+            NSPoint interveningOrigin=pagedView.contentView.bounds.origin;
+            dispatch_resume(sessionQueue);
+            assert(SpinUntil(^BOOL{return finished;},5));
+            if([mode isEqual:@"complete"]) assert(session.searchMatches.count==3 && pagedView.searchRanges.count==3);
+            else {
+                assert(session.searchMatches.count==0 && pagedView.searchRanges.count==0);
+                assert(NSEqualPoints(interveningOrigin,pagedView.contentView.bounds.origin));
+            }
+        }
+
         [session deactivate];
         assert(session.rootView.superview == nil);
         [NSFileManager.defaultManager removeItemAtPath:path error:nil];

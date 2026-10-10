@@ -122,6 +122,7 @@ static NSString* FixturePDF(NSString* root) {
 static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
+#import "SPDFMacAICitationNavigationChecks.h"
 int main(void) { @autoreleasepool {
     NSString* emojiBoundary=[[@"a" stringByPaddingToLength:63999 withString:@"a" startingAtIndex:0] stringByAppendingString:@"😀x"];
     NSString* boundedEmoji=SPDFAIBoundedText(emojiBoundary,64000);
@@ -135,7 +136,7 @@ int main(void) { @autoreleasepool {
     setenv("SPDF_STATE_DIR",[[root stringByAppendingPathComponent:@"state"] fileSystemRepresentation],1);
     CheckComposerAcceptance();
     CheckWizardCredentialPreservation();
-    NSString* path=FixturePDF(root); NSProgress* progress=[NSProgress progressWithTotalUnitCount:1]; NSError* error=nil;
+    NSString* path=FixturePDF(root); CheckCitationNavigation(path,root); NSProgress* progress=[NSProgress progressWithTotalUnitCount:1]; NSError* error=nil;
     NSDictionary* context=SPDFAIDocumentContext(path,NO,1,5,progress,&error);
     Check(context && !error && [context[@"pageCount"] integerValue]==1,"PDF extraction");
     NSArray* matches=SPDFAISearchContext(context,@"Audio",5);

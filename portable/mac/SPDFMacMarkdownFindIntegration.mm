@@ -1,4 +1,5 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacFindExecution.h"
 
 #import "SPDFMacMarkdownSidebarModel.h"
 #import "markdown/SPDFMarkdown.h"
@@ -100,6 +101,10 @@
 // Markdown branch of startFindForCurrentQueryResetSavedIndex:revealMatch: —
 // the toolbar search field, regex checkbox toggles, and tab-switch restores.
 - (void)startMarkdownFindForCurrentQueryResetSavedIndex:(BOOL)resetSavedIndex revealMatch:(BOOL)revealMatch {
+    [self startMarkdownFindForCurrentQueryResetSavedIndex:resetSavedIndex revealMatch:revealMatch publicationAllowed:nil];
+}
+- (void)startMarkdownFindForCurrentQueryResetSavedIndex:(BOOL)resetSavedIndex revealMatch:(BOOL)revealMatch
+    publicationAllowed:(BOOL (^)(void))publicationAllowed {
     SPDFDocumentTab* tab = [self selectedTab];
     if (!tab) return;
     NSString* query = [_searchField.stringValue copy] ?: @"";
@@ -116,11 +121,15 @@
     // viewport, gated by the same setting as the PDF path.
     [self startMarkdownFindForQuery:query
                      preferredIndex:resetSavedIndex ? -1 : tab.findMatchIndex
-                             reveal:revealMatch];
+                             reveal:revealMatch publicationAllowed:publicationAllowed];
     if (resetSavedIndex || revealMatch) [self showSearchSidebarForFind];
 }
 
 - (void)startMarkdownFindForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex reveal:(BOOL)reveal {
+    [self startMarkdownFindForQuery:query preferredIndex:preferredIndex reveal:reveal publicationAllowed:nil];
+}
+- (void)startMarkdownFindForQuery:(NSString*)query preferredIndex:(NSInteger)preferredIndex reveal:(BOOL)reveal
+    publicationAllowed:(BOOL (^)(void))publicationAllowed {
     SPDFDocumentTab* tab = [self selectedTab];
     if (![self isMarkdownActive] || !tab) return;
     tab.searchText = query ?: @"";
@@ -130,7 +139,7 @@
                                          regex:tab.searchRegex
                                 preferredIndex:preferredIndex
                                  jumpToNearest:_searchJumpsToNearestResult
-                                        reveal:reveal];
+                                        reveal:reveal publicationAllowed:publicationAllowed];
 }
 
 - (void)moveMarkdownFindForward:(BOOL)forward {
