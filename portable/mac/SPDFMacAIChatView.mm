@@ -91,7 +91,7 @@
 @implementation SPDFMacAIChatView {
     SPDFChatComposer* _composer; NSTextField* _status; NSTextField* _inputHelp; NSScrollView* _scroll; NSScrollView* _input; NSStackView* _messages;
     NSLayoutConstraint* _inputHeight; NSLayoutConstraint* _stopTrailing; NSLayoutConstraint* _stopHistoryTrailing;
-    NSButton* _send; NSButton* _stop; NSButton* _undo; NSUInteger _visibleLimit; NSUInteger _messageCount; NSString* _chatID; BOOL _history; BOOL _running; BOOL _preserveScroll; __weak SPDFMacAIChatSession* _displayedSession;
+    NSString* _submissionError; NSButton* _send; NSButton* _stop; NSButton* _undo; NSUInteger _visibleLimit; NSUInteger _messageCount; NSString* _chatID; BOOL _history; BOOL _running; BOOL _preserveScroll; __weak SPDFMacAIChatSession* _displayedSession;
 }
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)dirty { (void)dirty; [SPDFCollectionColor(@"window") setFill]; NSRectFill(self.bounds); }
@@ -121,7 +121,7 @@
         [self button:@"Settings" action:@"settings"],[self button:@"Close · Esc" action:@"close"]]];
     header.spacing=8; header.translatesAutoresizingMaskIntoConstraints=NO; [self addSubview:header];
     _status=SPDFCollectionText(@"Ask about your documents",11,NSFontWeightRegular,YES);
-    _status.translatesAutoresizingMaskIntoConstraints=NO; _status.maximumNumberOfLines=2; [self addSubview:_status];
+    _status.identifier=@"chatStatus"; _status.translatesAutoresizingMaskIntoConstraints=NO; _status.maximumNumberOfLines=2; [self addSubview:_status];
     _scroll=[NSScrollView new]; _scroll.translatesAutoresizingMaskIntoConstraints=NO;
     _scroll.automaticallyAdjustsContentInsets=NO; _scroll.contentInsets=NSEdgeInsetsZero;
     _scroll.drawsBackground=NO; _scroll.hasVerticalScroller=YES; _scroll.autohidesScrollers=YES;
@@ -244,10 +244,14 @@
     (void)textView; (void)index; NSURL* URL=[link isKindOfClass:NSURL.class] ? link : [NSURL URLWithString:[link description]];
     if (self.openLink && SPDFMacAIChatLinkAllowed(URL)) self.openLink(URL); return YES;
 }
+- (void)showSubmissionError:(NSString*)message {
+    _submissionError=[message copy]; [self refreshActivityFromSession:_displayedSession];
+}
 - (void)refreshActivityFromSession:(SPDFMacAIChatSession*)session {
     _displayedSession=session; _running=session.running;
     NSString* fallback=_history ? @"Chats are saved on this Mac" : @"Answers cite your documents · newest messages first";
-    _status.stringValue=session.status.length ? session.status : fallback;
+    _status.stringValue=!_history && _submissionError.length ? _submissionError : session.status.length ? session.status : fallback;
+    _status.accessibilityLabel=_status.stringValue;
     _send.enabled=!session.running && !_history; _stop.enabled=session.running; _composer.editable=!_history;
     _input.hidden=_history; _send.hidden=_history; _inputHeight.constant=_history ? 0 : 68;
     _stopTrailing.active=NO; _stopHistoryTrailing.active=NO;
@@ -265,7 +269,7 @@
 }
 - (void)displaySession:(SPDFMacAIChatSession*)session {
     BOOL differentChat=_chatID && ![_chatID isEqual:session.chat[@"id"]];
-    if(differentChat) _visibleLimit=40;
+    if(differentChat) { _visibleLimit=40; _submissionError=nil; }
     [self refreshActivityFromSession:session];
     NSArray* messages=session.chat[@"messages"];
     if (!_history && [_chatID isEqual:session.chat[@"id"]] && _messageCount==messages.count) return;
