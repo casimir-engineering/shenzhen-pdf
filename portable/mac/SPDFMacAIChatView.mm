@@ -37,7 +37,8 @@
 @end
 @interface SPDFChatMessageView : NSTextView
 @property(nonatomic) NSLayoutConstraint* contentHeight;
-@property(nonatomic) BOOL measuring;
+@property(nonatomic) BOOL measurementScheduled;
+@property(nonatomic) CGFloat measuredWidth;
 @end
 @implementation SPDFChatMessageView
 - (void)drawRect:(NSRect)dirty {
@@ -48,14 +49,26 @@
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay=YES; }
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];
-    if(!self.contentHeight || self.measuring) return;
-    self.measuring=YES;
-    self.textContainer.containerSize=NSMakeSize(MAX(1,size.width-2*self.textContainerInset.width),CGFLOAT_MAX);
-    [self.layoutManager invalidateLayoutForCharacterRange:NSMakeRange(0,self.string.length) actualCharacterRange:nil];
-    [self.layoutManager ensureLayoutForTextContainer:self.textContainer];
-    CGFloat h=MAX(18,ceil(NSMaxY([self.layoutManager usedRectForTextContainer:self.textContainer])))+2*self.textContainerInset.height;
-    if(fabs(h-self.contentHeight.constant)>.5) { self.contentHeight.constant=h; self.superview.needsLayout=YES; }
-    self.measuring=NO;
+    if(!self.contentHeight || self.measurementScheduled || size.width<=2*self.textContainerInset.width || self.hiddenOrHasHiddenAncestor) return;
+    // NSStackView is assigning its cached frames here. Changing constraints in
+    // that callback leaves child frames one layout behind their new heights.
+    // Measure after the current layout transaction, never at a hidden dock's
+    // zero width; that otherwise expands one line into hundreds of points.
+    self.measurementScheduled=YES;
+    __weak SPDFChatMessageView* weakSelf=self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        SPDFChatMessageView* view=weakSelf; if(!view)return;
+        view.measurementScheduled=NO;
+        CGFloat width=NSWidth(view.bounds)-2*view.textContainerInset.width;
+        if(width<=0 || view.hiddenOrHasHiddenAncestor || fabs(width-view.measuredWidth)<.5)return;
+        view.measuredWidth=width;
+        view.textContainer.containerSize=NSMakeSize(width,CGFLOAT_MAX);
+        [view.layoutManager invalidateLayoutForCharacterRange:NSMakeRange(0,view.string.length) actualCharacterRange:nil];
+        [view.layoutManager ensureLayoutForTextContainer:view.textContainer];
+        CGFloat height=MAX(18,ceil(NSMaxY([view.layoutManager usedRectForTextContainer:view.textContainer])))+2*view.textContainerInset.height;
+        if(fabs(height-view.contentHeight.constant)>.5) {view.contentHeight.constant=height;view.superview.needsLayout=YES;}
+        view.needsDisplay=YES;
+    });
 }
 @end
 @interface SPDFChatInputScrollView : NSScrollView
@@ -134,14 +147,14 @@
 }
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance]; self.needsDisplay=YES;
-    if(_displayedSession && !_history) { _chatID=nil; [self displaySession:_displayedSession]; }
+    if(_displayedSession && !_history) { _displayedMessages=nil; [self displaySession:_displayedSession]; }
 }
 - (void)setFrameSize:(NSSize)size {
-    BOOL top=_scroll && _scroll.contentView.bounds.origin.y<20;
+    BOOL atBottom=_scroll && NSMaxY(_scroll.contentView.bounds)>=NSHeight(_scroll.documentView.bounds)-24;
     BOOL widthChanged=fabs(size.width-self.bounds.size.width)>.5;
     [super setFrameSize:size];
     if(widthChanged && _displayedSession) [self refreshActivityFromSession:_displayedSession];
-    if(top && widthChanged) dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
+    if(atBottom && widthChanged) dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
 }
 - (NSTextView*)composer { return _composer; }
 - (void)setChatSearchQuery:(NSString*)query {
@@ -266,8 +279,9 @@
 - (void)clicked:(NSButton*)sender {
     if ([sender.identifier isEqual:@"send"]) [self submit];
     else if ([sender.identifier isEqual:@"older"]) {
-        NSPoint origin=_scroll.contentView.bounds.origin; _visibleLimit+=40; _chatID=nil;
+        NSPoint origin=_scroll.contentView.bounds.origin; CGFloat height=NSHeight(_scroll.documentView.bounds); _visibleLimit+=40; _displayedMessages=nil;
         _preserveScroll=YES; [self displaySession:_displayedSession]; _preserveScroll=NO; [self layoutSubtreeIfNeeded];
+        origin.y+=NSHeight(_scroll.documentView.bounds)-height;
         [_scroll.contentView scrollToPoint:origin]; [_scroll reflectScrolledClipView:_scroll.contentView];
     } else if ([sender.identifier isEqual:@"current"]) {
         if(self.action) self.action(@"current");
@@ -397,13 +411,22 @@
     // Rebuilt rich rows change document height. Resolve their layout before
     // clamping the scroll origin, otherwise the first label can be half hidden.
     [self layoutSubtreeIfNeeded]; [_scroll.documentView layoutSubtreeIfNeeded];
-    [_scroll.contentView scrollToPoint:NSZeroPoint]; [_scroll reflectScrolledClipView:_scroll.contentView];
+    [_scroll.contentView scrollToPoint:NSMakePoint(0,MAX(0,NSHeight(_scroll.documentView.bounds)-NSHeight(_scroll.contentView.bounds)))]; [_scroll reflectScrolledClipView:_scroll.contentView];
 }
 - (void)displaySession:(SPDFMacAIChatSession*)session {
-    BOOL differentChat=_chatID && ![_chatID isEqual:session.chat[@"id"]];
+    NSPoint previousOrigin=_scroll.contentView.bounds.origin;
+    BOOL differentChat=![_chatID isEqual:session.chat[@"id"]];
+    BOOL followBottom=differentChat || !_displayedMessages || NSMaxY(_scroll.contentView.bounds)>=NSHeight(_scroll.documentView.bounds)-24;
     if(differentChat) { _visibleLimit=40; _submissionError=nil; _chatSearch.stringValue=@""; }
     [self refreshActivityFromSession:session];
     NSArray* messages=session.chat[@"messages"];
+    if(messages.count>_displayedMessages.count && [messages.lastObject[@"role"] isEqual:@"user"])followBottom=YES;
+    if(!differentChat && _displayedMessages && !followBottom)
+        for(NSUInteger i=_displayedMessages.count;i<messages.count;i++) {
+            NSDictionary* item=messages[i];NSString* role=item[@"role"];
+            if(([role isEqual:@"preview"] && [item[@"local"] boolValue]) ||
+                ([@[@"user",@"assistant"] containsObject:role] && [item[@"content"] isKindOfClass:NSString.class] && [item[@"content"] length]))_visibleLimit++;
+        }
     if (!_history && [_chatID isEqual:session.chat[@"id"]] && [_displayedMessages isEqual:messages]) return;
     _history=NO; [self refreshActivityFromSession:session]; _chatID=session.chat[@"id"];
     _displayedMessages=[[NSArray alloc] initWithArray:messages ?: @[] copyItems:YES]; [self clearRows];
@@ -413,24 +436,34 @@
         empty.translatesAutoresizingMaskIntoConstraints=NO; [_messages addArrangedSubview:empty];
         [empty.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
     } else {
-        NSUInteger visible=0; BOOL hasOlder=NO; NSString* query=_chatSearch.stringValue;
-        for (NSDictionary* message in messages.reverseObjectEnumerator) {
-            if ([message[@"role"] isEqual:@"preview"] && [message[@"local"] boolValue] && !query.length) {
-                if(visible>=_visibleLimit) { hasOlder=YES; break; }
-                [self addPreview:message[@"preview"]]; ++visible; continue;
+        NSMutableArray* visibleMessages=[NSMutableArray array]; NSString* query=_chatSearch.stringValue;
+        for(NSDictionary* message in messages) {
+            if([message[@"role"] isEqual:@"preview"] && [message[@"local"] boolValue] && !query.length) {
+                [visibleMessages addObject:message];continue;
             }
-            if (![message[@"role"] isEqual:@"user"] && ![message[@"role"] isEqual:@"assistant"]) continue;
-            NSString* content=message[@"content"]; if (![content isKindOfClass:NSString.class] || !content.length) continue;
-            if(query.length && [content rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location==NSNotFound) continue;
-            if(!query.length && visible>=_visibleLimit) { hasOlder=YES; break; }
-            [self addText:content role:[message[@"role"] isEqual:@"user"] ? @"You" : @"Assistant"];
-            ++visible;
+            if(![@[@"user",@"assistant"] containsObject:message[@"role"]])continue;
+            NSString* content=message[@"content"];if(![content isKindOfClass:NSString.class] || !content.length)continue;
+            if(query.length && [content rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location==NSNotFound)continue;
+            [visibleMessages addObject:message];
         }
-        if(hasOlder) [_messages addArrangedSubview:[self button:@"Show older messages" action:@"older"]];
+        NSUInteger first=!query.length && visibleMessages.count>_visibleLimit ? visibleMessages.count-_visibleLimit : 0;
+        if(first)[_messages addArrangedSubview:[self button:@"Show older messages" action:@"older"]];
+        for(NSUInteger i=first;i<visibleMessages.count;i++) {
+            NSDictionary* message=visibleMessages[i];
+            if([message[@"role"] isEqual:@"preview"])[self addPreview:message[@"preview"]];
+            else [self addText:message[@"content"] role:[message[@"role"] isEqual:@"user"] ? @"You" : @"Assistant"];
+        }
     }
-    if(!_preserveScroll) {
+    if(!_preserveScroll && followBottom) {
         [self scrollToNewest];
         dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
+    } else if(!_preserveScroll) {
+        [self layoutSubtreeIfNeeded];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self layoutSubtreeIfNeeded];
+            [self->_scroll.contentView scrollToPoint:previousOrigin];
+            [self->_scroll reflectScrolledClipView:self->_scroll.contentView];
+        });
     }
 }
 - (void)displayChats:(NSArray<NSDictionary*>*)chats {

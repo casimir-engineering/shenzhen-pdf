@@ -8,6 +8,12 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- Chat messages follow conversation order, with new replies at the bottom beside
+  the composer. Reopening or resizing the chat panel preserves visible message
+  content instead of leaving stretched blank bubbles. Loading older messages
+  keeps your reading position; incoming replies follow the bottom unless you
+  scroll up to read earlier messages.
+
 - Chat history now has folders, timestamps and short generated titles. Right-click
   to rename a chat or move it; removing a folder keeps its conversations.
 - History search shows highlighted message excerpts. Search inside a chat is
