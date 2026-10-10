@@ -83,7 +83,17 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     if (!data || data.length>8*1024*1024) return NO;
     int fd=[self lockStore:error]; if (fd<0) return NO;
     BOOL removed=[NSFileManager.defaultManager fileExistsAtPath:[self tombstone:chat[@"id"]].path];
-    BOOL ok=!removed && [data writeToURL:URL options:NSDataWritingAtomic error:error];
+    BOOL conflict=NO;
+    if (!removed && [NSFileManager.defaultManager fileExistsAtPath:URL.path]) {
+        NSData* existing=[NSData dataWithContentsOfURL:URL options:NSDataReadingMappedIfSafe error:nil];
+        id previous=existing.length<=8*1024*1024 ? [NSJSONSerialization JSONObjectWithData:existing options:0 error:nil] : nil;
+        NSArray* old=[previous isKindOfClass:NSDictionary.class] ? previous[@"messages"] : nil;
+        NSArray* incoming=chat[@"messages"];
+        if (![old isKindOfClass:NSArray.class] || ![incoming isKindOfClass:NSArray.class] || old.count>incoming.count) conflict=YES;
+        else for (NSUInteger i=0;i<old.count;i++) if (![old[i] isEqual:incoming[i]]) { conflict=YES; break; }
+    }
+    BOOL ok=!removed && !conflict && [data writeToURL:URL options:NSDataWritingAtomic error:error];
+    if (conflict && error) *error=[NSError errorWithDomain:@"ShenzhenPDF.Chat" code:2 userInfo:@{NSLocalizedDescriptionKey:@"This chat changed in another window. Reopen it from Chats before continuing. Your unsaved conversation remains visible here."}];
     if (removed && error) *error=[NSError errorWithDomain:@"ShenzhenPDF.Chat" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This chat was deleted in another window. Start a new chat."}];
     if (ok) chmod(URL.fileSystemRepresentation,0600);
     flock(fd,LOCK_UN); close(fd); return ok;
