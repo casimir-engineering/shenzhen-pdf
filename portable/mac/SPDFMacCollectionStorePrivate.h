@@ -5,6 +5,7 @@
 #import <fcntl.h>
 #import <unistd.h>
 NS_ASSUME_NONNULL_BEGIN
+FOUNDATION_EXPORT NSDictionary* SPDFCollectionStorageSettings(NSDictionary* saved);
 FOUNDATION_EXPORT NSDictionary* SPDFCollectionFingerprint(NSString* path);
 FOUNDATION_EXPORT NSDictionary* SPDFCollectionFingerprintFromStat(const struct stat* value);
 FOUNDATION_EXPORT NSError* SPDFCollectionError(NSInteger code, NSString* message);
@@ -57,6 +58,10 @@ FOUNDATION_EXPORT NSDictionary* SPDFCollectionAssets(NSString* sourcePath, NSDat
 @end
 
 @interface SPDFMacCollectionStore (CleanupPrivate)
+- (nullable NSNumber*)availableCapacityBytes;
+- (NSDictionary*)storageBudgetForManifest:(NSDictionary*)manifest settings:(NSDictionary*)settings;
+- (NSDictionary*)cleanupPlanForManifest:(NSDictionary*)manifest limit:(unsigned long long)limit protectedVersionID:(nullable NSString*)versionID;
+- (void)applyCleanupPlan:(NSDictionary*)plan toManifest:(NSMutableDictionary*)manifest;
 - (unsigned long long)retainedBytesInManifest:(NSDictionary*)manifest;
 - (BOOL)enforceStorageLimitInManifest:(NSMutableDictionary*)manifest
                   protectedVersionID:(nullable NSString*)versionID error:(NSError**)error;

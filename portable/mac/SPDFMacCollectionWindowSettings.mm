@@ -37,8 +37,9 @@
     NSStackView* cap = [NSStackView stackViewWithViews:@[]]; cap.identifier = @"CollectionStorageCap"; cap.spacing = 6; cap.distribution = NSStackViewDistributionFill;
     [cap addArrangedSubview:SPDFCollectionText(@"Storage cap",12,NSFontWeightRegular,NO)];
     [cap addArrangedSubview:[NSView new]];
-    self.limitPicker = SPDFCollectionPopUp(); [self.limitPicker addItemsWithTitles:@[@"Unlimited (default)",@"Custom limit"]];
-    [self.limitPicker selectItemAtIndex:[self.store.settings[@"storageLimitBytes"] unsignedLongLongValue] ? 1 : 0];
+    self.limitPicker = SPDFCollectionPopUp(); [self.limitPicker addItemsWithTitles:@[@"Unlimited",@"Static limit",@"Dynamic · 80% available"]];
+    NSString* mode=self.store.settings[@"storageMode"];
+    [self.limitPicker selectItemAtIndex:[mode isEqual:@"dynamic"] ? 2 : [mode isEqual:@"static"] ? 1 : 0];
     self.limitPicker.target = self; self.limitPicker.action = @selector(changeLimitMode:); [cap addArrangedSubview:self.limitPicker];
     self.limitField = [NSTextField new]; self.limitField.placeholderString = @"0";
     self.limitField.doubleValue = [self.store.settings[@"storageLimitBytes"] doubleValue]/1e9;
@@ -48,7 +49,7 @@
     self.limitField.target = self; self.limitField.action = @selector(changeLimit:); self.limitField.delegate = (id)self;
     [self.limitField.widthAnchor constraintEqualToConstant:70].active = YES; [cap addArrangedSubview:self.limitField];
     self.limitUnit = SPDFCollectionText(@"GB",13,NSFontWeightRegular,NO); [cap addArrangedSubview:self.limitUnit]; add(cap);
-    self.limitField.hidden = self.limitPicker.indexOfSelectedItem == 0; self.limitUnit.hidden = self.limitField.hidden;
+    self.limitField.hidden = self.limitPicker.indexOfSelectedItem != 1; self.limitUnit.hidden = self.limitField.hidden;
     // Keep the pending status and its action next to the only setting they apply.
     NSStackView* applyRow = [NSStackView stackViewWithViews:@[]]; applyRow.distribution = NSStackViewDistributionFill;
     self.settingsStatus = SPDFCollectionText(@"",12,NSFontWeightRegular,YES); [applyRow addArrangedSubview:self.settingsStatus];
@@ -56,7 +57,8 @@
     NSButton* apply = SPDFCollectionButton(@"Apply",self,@selector(changeLimit:),@"normal");
     apply.identifier = @"CollectionStorageApply"; apply.accessibilityLabel = @"Apply storage limit";
     [applyRow addArrangedSubview:apply]; add(applyRow);
-    add(SPDFCollectionText(@"Unlimited by default. Set 0 to keep all saved copies.",12,NSFontWeightRegular,YES));
+    NSTextField* storageHelp=SPDFCollectionText(@"Dynamic uses up to 80% of available space, including existing Collection copies. It adjusts when disk space changes. Static sets a fixed budget; 0 keeps all copies.",12,NSFontWeightRegular,YES);
+    storageHelp.identifier=@"CollectionStorageHelp"; add(storageHelp);
     self.storage = SPDFCollectionText(@"Storage is calculated when Collection is opened.",12,NSFontWeightRegular,YES); add(self.storage);
     NSStackView* policy = [NSStackView stackViewWithViews:@[]]; policy.spacing = 12; policy.distribution = NSStackViewDistributionFill;
     [policy addArrangedSubview:SPDFCollectionText(@"When full",13,NSFontWeightRegular,NO)]; [policy addArrangedSubview:[NSView new]];
@@ -76,26 +78,28 @@
     [self updateStoragePolicy];
 }
 - (void)changeLimitMode:(id)sender {
-    (void)sender; BOOL unlimited = self.limitPicker.indexOfSelectedItem == 0;
-    self.limitField.hidden = unlimited; self.limitUnit.hidden = unlimited;
-    if (!unlimited && self.limitField.doubleValue == 0) self.limitField.doubleValue = 10;
+    (void)sender; BOOL fixed = self.limitPicker.indexOfSelectedItem == 1;
+    self.limitField.hidden = !fixed; self.limitUnit.hidden = !fixed;
+    if (fixed && self.limitField.doubleValue == 0) self.limitField.doubleValue = 10;
     [self updateStoragePolicy]; [self.window.contentView layoutSubtreeIfNeeded];
     NSAccessibilityPostNotification(self.settingsPane,NSAccessibilityLayoutChangedNotification);
-    if (!unlimited) { [self.window makeFirstResponder:self.limitField]; [self.limitField selectText:nil]; }
+    if (fixed) { [self.window makeFirstResponder:self.limitField]; [self.limitField selectText:nil]; }
 }
 - (void)controlTextDidChange:(NSNotification*)notification {
     if (notification.object == self.limitField) [self updateStoragePolicy];
 }
 - (void)updateStoragePolicy {
-    double amount = 0; BOOL unlimited = self.limitPicker.indexOfSelectedItem == 0;
+    double amount = 0; BOOL unlimited = self.limitPicker.indexOfSelectedItem != 1;
+    BOOL dynamic = self.limitPicker.indexOfSelectedItem == 2;
     NSScanner* scanner = [NSScanner scannerWithString:self.limitField.stringValue];
     BOOL valid = unlimited || ([scanner scanDouble:&amount] && scanner.isAtEnd && isfinite(amount) && amount>=0 && amount<=1e8);
     unsigned long long proposed = valid ? (unsigned long long)(amount*1e9) : 0;
     unsigned long long applied = [self.store.settings[@"storageLimitBytes"] unsignedLongLongValue];
-    self.storagePolicy.stringValue = !valid ? @"Enter a valid storage limit" : proposed == 0 ?
+    self.storagePolicy.stringValue = !valid ? @"Enter a valid storage limit" : !dynamic && proposed == 0 ?
         @"No automatic deletion while unlimited" : @"Least opened first · older versions, then documents";
-    NSString* appliedLabel = applied ? [NSByteCountFormatter stringFromByteCount:(long long)applied countStyle:NSByteCountFormatterCountStyleFile] : @"Unlimited";
-    self.settingsStatus.stringValue = !valid ? @"Enter a valid limit before applying." : proposed != applied ?
+    BOOL appliedDynamic=[self.store.settings[@"storageMode"] isEqual:@"dynamic"];
+    NSString* appliedLabel = appliedDynamic ? @"Dynamic · 80% available" : applied ? [NSByteCountFormatter stringFromByteCount:(long long)applied countStyle:NSByteCountFormatterCountStyleFile] : @"Unlimited";
+    self.settingsStatus.stringValue = !valid ? @"Enter a valid limit before applying." : (proposed != applied || dynamic != appliedDynamic) ?
         [NSString stringWithFormat:@"Pending change · Apply to review. Applied limit: %@.",appliedLabel] :
         [NSString stringWithFormat:@"Applied limit: %@.",appliedLabel];
 }

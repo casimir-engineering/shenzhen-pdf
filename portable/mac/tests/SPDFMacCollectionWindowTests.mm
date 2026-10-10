@@ -97,16 +97,17 @@ int main(void) {
             Expect(@"focused search editor preserves the icon inset and centered text",searchEditor &&
                 NSMinX(editing)>=NSMinX(searchText)-1 && fabs(NSMidY(editing)-NSMidY(searchText))<=2);
             [searchCell endEditing:searchEditor]; [manager.window makeFirstResponder:manager.table];
-            Expect(@"storage defaults to an explicit Unlimited choice",[manager.limitPicker.title containsString:@"Unlimited"] && manager.limitField.hidden);
+            Expect(@"storage defaults to dynamic capacity",[manager.limitPicker.title containsString:@"Dynamic"] && manager.limitField.hidden);
             [manager.limitPicker selectItemAtIndex:1];
             [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
             Expect(@"custom storage policy updates before Apply and reveals its field",!manager.limitField.hidden &&
                 [manager.storagePolicy.stringValue containsString:@"Least opened"] && [manager.settingsStatus.stringValue containsString:@"Pending change"] &&
-                [manager.settingsStatus.stringValue containsString:@"Applied limit: Unlimited"]);
+                [manager.settingsStatus.stringValue containsString:@"Applied limit: Dynamic"]);
             Expect(@"changing cap mode does not apply or delete anything",[store.settings[@"storageLimitBytes"] unsignedLongLongValue] == 0);
             manager.limitField.stringValue = @"0"; [manager updateStoragePolicy];
             Expect(@"zero custom cap describes unlimited accurately",[manager.storagePolicy.stringValue containsString:@"No automatic deletion"]);
             [manager.limitPicker selectItemAtIndex:0]; [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
+            [store updateSettings:@{@"storageMode":@"unlimited",@"storageLimitBytes":@0} error:nil];
             NSMenu* actions = [NSMenu new]; [manager populateDocumentMenu:actions];
             Expect(@"unlimited Collection exposes document commands without retention or capture toggles",actions.numberOfItems == 7 &&
                 [actions itemWithTitle:@"Save a Copy…"] && [actions itemWithTitle:@"Delete all previous backups…"]);

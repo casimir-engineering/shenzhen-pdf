@@ -144,13 +144,17 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
         (![decoded isKindOfClass:NSDictionary.class] || ![decoded[@"documents"] isKindOfClass:NSDictionary.class]))
         return @{@"choice":@"enabled",@"storageLimitBytes":@0,@"indexDamaged":@YES};
     NSDictionary* saved = [self readManifest][@"settings"];
-    NSMutableDictionary* values = [@{@"choice":@"unset",@"storageLimitBytes":@0} mutableCopy];
+    NSMutableDictionary* values = [SPDFCollectionStorageSettings(saved) mutableCopy];
+    values[@"choice"] = @"unset";
     [values addEntriesFromDictionary:saved ?: @{}]; return values;
 }
 - (BOOL)updateSettings:(NSDictionary*)changes error:(NSError**)error {
     // Browsing preferences are persisted by the manager itself, not document mutations.
     return [self manifestTransaction:^BOOL(NSMutableDictionary* m,NSError** e) {
-        (void)e; [m[@"settings"] addEntriesFromDictionary:changes]; return YES;
+        (void)e; NSMutableDictionary* normalized=[changes mutableCopy];
+        if (changes[@"storageLimitBytes"] && !changes[@"storageMode"])
+            normalized[@"storageMode"]=[changes[@"storageLimitBytes"] unsignedLongLongValue] ? @"static" : @"unlimited";
+        [m[@"settings"] addEntriesFromDictionary:normalized]; return YES;
     } writeBack:YES error:error];
 }
 - (BOOL)isEnabled { return [[self settings][@"choice"] isEqual:@"enabled"]; }

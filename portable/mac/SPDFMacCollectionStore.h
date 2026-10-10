@@ -11,10 +11,15 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 @property(nonatomic, readonly) NSURL* rootURL;
 + (instancetype)defaultStore;
 - (instancetype)initWithRootURL:(NSURL*)URL;
-// choice: unset/enabled/disabled. storageLimitBytes: 0 means Keep all.
+// choice: unset/enabled/disabled. storageMode: dynamic (fresh default), static, unlimited.
+// Dynamic uses 80% of (free volume bytes + retained Collection bytes). Legacy byte limits migrate on read.
 - (NSDictionary*)settings;
 - (BOOL)updateSettings:(NSDictionary*)changes error:(NSError**)error;
 - (BOOL)isEnabled;
+// Metadata-only: no volume query.
+- (BOOL)isStorageLimited;
+// Explicit settings/cleanup only; never called during construction or launch.
+- (NSDictionary*)storageBudget;
 - (NSArray<NSDictionary*>*)documents;
 - (nullable NSDictionary*)documentForPath:(NSString*)path;
 - (NSArray<NSDictionary*>*)versionsForDocumentID:(NSString*)documentID;
@@ -99,6 +104,8 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 // Plan: storageLimitBytes, usedBytes, projectedBytes, reclaimedBytes, canApply,
 // removedVersionCount, removedDocumentCount, reviewToken, removals (documentID,
 // versionID, title, capturedAt, openCount, stage: previousVersion/document).
+- (NSDictionary*)previewStoragePolicy:(NSDictionary*)policy;
+- (BOOL)applyStoragePolicy:(NSDictionary*)policy reviewedPlan:(NSDictionary*)plan error:(NSError**)error;
 - (NSDictionary*)previewStorageLimit:(unsigned long long)limit;
 - (BOOL)applyStorageLimit:(unsigned long long)limit reviewedPlan:(NSDictionary*)plan error:(NSError**)error;
 // Explicit user opens only; callers exclude restoration, capture and history previews.
