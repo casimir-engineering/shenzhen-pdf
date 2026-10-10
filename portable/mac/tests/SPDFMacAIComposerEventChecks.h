@@ -8,6 +8,7 @@
 @interface ShenzhenMacDelegate (ChatWindowMenuProbe)
 - (void)closeDocument:(id)sender;
 - (id)readerAIHistoryState;
+- (void)rememberAIChatWidth:(CGFloat)width;
 - (void)aiChatAction:(NSString*)action;
 @end
 @interface ComposerInvisiblePanel : NSPanel
@@ -22,11 +23,13 @@
 @end
 @interface ComposerEventReader : ComposerReaderProbe
 @property(nonatomic) NSUInteger chatOpens;
+@property(nonatomic) NSUInteger persistenceCount;
 - (void)seedPalette;
 - (NSPanel*)fixturePanel;
 - (BOOL)searchMonitorInstalled;
 @end
 @implementation ComposerEventReader
+- (void)persistActiveState {self.persistenceCount++;}
 - (void)seedPalette {
     _window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1000,700) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:YES];
     _window.releasedWhenClosed=NO;
@@ -63,6 +66,11 @@ static void CheckComposerEventDispatch(void) {
     Check(dock && reader.isAIChatVisible && !reader.aiChatWindow && window && window!=panel && window.firstResponder==view.composer,
         "chat is docked inside reader with composer first responder");
     Check(dock.split.subviews.count==2 && NSWidth(dock.split.subviews.lastObject.frame)>250,"document remains beside chat");
+    NSUInteger saves=reader.persistenceCount;
+    [reader rememberAIChatWidth:350];[reader rememberAIChatWidth:360];[reader rememberAIChatWidth:370];
+    Check(reader.persistenceCount==saves,"chat divider motion performs no synchronous session writes");
+    Check(ComposerWait(^BOOL{return reader.persistenceCount>saves;}),"chat divider persists after gesture settles");
+    Check(reader.persistenceCount==saves+1 && [[reader sidebarWorkspaceState][@"chatWidth"] isEqual:@370],"one settled save preserves the final chat width");
     view.composer.string=@"Send through window event dispatch";[window sendEvent:ComposerReturn(NO,window.windowNumber)];
     Check(ComposerWait(^BOOL{return [session.chat[@"messages"] count]==2 && !session.running;}),"docked Return completes a real offline transport turn");
     Check(ComposerRequestCount()==before+1 && !view.composer.string.length && !reader.settingsOpens,"one Return sends exactly once without opening settings");
