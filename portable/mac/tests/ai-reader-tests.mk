@@ -6,6 +6,9 @@ AI_READER_BASE_OBJS := $(filter-out $(BUILD)/workspace-probe/mac/tests/SPDFMacWo
 AI_CONTEXT_TEST := $(BUILD)/SPDFMacAIDocumentContextTests
 AI_ANALYSIS_TEST := $(BUILD)/SPDFMacAIAnalysisServiceTests
 AI_CHAT_VIEW_TEST := $(BUILD)/SPDFMacAIChatViewTests
+# Header-based acceptance fixtures must invalidate their test translation units.
+-include $(BUILD)/workspace-probe/mac/tests/SPDFMacAIDocumentContextTests.d
+-include $(BUILD)/workspace-probe/mac/tests/SPDFMacAIAnalysisServiceTests.d
 $(AI_CONTEXT_TEST): $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SPDFMacAIDocumentContextTests.o $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) mupdf-libs
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SPDFMacAIDocumentContextTests.o $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -o "$@"
 $(AI_ANALYSIS_TEST): $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SPDFMacAIAnalysisServiceTests.o $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) mupdf-libs

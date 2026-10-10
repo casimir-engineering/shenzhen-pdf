@@ -43,6 +43,17 @@ static NSURLRequest* composerRequest;
 - (void)showUnifiedSettings:(id)sender { (void)sender;self.settingsOpens++; }
 - (void)showAIConnectionSettingsWithReason:(NSString*)reason { (void)reason;self.settingsOpens++; }
 @end
+@interface ComposerPaletteProbe : ComposerReaderProbe
+@property(nonatomic) NSUInteger chatOpens;
+- (void)seedEmptySearchPalette;
+@end
+@implementation ComposerPaletteProbe
+- (void)seedEmptySearchPalette {
+    _paletteMode=1;_paletteSearchField=[NSSearchField new];_paletteSearchField.stringValue=@"";
+    _paletteTable=[NSTableView new];
+}
+- (void)showAIChat:(id)sender { (void)sender;self.chatOpens++; }
+@end
 static BOOL ComposerWait(BOOL (^predicate)(void)) {
     NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:5];
     while(!predicate() && deadline.timeIntervalSinceNow>0)
@@ -71,6 +82,10 @@ static void CheckComposerAcceptance(void) {
     // The surrounding acceptance binary sets SPDF_STATE_DIR to a fresh temporary directory.
     Check([SPDFMacAISettings.defaultURL.path hasPrefix:NSTemporaryDirectory().stringByResolvingSymlinksInPath] ||
         [SPDFMacAISettings.defaultURL.path hasPrefix:NSTemporaryDirectory()],"composer settings are isolated from user state");
+    ComposerPaletteProbe* palette=[ComposerPaletteProbe new];[palette seedEmptySearchPalette];
+    NSUInteger routingRequests=ComposerRequestCount();[palette activatePaletteSelection:nil];
+    Check(palette.chatOpens==1 && !palette.settingsOpens && !palette.keyReads && ComposerRequestCount()==routingRequests,
+        "empty Cmd K Return routes directly to one new chat without Settings, credentials or network");
     ComposerReaderProbe* reader=[ComposerReaderProbe new];reader.testKey=@"sk-or-v1-offline-acceptance-only";
     id state=[reader readerAIState];SPDFMacAIChatView* view=[state valueForKey:@"view"];
     SPDFMacAIChatSession* session=[state valueForKey:@"session"];
