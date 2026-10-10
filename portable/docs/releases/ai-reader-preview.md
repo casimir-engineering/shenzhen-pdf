@@ -228,3 +228,5 @@ are identified explicitly. Text-only models are not silently replaced.
   persist in chats and support text selection/search.
 - AI: `present_answer` displays a final card from a short label, value and retrieved
   citation, without another answer-generation request.
+- Reopened chats omit empty intermediate tool messages instead of showing blank
+  Assistant bubbles. Saved answers and source previews remain available.

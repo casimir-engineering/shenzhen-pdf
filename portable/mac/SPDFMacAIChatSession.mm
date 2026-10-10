@@ -171,6 +171,7 @@ static id ImmutableJSON(id value) {
             [owner finish:@"The model returned invalid message content."]; return;
         }
         NSMutableDictionary* message=[@{@"role":@"assistant",@"content":content==NSNull.null || !content ? @"" : [content copy]} mutableCopy];
+        if (![message[@"content"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) message[@"content"]=@"";
         NSArray* calls=reply[@"tool_calls"];
         if (wrappingUp && ((calls && (![calls isKindOfClass:NSArray.class] || calls.count)) || ![message[@"content"] length])) { [owner pauseAfterBudget]; return; }
         if (calls && (![calls isKindOfClass:NSArray.class] || calls.count>12)) {

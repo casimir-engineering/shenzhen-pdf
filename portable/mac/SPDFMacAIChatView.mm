@@ -302,13 +302,14 @@
 }
 - (void)clearRows { for (NSView* v in [_messages.arrangedSubviews copy]) { [_messages removeArrangedSubview:v]; [v removeFromSuperview]; } }
 - (void)addText:(NSString*)text role:(NSString*)role {
-    NSTextField* label=SPDFCollectionText(role,11,NSFontWeightSemibold,YES); [_messages addArrangedSubview:label];
     BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
     NSMutableAttributedString* safe=[SPDFMacAIChatMarkdown(text,MAX(100,self.bounds.size.width-68),dark) mutableCopy];
     // The document renderer terminates blocks with newlines. A chat row already
     // owns its inter-message spacing, so a final blank paragraph must not add it again.
     while(safe.length && [NSCharacterSet.newlineCharacterSet characterIsMember:[safe.string characterAtIndex:safe.length-1]])
         [safe deleteCharactersInRange:NSMakeRange(safe.length-1,1)];
+    if (!safe.length) return;
+    NSTextField* label=SPDFCollectionText(role,11,NSFontWeightSemibold,YES); [_messages addArrangedSubview:label];
     SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(120,self.bounds.size.width-48),40)];
     view.verticallyResizable=NO; view.horizontallyResizable=NO;
     view.editable=NO; view.selectable=YES; view.drawsBackground=NO; view.delegate=self;
@@ -428,7 +429,7 @@
         for(NSUInteger i=_displayedMessages.count;i<messages.count;i++) {
             NSDictionary* item=messages[i];NSString* role=item[@"role"];
             if(([role isEqual:@"preview"] && [item[@"local"] boolValue]) ||
-                ([@[@"user",@"assistant"] containsObject:role] && [item[@"content"] isKindOfClass:NSString.class] && [item[@"content"] length]))_visibleLimit++;
+                ([@[@"user",@"assistant"] containsObject:role] && [item[@"content"] isKindOfClass:NSString.class] && [[item[@"content"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] length]))_visibleLimit++;
         }
     if (!_history && [_chatID isEqual:session.chat[@"id"]] && [_displayedMessages isEqual:messages]) return;
     _history=NO; [self refreshActivityFromSession:session]; _chatID=session.chat[@"id"];
@@ -445,7 +446,7 @@
                 [visibleMessages addObject:message];continue;
             }
             if(![@[@"user",@"assistant"] containsObject:message[@"role"]])continue;
-            NSString* content=message[@"content"];if(![content isKindOfClass:NSString.class] || !content.length)continue;
+            NSString* content=message[@"content"];if(![content isKindOfClass:NSString.class] || ![content stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)continue;
             if(query.length && [content rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location==NSNotFound)continue;
             [visibleMessages addObject:message];
         }
