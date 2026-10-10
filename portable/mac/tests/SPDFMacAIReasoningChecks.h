@@ -2,18 +2,21 @@ static void CheckReasoning(NSURL* root) {
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     FakeTransport* transport=[FakeTransport new];FakeTools* tools=[FakeTools new];
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
-    [session send:@"Read the drawing" model:@"fake/reasoning" apiKey:@"test"];
+    [session send:@"Answer this document question" model:@"fake/reasoning" apiKey:@"test"];
     NSString* prompt=transport.messages.firstObject[@"content"];
     CHECK(prompt.length<3400 && [prompt containsString:@"Default to 1-3 short sentences"] &&
           [prompt containsString:@"detailed reasoning, derivations, tables or extra suggestions only when the user asks"] &&
-          [prompt containsString:@"Stop inspecting once the requested quantity is supported"],
+          [prompt containsString:@"Stop inspecting once the answer is supported"],
           "compact request prompt defaults to a short cited answer without unsolicited exposition");
-    CHECK([prompt containsString:@"inspect the relevant drawing before relying on a table"] &&
-          [prompt containsString:@"arrows and extension lines"] && [prompt containsString:@"uninspected pages"] &&
+    CHECK([prompt containsString:@"definitions, scope and conditions"] &&
+          [prompt containsString:@"Choose text or rendered pages according to where the evidence lives"] &&
+          [prompt containsString:@"Never infer absence from a failed search or partial inspection"] &&
           [prompt containsString:@"never add a query"] && [prompt containsString:@"Brevity limits the reply, not the evidence"],
-          "brief replies retain visual scope checks and exact citation rules");
-    CHECK(![prompt containsString:@"3.1 mm"] && ![prompt containsString:@"MSK13"],
-          "general evidence rules do not hardcode a document or expected answer");
+          "brief replies retain general evidence checks and exact citation rules");
+    CHECK(![prompt containsString:@"3.1 mm"] && ![prompt containsString:@"MSK13"] &&
+          ![prompt containsString:@"total travel"] && ![prompt containsString:@"dimension arrows"] &&
+          ![prompt containsString:@"before relying on a table"],
+          "general evidence rules do not privilege the engineering test case");
     NSArray* details=@[@{@"type":@"reasoning.encrypted",@"data":@"opaque-fixture-state",@"format":@"fixture"}];
     transport.reply(@{@"content":@"",@"reasoning_details":details,@"tool_calls":@[
         @{@"id":@"drawing",@"function":@{@"name":@"render_page",@"arguments":@"{}"}}]},nil);

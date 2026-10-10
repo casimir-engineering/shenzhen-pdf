@@ -92,3 +92,15 @@ broken link. Existing constructor checks prove no network, disk or reader-contex
 work at session creation. Live model accuracy and latency have not been measured;
 these tests verify prompt delivery and deterministic citation behavior, not model
 compliance. The user's running app was not launched, stopped or captured.
+
+## Generalize the evidence policy
+
+Removed the engineering-specific instructions after user feedback: there is no
+longer a rule privileging drawings over tables, or mentioning travel, dimension
+arrows or clearances. The general policy chooses text or rendered pages according
+to the evidence, checks definitions/scope/conditions, separates facts from
+inferences, resolves apparent conflicts in context, and does not infer absence
+from incomplete inspection. Brevity and bounded retrieval remain. Exact citation
+rules and deterministic link recovery are unchanged. Request tests check the
+general policy and reject the previous engineering-specific wording; session
+construction remains inert. No new runtime behavior or model call was added.
