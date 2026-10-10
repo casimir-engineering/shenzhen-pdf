@@ -61,14 +61,18 @@ Press **⌘K**, then press **Return** while the search field is empty to open
 chat. It returns to the current conversation; use **New chat** to start another. Type a question and press **Return** to send; **Shift-Return** inserts a
 line break. With text in the search field, Return keeps its usual search-result
 behavior. Use the explicit **Ask** action to start a new chat with that query as a draft, then press Return to send.
-Chat opens in its own resizable macOS window. **Escape**, **Close**, or **⌘W**
-hides it while preserving the conversation and unsent draft. The two pin buttons
-keep it above Shenzhen PDF windows or above all apps; click the selected button
-again to unpin. Window position, size and pin mode are remembered. Search can
-remain open independently.
+The **Chats** icon in the reader's left navigation opens saved conversations in
+that sidebar. Selecting one opens a separate, resizable chat panel beside it;
+the document stays visible on the right. **⌘K**, then Return with an empty
+search, opens the same panel. **Hide chat panel**, or Escape from the composer,
+hides it without ending the conversation or discarding its draft. Chat width is
+remembered in the window's YAML sidebar state. At narrow widths, navigation and
+the map temporarily yield space to the reader; their preferences are retained.
 
-The chat toolbar offers **New chat**, **Chats**, **Undo action**, **Settings**,
-and **Close**, plus the two pin controls. Thinking, current-tool activity, errors,
+Search past chats by title or user/assistant message text from either search
+field; the two fields share one query. Open a saved conversation to continue it.
+The chat toolbar offers **New chat**, **Past chats**, **Undo**, **Redo**,
+**AI settings**, and **Hide chat panel**, with hover labels. Thinking, current-tool activity, errors,
 and readiness for your reply appear above the transcript. Your latest question
 stays visible there, and both user and assistant messages remain in the saved
 conversation, newest first. Chats are saved on this Mac. The Chats view lets you reopen a
@@ -87,10 +91,29 @@ Use **Stop** to cancel the current model request or queued tool work. A change
 that already completed remains in place; use **Undo action** to reverse the
 latest assistant action when the result has not changed since. Undo never
 overwrites intervening edits. Up to 32 workspace/reader actions and 8
-file/document actions are retained for Undo. A failed or stale Undo reports
-that it could not safely apply.
+file/document actions are retained for Undo. **Redo** reapplies a supported undone
+action while its relevant state still matches. A new assistant edit clears the
+Redo branch. From an empty composer, ⌘Z and ⌘⇧Z invoke these actions; text editing
+keeps its normal text Undo. These journals last for the reader session, while
+chat transcripts survive relaunch. A failed or stale Undo/Redo reports why it
+could not safely apply. Native menu dispatch is not covered by this journal.
 
 ## What the assistant can access and change
+
+`update_document_metadata` changes saved generated chapters, summary, keywords,
+tags (up to six), or analysis language. It requires current cached metadata and a
+source revision; page anchors must remain within the analyzed evidence. It does
+not rewrite authored headings or PDF bookmarks. Explicit chat requests can
+change generated chapter language without changing the global default. Metadata
+edits support Undo/Redo and update the reader's generated chapter list.
+
+`app_controls` discovers native app menus and visible controls and can activate
+a command or set an editable value. Use typed tools first for reversible edits.
+Native commands can open ordinary confirmation, file, or permission dialogs;
+the model must inspect the result, not assume a queued command completed. Secure
+and credential fields are excluded. Generic native commands return
+`undoable: false`; their own native Cancel/Undo behavior applies where available.
+No other applications, shell execution, or web-browsing tool is provided.
 
 The model receives opaque document IDs and titles from the current reader
 workspace, then retrieves evidence as needed. Its tools can:
@@ -203,9 +226,9 @@ search.
 Other current boundaries:
 
 - The assistant reads only documents open in this reader workspace, plus
-  documents explicitly discovered and opened through Collection. It does not
-  browse arbitrary folders or the web, run shell commands, or access another
-  app's documents.
+  documents explicitly discovered and opened through Collection. These document-reading tools do not browse arbitrary folders. Native
+  app commands can open normal reader dialogs, subject to macOS permissions.
+  The assistant cannot browse the web, run shell commands, or access other apps.
 - OCR and translation are local jobs, but the assistant does not install or
   configure their dependencies. Encrypted PDFs are not supported by assistant
   export/OCR/translation jobs.

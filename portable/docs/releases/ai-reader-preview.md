@@ -1,7 +1,7 @@
 # AI reader preview
 
 - Ask questions about open documents; click cited sources to open the page and highlight the passage.
-- Keep chat in a separate window, pin it above the reader or all apps, and see questions, replies and work status.
+- Browse saved chats in the left sidebar; read and continue a chat in a resizable panel beside the document, with search, Undo and Redo.
 - Preview pages, organize groups, control the reader, and manage supported PDF comments.
 - Request a separate PDF export, OCR copy or translated copy; stop work and undo eligible changes.
 - Complete the four-step first-run setup; new installations default chat and summaries on.
@@ -39,9 +39,11 @@ query, Return continues to open the selected search result; use the explicit
 Ask action to start a new chat with that query as a draft, then press Return to send. The chat can be stopped with
 **Stop** or closed with Escape. Saved conversations are available from **Chats**;
 deleting chats removes their transcripts and saved page previews from this Mac.
-Chat now has its own native resizable window with independent search, normal
-macOS Close/Minimize behavior, and two remembered pin modes: above Shenzhen PDF
-or above all apps. Closing it preserves the unsent draft and conversation.
+The Chats icon opens history in the existing left sidebar. Selecting a conversation
+opens a resizable chat panel beside it, with the document on the right. Hide the
+panel without losing its draft; search saved titles and both speakers' messages.
+The panel width is saved in YAML. Undo and Redo are available for supported
+assistant edits; native menu actions explicitly report when Undo is unavailable.
 Activity shows when the model is thinking, which tool is working, when a reply
 is ready, and actionable failures. User messages remain in the saved history. Muted blue user messages and neutral
 assistant messages distinguish the two speakers in both themes. Replies are
@@ -62,7 +64,7 @@ evidence as needed rather than sending every open document with each question.
 in effect until undone. **Undo action** reverses the latest assistant change
 when its result still matches the receipt. If the user or another process has
 changed that state or file, Undo refuses rather than replacing the newer work.
-This is action-scoped undo, not a general file rollback facility.
+Redo reapplies supported actions if the relevant state still matches. Journals are session-local; transcripts remain saved across launches.
 
 Document jobs create separate outputs under `Assistant Exports` in the
 application-support directory; originals remain unchanged. PDF export converts
@@ -99,9 +101,8 @@ read at most 20 pages per call;
 search a bounded set of open documents; render page previews; navigate to
 revision-checked evidence; organize groups; inspect and alter supported reader
 state; read/edit comments; list/open Collection documents; close/reopen tabs;
-rename eligible files; and run explicitly requested `document_job` operations
-(`ocr`, `translate`, `export-pdf`). It cannot choose arbitrary filesystem
-paths, execute shell commands, browse the web, or delete arbitrary originals.
+rename eligible files; update saved generated chapter/summary/tag/language metadata with Undo/Redo; discover and operate native app menus and visible controls; and run explicitly requested `document_job` operations
+(`ocr`, `translate`, `export-pdf`). Typed document tools use discovered document IDs. Native commands retain ordinary app dialogs and macOS permissions; secure/credential fields are excluded. There is no shell or web-browsing tool.
 
 Document reads are bounded to files in the active reader workspace, with
 Collection documents accessible only through Collection discovery/open tools.

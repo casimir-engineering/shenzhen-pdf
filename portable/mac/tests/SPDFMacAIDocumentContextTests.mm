@@ -19,6 +19,7 @@
 #include <assert.h>
 #undef main
 static void Check(BOOL value, const char* message) { if (!value) { fprintf(stderr,"FAIL: %s\n",message); abort(); } }
+#import "SPDFMacAIAppAccessChecks.h"
 #import "SPDFMacAIComposerAcceptanceChecks.h"
 #import "SPDFMacAIWizardCredentialChecks.h"
 @interface ShenzhenMacDelegate (AIContextCacheProbe)
@@ -124,6 +125,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
 }
 #import "SPDFMacAICitationNavigationChecks.h"
 #import "SPDFMacAICollectionRenameChecks.h"
+#import "SPDFMacAIMetadataHistoryChecks.h"
 int main(void) { @autoreleasepool {
     NSString* emojiBoundary=[[@"a" stringByPaddingToLength:63999 withString:@"a" startingAtIndex:0] stringByAppendingString:@"😀x"];
     NSString* boundedEmoji=SPDFAIBoundedText(emojiBoundary,64000);
@@ -131,7 +133,7 @@ int main(void) { @autoreleasepool {
     NSString* longCombiningBoundary=[@"e" stringByPaddingToLength:100002 withString:@"\u0301" startingAtIndex:0];
     Check(SPDFAIBoundedText(longCombiningBoundary,100000).length==0,"bounded context never exceeds budget for a long composed sequence");
     Check([SPDFAIBoundedText(@"abcd",2) isEqual:@"ab"] && [SPDFAIBoundedText(@"😀",2) isEqual:@"😀"] && SPDFAIBoundedText(@"a",0).length==0,"bounded context exact and zero boundaries");
-    [NSApplication sharedApplication];
+    [NSApplication sharedApplication];CheckNativeAppAccess();
     NSString* root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
     setenv("SPDF_STATE_DIR",[[root stringByAppendingPathComponent:@"state"] fileSystemRepresentation],1);
@@ -399,6 +401,7 @@ int main(void) { @autoreleasepool {
     while(!result && deadline.timeIntervalSinceNow>0) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Check([result[@"analysis"][@"summary"] isEqual:@"Cached source summary"] && large.candidateSnapshots==1 &&
         !large.candidateCalls && large.metadataCalls==1,"production cached metadata validates only its selected document in 1000-tab workspace");
+    CheckAIMetadataHistory(root,path);
     [NSFileManager.defaultManager removeItemAtPath:root error:nil];
     puts("SPDFMacAIDocumentContextTests passed"); return 0;
 } }

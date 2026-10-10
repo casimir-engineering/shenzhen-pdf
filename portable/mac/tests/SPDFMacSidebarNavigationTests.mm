@@ -57,7 +57,7 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     [surface layoutSubtreeIfNeeded];
     Check(fabs(NSWidth(surface.bounds)-width)<.5,"layout preserves the requested sidebar width");
     fprintf(stdout,"Nav requested %.0f actual %.0f control %.0f\n",width,NSWidth(surface.bounds),NSWidth(navigation.bounds));
-    Check(navigation.segmentCount == 5,"all PDF workspace modes present");
+    Check(navigation.segmentCount == 6,"all PDF workspace modes present");
     Check(navigation.accessibilityChildren.count == 5,"navigation exposes each document mode");
     for (NSButton* row in navigation.accessibilityChildren) {
         Check(NSHeight(row.frame) == 28 && NSMinY(row.frame) == 4,"icons share one aligned header row");
@@ -110,7 +110,7 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     NSButton* groups = navigation.accessibilityChildren.firstObject; [groups performClick:nil];
     Check(navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups && fixture.changes == 1,"click selects Groups and dispatches action once");
     spdf_sidebar_mode_control_configure_history(navigation,NO,NO,NO);
-    Check(navigation.segmentCount == 3 && navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups,
+    Check(navigation.segmentCount == 4 && navigation.spdf_selectedSidebarMode == SPDFSidebarModeGroups,
         "Markdown omits Comments, Search and Groups remain stable without document history");
     navigation.spdf_selectedSidebarMode = SPDFSidebarModeGroups;
     [navigation spdf_setEnabled:NO forSidebarMode:SPDFSidebarModeChapters];

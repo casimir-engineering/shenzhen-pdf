@@ -32,7 +32,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
 - (void)restoreSidebarWorkspaceState:(id)value {
     NSMutableDictionary* state = [NSMutableDictionary dictionary];
     if ([value isKindOfClass:NSDictionary.class]) {
-        for (NSString* key in @[@"mode",@"groupScroll",@"width",@"visible",@"newDocumentsInGeneral",@"groupSearchCollapsed"])
+        for (NSString* key in @[@"mode",@"groupScroll",@"width",@"visible",@"newDocumentsInGeneral",@"groupSearchCollapsed",@"chatWidth"])
             if ([value[key] isKindOfClass:NSNumber.class]) state[key] = value[key];
         id tabScroll=value[@"tabStripScroll"];
         if ([tabScroll isKindOfClass:NSNumber.class] && isfinite([tabScroll doubleValue]) && [tabScroll doubleValue]>=0)
@@ -175,11 +175,13 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
     NSView* searchView = objc_getAssociatedObject(self,&emptySearchKey);
     BOOL enteringGroups = groups && (!controller || controller.view.hidden || !_sidebarVisible);
     controller.view.hidden = !groups; searchView.hidden = !emptySearch;
-    if (!groups && !emptySearch) return NO;
+    BOOL chats=[self showAIChatSidebarIfSelected];
+    if (!groups && !emptySearch && !chats) return NO;
     if (!_sidebarPreferredVisible) { [self setSidebarActuallyVisible:NO]; return YES; }
     [self collectionShowSelectedHistoryPanel];
     _sidebarTable.enclosingScrollView.hidden = YES; _sidebarFilterField.hidden = YES;
     [_sidebarContainer viewWithTag:8801].hidden = YES;
+    if (chats) { [self setSidebarActuallyVisible:_sidebarPreferredVisible]; return YES; }
     if (groups) {
         if (!controller) {
             controller = [SPDFGroupManagementController new]; __weak ShenzhenMacDelegate* weakSelf = self;

@@ -1,4 +1,5 @@
 #import "SPDFMacWorkspacePanels.h"
+#import "SPDFMacAIIntegration.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacSidebarWorkspace.h"
 #import <objc/runtime.h>
@@ -59,6 +60,13 @@ static char panelPolicyKey;
     BOOL sidebar = state.sidebarRequested, map = state.mapRequested && [self hasActiveDocument];
     CGFloat width = NSWidth(_splitView.bounds);
     CGFloat sidebarWidth = [self clampedSidebarWidth];
+    CGFloat chatWidth=[self aiChatReservedWidth];
+    // Temporarily yield auxiliary space to chat; retain the user's panel preferences.
+    if(chatWidth>0 && width>0) {
+        width-=chatWidth;
+        if(sidebar && width-sidebarWidth<280)sidebar=NO;
+        if(map && width-(sidebar ? sidebarWidth : 0)-_minimapWidth-8<280)map=NO;
+    }
     // This is a layout budget, not a stored preference or a new document zoom.
     // The active navigation panel wins while there is insufficient reading room.
     if (sidebar && map && width > 0 && width-sidebarWidth-_minimapWidth-8 < 320) {

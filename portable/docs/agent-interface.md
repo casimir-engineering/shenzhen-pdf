@@ -11,7 +11,8 @@ integration reference; implementation details live in the
 
 ShenzhenPDF also has a separate macOS in-reader [document assistant](document-assistant.md)
 for cited chat, page previews, workspace organization, reader controls,
-comments, Collection access, and supported OCR/translation/export jobs. This
+comments, generated-metadata edits with Undo/Redo, native app menu/control access,
+Collection access, and supported OCR/translation/export jobs. This
 guide below documents the command-line and stdio MCP interfaces only; their
 commands do not send content to a model. The assistant guide covers its setup,
 privacy, undo behavior and boundaries.

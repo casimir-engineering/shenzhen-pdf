@@ -5,7 +5,10 @@
 - (void)showAIChats:(id)sender;
 - (void)closeAIChat;
 - (void)cancelAIChat;
+- (BOOL)showAIChatSidebarIfSelected;
+- (void)searchAIChats:(NSString*)query;
 - (BOOL)isAIChatVisible;
+- (CGFloat)aiChatReservedWidth;
 - (NSWindow*)aiChatWindow;
 - (void)preparePaletteForSearch;
 - (void)showAIChatForQuery:(NSString*)query;

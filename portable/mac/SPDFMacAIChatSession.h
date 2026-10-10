@@ -6,6 +6,10 @@
 @property(nonatomic, readonly) BOOL canUndo;
 - (void)cancel;
 - (BOOL)undoLastAction:(NSError**)error;
+@optional
+@property(nonatomic,readonly) BOOL canRedo;
+- (void)undoWithCompletion:(void (^)(NSDictionary*))completion;
+- (void)redoWithCompletion:(void (^)(NSDictionary*))completion;
 @end
 typedef NS_ENUM(NSInteger, SPDFMacAIChatActivityState) {
     SPDFMacAIChatActivityIdle, SPDFMacAIChatActivityThinking, SPDFMacAIChatActivityWorking,
@@ -17,6 +21,8 @@ typedef NS_ENUM(NSInteger, SPDFMacAIChatActivityState) {
 @property(nonatomic, readonly) NSDictionary* chat;
 @property(nonatomic, readonly) BOOL running;
 @property(nonatomic, readonly) BOOL canUndo;
+@property(nonatomic, readonly) BOOL canRedo;
+- (void)performHistoryAction:(BOOL)redo;
 @property(nonatomic, readonly) NSString* status;
 @property(nonatomic, readonly) SPDFMacAIChatActivityState activityState;
 @property(nonatomic, readonly) NSString* activityDetail;

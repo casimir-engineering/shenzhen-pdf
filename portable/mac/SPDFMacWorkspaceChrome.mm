@@ -291,7 +291,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     BOOL chapters = _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters;
     SPDFDocumentTab* tab = [self selectedTab];
     BOOL saved = [self collectionTabIsSavedVersion:tab];
-    BOOL copy = saved || tab.readOnly || SPDFPathIsUnsavedPastedImage(tab.path);
+    BOOL copy = _sidebarModeControl.spdf_selectedSidebarMode!=SPDFSidebarModeChats && (saved || tab.readOnly || SPDFPathIsUnsavedPastedImage(tab.path));
     state.sourcePill.hidden = !copy || _presentationMode;
     state.sourceStatus.stringValue = saved ? @"Collection document" :
         tab.readOnly ? @"Working copy · Read-only" : @"Unsaved image";

@@ -31,6 +31,8 @@
 - (void)preferSidebarVisible:(BOOL)visible;
 @end
 @implementation WorkspaceProbe
+- (BOOL)showAIChatSidebarIfSelected {return NO;}
+- (void)collectionRememberGroups {}
 - (WorkspaceScrollProbe*)createScrollProbe {
     WorkspaceScrollProbe* probe=[WorkspaceScrollProbe new]; _tabStrip=(id)probe; return probe;
 }

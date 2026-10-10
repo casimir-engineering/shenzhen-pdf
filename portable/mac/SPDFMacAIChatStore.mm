@@ -58,12 +58,19 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
         @"content":@"{\"cancelled\":true,\"reason\":\"Previous session ended\"}"}];
     return chat;
 }
-- (NSArray<NSDictionary*>*)chats {
+- (NSArray<NSDictionary*>*)chats { return [self chatsMatchingQuery:@""]; }
+- (NSArray<NSDictionary*>*)chatsMatchingQuery:(NSString*)query {
     NSMutableArray* chats=[NSMutableArray array];
     NSArray* URLs=[NSFileManager.defaultManager contentsOfDirectoryAtURL:_directory includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
     for (NSURL* URL in URLs) {
         if (![URL.pathExtension isEqual:@"json"]) continue;
         NSDictionary* chat=[self chatWithID:URL.lastPathComponent.stringByDeletingPathExtension];
+        if(query.length && chat) {
+            BOOL found=[chat[@"title"] localizedCaseInsensitiveContainsString:query];
+            for(NSDictionary* message in chat[@"messages"]) if(!found && [@[@"user",@"assistant"] containsObject:message[@"role"]])
+                found=[message[@"content"] isKindOfClass:NSString.class] && [message[@"content"] localizedCaseInsensitiveContainsString:query];
+            if(!found)continue;
+        }
         if (chat) [chats addObject:@{@"id":chat[@"id"],@"title":chat[@"title"] ?: @"New chat",@"updated":chat[@"updated"] ?: @0}];
     }
     return [chats sortedArrayUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) { return [b[@"updated"] compare:a[@"updated"]]; }];

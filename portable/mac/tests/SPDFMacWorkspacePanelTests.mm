@@ -8,6 +8,7 @@
 #pragma clang diagnostic pop
 @interface PanelProbe : ShenzhenMacDelegate
 @property NSUInteger changes;
+@property CGFloat chatWidth;
 @property NSUInteger sidebarApplications;
 @property NSUInteger mapApplications;
 @property NSUInteger chromeRefreshes;
@@ -17,6 +18,7 @@
 - (NSDictionary*)snapshot;
 @end
 @implementation PanelProbe
+- (CGFloat)aiChatReservedWidth {return self.chatWidth;}
 - (void)seed {
     self.workspace = [NSMutableDictionary dictionary];
     _splitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0,0,1280,780)];
@@ -82,5 +84,12 @@ int main(void) { @autoreleasepool {
     Check(p.changes==changes,"unchanged policy produces no repeated visibility transitions");
     Check(p.sidebarApplications==sidebarApplications && p.mapApplications==mapApplications,"redundant requests never invoke raw layout/render setters");
     Check(p.chromeRefreshes>chrome,"redundant caller requests retain lightweight toolbar-state refresh");
+    [p setSidebarActuallyVisible:YES];
+    p.chatWidth=400;[p resize:900];
+    Check(![p.snapshot[@"sidebar"] boolValue] && [p.snapshot[@"map"] boolValue],"compact chat temporarily hides history but preserves map if it fits");
+    p.chatWidth=640;[p applyWorkspacePanelPolicy];
+    Check(![p.snapshot[@"map"] boolValue],"widening chat immediately yields map space to document");
+    p.chatWidth=0;[p applyWorkspacePanelPolicy];
+    Check([p.snapshot[@"sidebar"] boolValue] && [p.snapshot[@"map"] boolValue],"hiding chat restores both requested panels");
     puts(failures ? "Workspace panel tests failed" : "Workspace panel tests passed"); return failures ? 1 : 0;
 } }
