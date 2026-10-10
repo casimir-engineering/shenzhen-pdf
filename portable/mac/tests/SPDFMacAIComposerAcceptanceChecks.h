@@ -29,10 +29,15 @@ static NSURLRequest* composerRequest;
 @property(nonatomic) NSError* keyError;
 @property(nonatomic) NSUInteger keyReads;
 @property(nonatomic) NSUInteger settingsOpens;
+@property(nonatomic) NSString* authorizedKey;
+@property(nonatomic) NSUInteger authorizationCalls;
 @end
 @implementation ComposerReaderProbe
 - (NSString*)aiAPIKeyForSending:(NSError**)error {
     self.keyReads++;if(error)*error=self.keyError;return self.testKey;
+}
+- (NSString*)aiAuthorizeAPIKeyForSending:(NSError**)error {
+    self.authorizationCalls++;if(error)*error=self.authorizedKey ? nil : SPDFMacAIError(-128,@"Cancelled");return self.authorizedKey;
 }
 - (SPDFMacAITransport*)aiChatTransport {
     NSURLSessionConfiguration* configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;
@@ -78,6 +83,7 @@ static void SaveComposerSettings(BOOL configured,BOOL enabled,BOOL setupComplete
     settings.automaticAnalysis=NO;settings.model=@"offline/test-model";
     Check([settings save:nil],"composer fixture settings save");
 }
+#import "SPDFMacAIComposerEventChecks.h"
 static void CheckComposerAcceptance(void) {
     // The surrounding acceptance binary sets SPDF_STATE_DIR to a fresh temporary directory.
     Check([SPDFMacAISettings.defaultURL.path hasPrefix:NSTemporaryDirectory().stringByResolvingSymlinksInPath] ||
@@ -131,7 +137,7 @@ static void CheckComposerAcceptance(void) {
         Check(!reader.settingsOpens && window.contentView==view && [session.chat[@"messages"] count]==4,
             "credential failure stays in the same chat without Settings navigation");
         NSString* status=ComposerStatus(view).lowercaseString;
-        Check(status.length && ([status containsString:@"settings"] || [status containsString:@"retry"] || [status containsString:@"connect"]),
+        Check(status.length && ([status containsString:@"settings"] || [status containsString:@"retry"] || [status containsString:@"connect"] || [status containsString:@"authorize"]),
             "credential failure shows actionable inline status");
     }
     for(NSNumber* incomplete in @[@YES,@NO]) {
@@ -149,5 +155,26 @@ static void CheckComposerAcceptance(void) {
     Check(ComposerWait(^BOOL{return [session.chat[@"messages"] count]==6 && !session.running;}),"Return can retry after inline rejection");
     Check(ComposerRequestCount()==before+1 && !view.composer.string.length && !reader.settingsOpens,
         "recovery sends exactly once without replacing the chat");
+    reader.testKey=nil;reader.keyError=SPDFMacAIError(-25293,@"Fixture authorization failure");
+    view.composer.string=@"Authorize this retained draft";before=ComposerRequestCount();
+    [view.composer keyDown:ComposerReturn(NO,window.windowNumber)];
+    NSView* issue=[view valueForKey:@"issue"];NSButton* recovery=[view valueForKey:@"recovery"];
+    Check(!issue.hidden && [recovery.identifier isEqual:@"authorize"] && [recovery.title containsString:@"Authorize"] &&
+        !reader.authorizationCalls,"Return exposes visible authorization recovery without prompting automatically");
+    [view layoutSubtreeIfNeeded];NSScrollView* composerBox=[view valueForKey:@"input"];
+    Check(NSIntersectsRect(issue.frame,view.bounds) && NSHeight(issue.frame)>=40 &&
+        NSMaxY(issue.frame)<=NSMinY(composerBox.frame)+1 && NSWidth(recovery.frame)>80,
+        "authorization issue and action are laid out visibly directly above the composer");
+    reads=reader.keyReads;[recovery performClick:nil];
+    Check(reader.authorizationCalls==1 && reader.keyReads==reads && ComposerRequestCount()==before &&
+        [view.composer.string isEqual:@"Authorize this retained draft"] && !issue.hidden,
+        "cancelled authorization preserves the draft without rereading credentials or sending");
+    reader.authorizedKey=@"sk-or-v1-interactive-fixture-only";[recovery performClick:nil];
+    Check(ComposerWait(^BOOL{return [session.chat[@"messages"] count]==8 && !session.running;}),
+        "explicit authorization button sends retained draft with granted key");
+    Check(reader.authorizationCalls==2 && reader.keyReads==reads && ComposerRequestCount()==before+1 &&
+        !view.composer.string.length && issue.hidden && !reader.settingsOpens,
+        "authorization success clears inline issue and draft without a second denied Keychain read");
     [session cancel];window.contentView=nil;[window close];
+    CheckComposerEventDispatch();
 }
