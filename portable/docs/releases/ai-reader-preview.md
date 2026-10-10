@@ -198,3 +198,12 @@ are identified explicitly. Text-only models are not silently replaced.
   appearing in the transcript or being saved to disk.
 - Technical-drawing guidance distinguishes alternate component positions and
   dimension endpoints from table values such as travel to closure.
+
+### Citation navigation and evidence quality
+
+- Document citations reach their page on the first click, including tabs whose
+  saved viewport would otherwise be restored during opening.
+- Page links wait for a loading document without overriding a later user action.
+- The chat prompt requires answers to address the requested quantity, inspect
+  readable diagram evidence before requesting more crops, and check general
+  notes and tolerances instead of substituting a nearby table specification.

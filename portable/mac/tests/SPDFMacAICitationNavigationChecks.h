@@ -4,6 +4,7 @@
 // and persistence suppressed. No user document, app window or network is used.
 @interface AICitationReaderProbe : ShenzhenMacDelegate
 @property(nonatomic) BOOL deferNextSelection;
+@property(nonatomic) BOOL restoreSavedViewport;
 - (void)finishLoading;
 - (void)seedPaths:(NSArray<NSString*>*)paths;
 - (BOOL)hasCitationHighlights;
@@ -26,7 +27,17 @@
     if(self.deferNextSelection) { self.deferNextSelection=NO;return; }
     [self finishLoading];
 }
-- (void)finishLoading { char error[1024]={};_doc=spdf_open(_path.fileSystemRepresentation,error,sizeof(error)); }
+- (void)finishLoading {
+    char error[1024]={};_doc=spdf_open(_path.fileSystemRepresentation,error,sizeof(error));
+    if (!self.restoreSavedViewport) return;
+    SPDFDocumentTab* tab=[self selectedTab];_pageIndex=tab.pageIndex;
+    // Mirror presentOpenedDocument's deferred layout stabilization: it captures
+    // the saved origin before the citation's immediate goToPage call.
+    NSValue* origin=tab.hasScrollOrigin ? [NSValue valueWithPoint:tab.scrollOrigin] : nil;
+    dispatch_async(dispatch_get_main_queue(),^{
+        if ([self selectedTab]==tab) self->_pageIndex=origin ? (NSInteger)origin.pointValue.y : self->_pageIndex;
+    });
+}
 - (BOOL)hasCitationHighlights { return !_findSearchInProgress && _findMatches.count>0 && [_findHighlights[@0] count]>0; }
 - (void)goToPage:(NSInteger)page preserveSinglePagePosition:(BOOL)preserve { (void)preserve;_pageIndex=page; }
 - (void)jumpToFindMatchAtIndex:(NSInteger)index { _findMatchIndex=index;_pageIndex=[_findMatches[(NSUInteger)index][@"page"] integerValue]; }
@@ -100,6 +111,21 @@ static void CheckCitationNavigation(NSString* path,NSString* root) {
     PDFDocument* multi=[[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:path]];
     [multi insertPage:[[multi pageAtIndex:0] copy] atIndex:1];
     Check([multi writeToFile:multiPath],"two-page delayed extraction fixture saved");
+    // Plain page links (as returned by render_page/read_pages) must survive
+    // saved viewport restoration, including a document still being opened.
+    for (NSNumber* deferred in @[@NO,@YES]) {
+        AICitationReaderProbe* opening=[AICitationReaderProbe new];[opening seedPaths:@[other,multiPath]];
+        SPDFDocumentTab* target=[[opening valueForKey:@"tabs"] objectAtIndex:1];
+        target.pageIndex=0;target.hasScrollOrigin=YES;target.scrollOrigin=NSMakePoint(0,0);
+        opening.restoreSavedViewport=YES;opening.deferNextSelection=deferred.boolValue;
+        SPDFMacAITools* navigator=[[SPDFMacAITools alloc] initWithReader:opening];
+        CitationTool(navigator,@"show_document",@{@"path":SPDFAIDocumentIdentifier(multiPath),@"page":@2});
+        if (deferred.boolValue) [opening finishLoading];
+        NSDate* settled=[NSDate dateWithTimeIntervalSinceNow:.15];
+        while(settled.timeIntervalSinceNow>0)[NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        Check([[opening valueForKey:@"pageIndex"] integerValue]==1,"first page citation beats the previous saved viewport after layout settles");
+        Check([navigator undoLastAction:nil],"first-click navigation keeps Undo valid after deferred layout");
+    }
     for(NSString* mode in @[@"complete",@"manual-page",@"manual-search",@"multiline",@"cancel",@"later-tool-cancel",@"source-change",@"undo"]) {
         AICitationReaderProbe* extracting=[AICitationReaderProbe new];[extracting seedPaths:@[multiPath]];
         NSOperationQueue* queue=[extracting valueForKey:@"findQueue"];queue.suspended=YES;
