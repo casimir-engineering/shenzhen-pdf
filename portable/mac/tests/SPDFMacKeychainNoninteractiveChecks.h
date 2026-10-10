@@ -9,6 +9,10 @@ static BOOL NoninteractiveQuery(NSDictionary* query) {
     return [(LAContext*)query[(__bridge id)kSecUseAuthenticationContext] interactionNotAllowed] &&
         [query[(__bridge id)kSecUseAuthenticationUI] isEqual:(__bridge id)kSecUseAuthenticationUIFail];
 }
+static inline BOOL ExplicitAuthorizationQuery(NSDictionary* query) {
+    return ![(LAContext*)query[(__bridge id)kSecUseAuthenticationContext] interactionNotAllowed] &&
+        [query[(__bridge id)kSecUseAuthenticationUI] isEqual:(__bridge id)kSecUseAuthenticationUIAllow];
+}
 static BOOL SystemInteractionGuardWorks(void) {
     Boolean before=false,after=false;
     if(SecKeychainGetUserInteractionAllowed(&before)!=errSecSuccess)return NO;
@@ -60,6 +64,14 @@ static void CheckNoninteractiveGuard(void (^check)(BOOL,NSString*)) {
         return SPDFKeychainWithoutInteraction(operation,TestGetInteraction,TestSetInteraction);
     },TestGetInteraction,TestSetInteraction);
     check(status==errSecSuccess && testInteractionAllowed,@"nested credential operations remain noninteractive");
+    testInteractionAllowed=false;
+    status=SPDFKeychainForExplicitAuthorization(^OSStatus {
+        if(!testInteractionAllowed)return errSecInternalComponent;
+        OSStatus nested=SPDFKeychainWithoutInteraction(operation,TestGetInteraction,TestSetInteraction);
+        return nested==errSecSuccess && testInteractionAllowed ? errSecSuccess : errSecInternalComponent;
+    },TestGetInteraction,TestSetInteraction);
+    check(status==errSecSuccess && !testInteractionAllowed,@"explicit authorization enables UI only during its call and restores the previous policy");
+    testInteractionAllowed=true;
     std::atomic<int> active{0},overlap{0};auto activePtr=&active,overlapPtr=&overlap;
     dispatch_apply(24,dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^(size_t index) {
         (void)index;
@@ -69,4 +81,14 @@ static void CheckNoninteractiveGuard(void (^check)(BOOL,NSString*)) {
         },TestGetInteraction,TestSetInteraction);
     });
     check(overlap.load()==0 && testInteractionAllowed,@"concurrent credential operations serialize the process-wide legacy UI switch");
+    dispatch_apply(24,dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^(size_t index) {
+        BOOL interactive=index%2;
+        OSStatus (^body)(void)=^OSStatus {
+            if(activePtr->fetch_add(1)!=0 || testInteractionAllowed!=interactive)overlapPtr->fetch_add(1);
+            usleep(1000);activePtr->fetch_sub(1);return errSecSuccess;
+        };
+        if(interactive)SPDFKeychainForExplicitAuthorization(body,TestGetInteraction,TestSetInteraction);
+        else SPDFKeychainWithoutInteraction(body,TestGetInteraction,TestSetInteraction);
+    });
+    check(overlap.load()==0 && testInteractionAllowed,@"explicit authorization and background access share one serialized interaction policy");
 }
