@@ -240,3 +240,6 @@ are identified explicitly. Text-only models are not silently replaced.
 - AI: `current_view` returns on-demand viewport pixels, reading controls,
   visible page regions and exact source citations, including live Markdown
   layout identity. It captures document content only, not other applications.
+- Chat keeps the concise general evidence prompt, with explicit retrieval-tool
+  and answer-card guidance. Generated metadata is labeled as navigation hints;
+  model interpretation can still be wrong and source links remain essential.
