@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacAIChatStore.h"
+#import "SPDFMacAICitations.h"
 #import "SPDFMacAITransport.h"
 static int failures;
 #define CHECK(c,m) do { if (!(c)) { fprintf(stderr,"FAIL: %s\n",m); ++failures; } } while(0)
@@ -29,6 +30,13 @@ static int failures;
 - (BOOL)undoLastAction:(NSError**)error { (void)error; return YES; }
 @end
 int main(void) { @autoreleasepool {
+    NSURL* citation=[NSURL URLWithString:@"spdf-ai://document?path=doc:fixture&page=2&revision=abc"];
+    NSDictionary* arguments=SPDFMacAICitationArguments(citation);
+    CHECK([arguments[@"page"] isEqual:@2],"citation page is strongly typed");
+    CHECK(!SPDFMacAICitationArguments([NSURL URLWithString:@"spdf-ai://document?path=doc:x&page=2&page=3&revision=a"]),"duplicate citation parameters rejected");
+    NSDictionary* cited=@{@"messages":@[@{@"role":@"tool",@"content":@"{\"pages\":[{\"citation\":\"spdf-ai://document?path=doc:fixture&page=2&revision=abc\"}]}"}]};
+    CHECK(SPDFMacAIChatContainsCitation(cited,arguments),"retrieved citation is clickable");
+    CHECK(!SPDFMacAIChatContainsCitation(@{@"messages":@[@{@"role":@"assistant",@"content":citation.absoluteString}]},arguments),"model-fabricated citation is not evidence");
     NSURL* root=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     FakeTransport* transport=[FakeTransport new]; FakeTools* tools=[FakeTools new];
@@ -71,6 +79,14 @@ int main(void) { @autoreleasepool {
     transport.reply(@{@"role":@"assistant",@"tool_calls":@[@{@"id":@"badargs",@"function":
         @{@"name":@"undo_action",@"arguments":@"not JSON"}}]},nil);
     CHECK(!session.running && tools.calls==callsBefore,"invalid JSON cannot invoke a zero-argument mutation");
+    NSString* sharedID=NSUUID.UUID.UUIDString;
+    NSDictionary* base=@{@"id":sharedID,@"messages":@[@{@"role":@"user",@"content":@"base"}]};
+    [store saveChat:base error:nil];
+    SPDFMacAIChatStore* otherWindow=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
+    NSDictionary* branchA=@{@"id":sharedID,@"messages":[base[@"messages"] arrayByAddingObject:@{@"role":@"assistant",@"content":@"first window"}]};
+    NSDictionary* branchB=@{@"id":sharedID,@"messages":[base[@"messages"] arrayByAddingObject:@{@"role":@"assistant",@"content":@"second window"}]};
+    CHECK([store saveChat:branchA error:nil] && ![otherWindow saveChat:branchB error:nil],"stale concurrent chat writer cannot erase another window's answer");
+    CHECK([[[store chatWithID:sharedID][@"messages"] lastObject][@"content"] isEqual:@"first window"],"concurrent conflict retains the committed transcript");
     CHECK([store deleteAll:nil] && ![store chats].count,"delete all removes only owned chat files");
     SPDFMacAIChatStore* second=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     CHECK(![second saveChat:loaded error:nil],"deleted chat cannot be resurrected by a stale writer");

@@ -31,7 +31,11 @@ static NSString* SystemPrompt(void) {
 - (void)notify { if (self.changed) self.changed(); }
 - (void)persist {
     _mutableChat[@"updated"]=@([NSDate.date timeIntervalSince1970]);
-    NSError* error=nil; if (![_store saveChat:_mutableChat error:&error]) _status=@"Chat could not be saved. Copy important answers before closing.";
+    NSError* error=nil; if (![_store saveChat:_mutableChat error:&error]) {
+        ++_generation; [_request cancel]; _request=nil; [_tools cancel]; _running=NO; _key=nil;
+        _status=error.localizedDescription ?: @"Chat could not be saved. Copy important answers before closing.";
+        [self notify];
+    }
 }
 - (void)newChat {
     [self cancel]; _messages=[NSMutableArray array];
