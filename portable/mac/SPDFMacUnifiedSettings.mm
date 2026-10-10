@@ -2,6 +2,7 @@
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacGroupActionButton.h"
 #import "SPDFMacSearchablePicker.h"
+#import <math.h>
 
 const NSInteger SPDFUnifiedSettingsExperienceVersion = 2;
 BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch, BOOL detached) {
@@ -62,6 +63,9 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 @property(nonatomic) NSTextField* progress;
 @property(nonatomic) NSStackView* defaultRows;
 @property(nonatomic) NSSearchField* formatSearch;
+@property(nonatomic) NSTextField* storageBudget;
+@property(nonatomic) NSTextField* storageLocation;
+@property(nonatomic) NSTextField* storageError;
 @end
 
 @implementation SPDFMacUnifiedSettingsController
@@ -161,6 +165,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 - (void)divider { [self add:SPDFCollectionDivider()]; }
 - (void)selectSection:(NSString*)section {
     self.section=section; self.secret.stringValue=@""; self.secret=nil;
+    self.storageBudget=nil; self.storageLocation=nil; self.storageError=nil;
     for (NSView* view in [self.content.arrangedSubviews copy]) { [self.content removeArrangedSubview:view]; [view removeFromSuperview]; }
     NSControl* show=self.controls[@"showSettingsOnLaunch"]; [self.controls removeAllObjects];
     if (show) self.controls[@"showSettingsOnLaunch"]=show;
@@ -301,13 +306,21 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         amount.stringValue=[NSString stringWithFormat:@"%g",value>0 ? value : 10];
         amount.target=self; amount.action=@selector(storageAmountChanged:); amount.delegate=self;
         amount.accessibilityLabel=@"Storage limit in GiB";
+        self.controls[@"collectionStorageGiB"]=amount;
         [amount.widthAnchor constraintEqualToConstant:80].active=YES;
         [self row:@"Limit (GiB)" detail:@"Keep Collection within a fixed storage budget." control:amount];
+        [self text:@"" size:12 bold:NO secondary:YES]; self.storageError=self.content.arrangedSubviews.lastObject;
+        self.storageError.identifier=@"storageValidation"; self.storageError.hidden=YES;
     }
     NSString* budget=self.state[@"collectionBudgetText"];
-    if(budget.length) [self text:budget size:12 bold:NO secondary:YES];
+    [self text:budget ?: @"" size:12 bold:NO secondary:YES];
+    self.storageBudget=self.content.arrangedSubviews.lastObject;
+    self.storageBudget.identifier=@"collectionBudgetText"; self.storageBudget.hidden=!budget.length;
     [self actionRow:@"Collection location" detail:self.state[@"collectionLocation"] ?: @"The default location is inside ShenzhenPDF’s application support folder."
         label:@"Set location…" action:@"setCollectionLocation"];
+    NSStackView* locationRow=self.content.arrangedSubviews.lastObject;
+    self.storageLocation=[(NSStackView*)locationRow.arrangedSubviews.firstObject arrangedSubviews].lastObject;
+    self.storageLocation.identifier=@"collectionLocation";
 }
 - (void)storageModeChanged:(NSPopUpButton*)sender {
     NSString* mode=@[@"dynamic",@"static",@"unlimited"][(NSUInteger)sender.indexOfSelectedItem];
@@ -321,7 +334,18 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [self selectSection:@"collection"];
 }
 - (void)storageAmountChanged:(NSTextField*)sender {
-    double value=MAX(.1,sender.doubleValue);
+    NSString* text=[sender.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSScanner* scanner=[NSScanner scannerWithString:text]; scanner.locale=NSLocale.currentLocale;
+    double value=0;
+    if(!text.length || ![scanner scanDouble:&value] || !scanner.isAtEnd || !isfinite(value) || value<=0 || value>1000000) {
+        // Never turn a typo into a smaller budget: cleanup can remove saved history.
+        double previous=[self.state[@"collectionStorageGiB"] doubleValue];
+        sender.stringValue=[NSString stringWithFormat:@"%g",previous>0 ? previous : 10];
+        self.storageError.stringValue=@"Enter a number greater than zero, up to 1,000,000 GiB. The previous limit is unchanged.";
+        self.storageError.hidden=NO; NSAccessibilityPostNotification(self.storageError,NSAccessibilityValueChangedNotification);
+        return;
+    }
+    self.storageError.hidden=YES;
     sender.stringValue=[NSString stringWithFormat:@"%g",value]; [self emit:@{sender.identifier:@(value)}];
 }
 - (void)buildDefaults {
@@ -341,13 +365,17 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSArray* formats=self.state[@"defaultFormats"] ?: @[@{@"extension":@"pdf",@"name":@"PDF"},@{@"extension":@"epub",@"name":@"EPUB"},@{@"extension":@"md",@"name":@"Markdown"}];
     for(NSDictionary* format in formats) {
         NSString* ext=format[@"extension"]; if(!ext.length) continue;
-        NSString* searchable=[NSString stringWithFormat:@"%@ %@",ext,format[@"name"]];
+        NSString* searchable=[NSString stringWithFormat:@".%@ %@",ext,format[@"name"]];
         if(self.formatSearch.stringValue.length && ![searchable localizedCaseInsensitiveContainsString:self.formatSearch.stringValue]) continue;
         BOOL current=[format[@"isDefault"] boolValue];
         NSString* action=[@"defaultReader:" stringByAppendingString:ext];
         [self actionRow:format[@"name"] ?: ext detail:[@"." stringByAppendingString:ext]
             label:current ? @"Default reader" : @"Make default" action:action];
         self.controls[action].enabled=!current;
+    }
+    if(!self.defaultRows.arrangedSubviews.count) {
+        [self text:@"No matching file types. Try a name or extension, such as PDF or .pdf." size:13 bold:NO secondary:YES];
+        self.defaultRows.arrangedSubviews.lastObject.identifier=@"noMatchingFormats";
     }
     self.content=pageContent;
 }
@@ -402,6 +430,16 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         button.hidden=self.usesAPIKey && !connected;
     }
     if([self.section isEqual:@"defaults"] && state[@"defaultFormats"]) [self refreshDefaultRows];
+    if([self.section isEqual:@"collection"]) {
+        if(state[@"collectionBudgetText"]) {
+            self.storageBudget.stringValue=merged[@"collectionBudgetText"];
+            self.storageBudget.hidden=!self.storageBudget.stringValue.length;
+        }
+        if(state[@"collectionLocation"]) self.storageLocation.stringValue=merged[@"collectionLocation"];
+        NSTextField* amount=(id)self.controls[@"collectionStorageGiB"];
+        if(state[@"collectionStorageGiB"] && !amount.currentEditor)
+            amount.stringValue=[NSString stringWithFormat:@"%g",[merged[@"collectionStorageGiB"] doubleValue]];
+    }
     [self.window.contentView layoutSubtreeIfNeeded];
 }
 - (void)finish:(id)sender {
