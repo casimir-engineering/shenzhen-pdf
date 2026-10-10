@@ -140,3 +140,78 @@ result partial. It does not measure image changes or full-file byte changes;
 missing, encrypted or oversized indexes return an unavailable reason. See
 [revision analysis validation](revision-analysis-validation.md) for the source
 validation record and bounds.
+
+
+### Setup validation and critic loop 2
+
+The native wizard now uses a compact, stable four-step layout. Browser connection
+is the primary action; the API-key alternative is secondary and expands only
+when selected. Connection transitions replace obsolete controls, while status
+updates preserve an API-key draft. Invalid static capacity values retain the
+previous limit and show an inline correction rather than silently changing the
+cleanup budget.
+
+The following are headless renders of the actual AppKit controller, not HTML mockups.
+
+![Full Disk Access setup](images/setup-access.png)
+
+![Collection storage setup](images/setup-collection.png)
+
+![OpenRouter setup](images/setup-ai.png)
+
+![Individual default reader choices](images/setup-defaults.png)
+
+Independent review after two refinement loops reached **9/10 technical,
+9/10 usability and 9/10 visual craft**, with no major or medium findings left.
+See [technical review](technical-critic-setup-loop-1.md) and
+[UX review](setup-rewrite-critic-loop-2.md). The review caught and closed stale
+latest-revision analysis across cache waits and other reader processes, plus
+Unicode clipping at text-budget boundaries. Revision notifications are scoped
+to the Collection root; unrelated test stores do not invalidate user summaries.
+
+Fresh successful checks (real exit codes):
+
+| Check | Evidence |
+|---|---|
+| Full AI reader acceptance, latest-only lifecycle, lazy revision diffs and Unicode | `/tmp/ai-revision-lifecycle-verified.log` |
+| Setup, model catalog, connection gates and YAML progress | `/tmp/setup-final-build-verified.log`, `/tmp/sz-settings-loop2-tests.log` |
+| Collection capacity, store integrity and cleanup | `/tmp/setup-final-collection-tests.log` |
+| Updater (32 cases), launch-work policy, state YAML and chat | `/tmp/setup-regression-checks.log` |
+
+Native interaction in a separate test workspace verified all four steps,
+live catalog loading and model-name filtering, keyboard selection, Done returning
+to the reader, and reopening Settings with both AI defaults enabled. No system
+file associations or privacy permissions were changed during validation.
+
+
+The final native run also verified a completed setup stays dismissed after
+relaunch, and a saved incomplete setup resumes at Collection (step 2). Static
+storage rejects `oops` without changing its prior 10 GiB limit. The production
+file-type list includes 16 formats; searching `.pdf` leaves only PDF.
+
+![Live Collection step in the isolated app](images/setup-live-collection.png)
+
+![Live AI step in the isolated app](images/setup-live-ai.png)
+
+A rapid storage-mode change followed by Continue exposed one additional
+reentrant callback race: the footer advanced but a stale callback repainted the
+Collection page. The native controller now tracks page generations so a late
+storage callback cannot replace a newer page. A regression reproduces the old
+failure with a real synchronous host callback and checks navigation to both the
+AI wizard step and an ordinary Settings section.
+
+
+The reentrancy regression is independently verified in the technical review;
+all three 9/10 grades stand. The final footer accessibility check also verifies
+that assistive technology sees “Continue” on steps 1–3 and “Done” on step 4,
+matching the visible button. Final focused results are recorded in
+`/tmp/sz-settings-footer-accessibility.log` and
+`/tmp/spdf-critic-setup-reentrant-final.log`.
+
+
+Final delivery build: `make -C portable -j4 mac-app` exited **0**
+(`/tmp/setup-final-delivery-app.log`). In that exact build, rapidly choosing
+Static + Continue and then Dynamic + Continue both landed on the AI page with
+Step 3 displayed, closing the reproduced UI race. Done returned to the reader.
+The app in `dist/ShenzhenPDF.app` is the resulting local development build;
+no notarization or public release was performed for this batch.

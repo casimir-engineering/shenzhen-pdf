@@ -35,7 +35,7 @@ installations default document chat and automatic analysis to on; saved choices
 from existing installations are preserved. Defaults do not permit cloud work
 until setup is complete and an OpenRouter account is connected. **Done** returns
 you to the reader and does not make Settings appear at every startup. You can
-change chat and automatic analysis later under **Settings → AI & documents**.
+change chat and automatic analysis later under **Settings → Settings & AI… → AI settings**.
 Turning chat off cancels an active chat request; turning automatic analysis off
 stops analysis work.
 

@@ -26,7 +26,7 @@ Settings does not appear on each startup.
 New installations default document chat and automatic analysis to on, and
 existing saved preferences are preserved. This does not start cloud work before
 the wizard is complete and an OpenRouter account is connected. You can change
-these preferences later under **Settings → AI & documents**. Select a model
+these preferences later under **Settings → Settings & AI… → AI settings**. Select a model
 from the catalog; availability can change and is checked with OpenRouter.
 Press **⌘K**, then Return with an empty search field to start a new
 chat. Return sends a message, Shift-Return adds a line. With a nonempty search
