@@ -181,6 +181,8 @@ int main(void) { @autoreleasepool {
     for(NSInteger step=0;step<4;step++) {
         [wizard setValue:@(step) forKey:@"wizardStep"]; [wizard showSetupWizard]; [wizard.window.contentView layoutSubtreeIfNeeded];
         Check(NSHeight(wizard.window.contentView.bounds)==520,@"all wizard steps retain the compact window height");
+        NSButton* next=(id)Find(wizard.window.contentView,@"done");
+        Check([next.accessibilityLabel isEqual:(step<3 ? @"Continue" : @"Done")],@"wizard footer accessibility label follows the current action");
         NSStackView* wizardContent=[wizard valueForKey:@"content"];
         NSRect scrollFrame=wizardContent.enclosingScrollView.frame;
         Check(fabs(NSHeight(wizard.window.contentView.bounds)-NSMaxY(scrollFrame)-24)<1,@"wizard removes hidden-navigation top space");

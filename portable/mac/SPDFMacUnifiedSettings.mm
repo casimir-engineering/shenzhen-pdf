@@ -290,6 +290,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     self.progress.hidden=!self.setupWizard;
     self.progress.stringValue=[NSString stringWithFormat:@"Step %ld of 4",(long)self.wizardStep+1];
     self.done.title=self.setupWizard && self.wizardStep<3 ? @"Continue" : @"Done";
+    self.done.accessibilityLabel=self.done.title;
     [self.done invalidateIntrinsicContentSize];
     self.window.title=self.setupWizard ? @"Set up ShenzhenPDF" : @"ShenzhenPDF Settings";
     [self selectSection:self.setupWizard ? @[@"access",@"collection",@"ai",@"defaults"][(NSUInteger)self.wizardStep] : @"overview"];
