@@ -96,7 +96,9 @@ static char stateKey;
     (void)sender; [self showAIChatForQuery:nil]; SPDFReaderAIState* state=[self readerAIState];
     state.history=YES; [state.view displayChats:[state.store chats]];
 }
-- (BOOL)aiSendText:(NSString*)text {
+- (NSString*)aiAuthorizeAPIKeyForSending:(NSError**)error { return [SPDFMacAICredentials authorizeAPIKeyAccessWithError:error]; }
+- (BOOL)aiSendText:(NSString*)text { return [self aiSendText:text authorizedKey:nil]; }
+- (BOOL)aiSendText:(NSString*)text authorizedKey:(NSString*)authorizedKey {
     if(![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)return NO;
     SPDFReaderAIState* state=[self readerAIState];
     if(state.session.running)return NO;
@@ -114,10 +116,14 @@ static char stateKey;
     if(!settings.enabled)return reject(@"Document chat is disabled. Enable it in Settings above. Your draft is kept.");
     // An explicit send checks the credential itself. A stale status flag must not
     // redirect an already connected user to Settings before trying their saved key.
-    NSString* key=[self aiAPIKeyForSending:&error];
-    if(!key.length)return reject(error ?
-        @"The saved OpenRouter key is unavailable. Reconnect in Settings above. Your draft is kept." :
-        @"Connect OpenRouter in Settings above to send. Your draft is kept.");
+    NSString* key=authorizedKey ?: [self aiAPIKeyForSending:&error];
+    if(!key.length) {
+        BOOL needsAuthorization=error.code==errSecAuthFailed || error.code==errSecInteractionNotAllowed || error.code==errSecNotAvailable;
+        NSString* reason=needsAuthorization ? @"macOS blocked the saved OpenRouter key. Authorize access to send this message." :
+            @"Connect OpenRouter in AI settings to send. Your draft is kept.";
+        state.submissionIssue=reason;
+        [state.view showSubmissionError:reason recoveryAction:needsAuthorization ? @"authorize" : @"settings"]; return NO;
+    }
     if(!settings.connectionConfigured) {
         settings.connectionConfigured=YES;
         if(![settings save:&error])return reject(@"The connection could not be saved. Your draft is kept; try again.");
@@ -130,6 +136,21 @@ static char stateKey;
 - (void)aiChatAction:(NSString*)action {
     SPDFReaderAIState* state=[self readerAIState];
     if ([action isEqual:@"close"]) { [self closeAIChat]; return; }
+    if ([action isEqual:@"authorize"]) {
+        NSString* draft=state.view.composer.string;
+        if(![draft stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length || state.session.running)return;
+        SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];
+        if(![settings load:nil] || !settings.enabled || settings.onboardingRevision<SPDFUnifiedSettingsExperienceVersion) {
+            [self aiSendText:draft]; return;
+        }
+        NSError* error=nil; NSString* key=[self aiAuthorizeAPIKeyForSending:&error];
+        if(key.length) { if([self aiSendText:draft authorizedKey:key])state.view.composer.string=@""; }
+        else {
+            state.submissionIssue=@"Access was not authorized. Your message is kept; authorize access or reconnect in Settings.";
+            [state.view showSubmissionError:state.submissionIssue recoveryAction:@"authorize"];
+        }
+        return;
+    }
     if ([action isEqual:@"settings"]) {
         if(state.setupRequired)[self showUnifiedSettingsMode:YES];
         else if(state.submissionIssue.length)[self showAIConnectionSettingsWithReason:state.submissionIssue];
