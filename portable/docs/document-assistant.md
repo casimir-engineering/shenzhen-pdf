@@ -69,10 +69,21 @@ hides it without ending the conversation or discarding its draft. Chat width is
 remembered in the window's YAML sidebar state. At narrow widths, navigation and
 the map temporarily yield space to the reader; their preferences are retained.
 
-Search past chats by title or user/assistant message text from either search
-field; the two fields share one query. Open a saved conversation to continue it.
-The chat toolbar offers **New chat**, **Past chats**, **Undo**, **Redo**,
-**AI settings**, and **Hide chat panel**, with hover labels. Thinking, current-tool activity, errors,
+The sidebar searches saved chats by title or user/assistant message text. Message
+matches include a highlighted excerpt. The separate **Search this chat** field
+filters and highlights messages within the open conversation, including older
+messages. Clearing it restores the transcript; the two searches are independent.
+
+History rows show a concise title and the last conversation timestamp. A short
+background model request suggests a title after the first successful reply;
+this does not delay the answer. Right-click to **Rename chat** or **Move to folder**.
+**New folder** creates a collapsible folder. Right-click a folder to rename it or
+remove it while keeping its chats in Unfiled. Folder membership, collapsed state
+and custom titles persist; a later model title or conversation save cannot
+replace your chosen name. Folder/title operations never resend a conversation.
+
+The chat toolbar offers **Hide chat panel** first, then **New chat**, **Undo**,
+**Redo** and **AI settings**, aligned with the reader toolbar, with hover labels. Thinking, current-tool activity, pauses, errors,
 and readiness for your reply appear above the transcript. Your latest question
 stays visible there, and both user and assistant messages remain in the saved
 conversation, newest first. Chats are saved on this Mac. The Chats view lets you reopen a
@@ -105,7 +116,11 @@ tags (up to six), or analysis language. It requires current cached metadata and 
 source revision; page anchors must remain within the analyzed evidence. It does
 not rewrite authored headings or PDF bookmarks. Explicit chat requests can
 change generated chapter language without changing the global default. Metadata
-edits support Undo/Redo and update the reader's generated chapter list.
+edits support Undo/Redo and update the reader's generated chapter list. Generated
+chapter rows use plain descriptive titles without decorative emoji. At the tool
+step limit, the model gets one response without tools to summarize confirmed
+results; if it cannot finish that response, the chat says Paused rather than
+marking successfully saved changes as failed.
 
 `app_controls` discovers native app menus and visible controls and can activate
 a command or set an editable value. Use typed tools first for reversible edits.

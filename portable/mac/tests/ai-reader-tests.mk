@@ -13,8 +13,8 @@ $(AI_CONTEXT_TEST): $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SP
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SPDFMacAIDocumentContextTests.o $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -o "$@"
 $(AI_ANALYSIS_TEST): $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SPDFMacAIAnalysisServiceTests.o $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) mupdf-libs
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/SPDFMacAIAnalysisServiceTests.o $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -lm -Wl,-dead_strip -o "$@"
-$(AI_CHAT_VIEW_TEST): mac/tests/SPDFMacAIChatDockChecks.h mac/tests/SPDFMacAIChatViewTests.mm mac/SPDFMacAIChatView.mm mac/SPDFMacPanelSearchField.mm mac/SPDFMacAIChatDock.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacAIChatMarkdown.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm $(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_MARKDOWN_SRCS)) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(CORE_RECOLOR_OBJ)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacAIChatViewTests.mm mac/SPDFMacAIChatView.mm mac/SPDFMacPanelSearchField.mm mac/SPDFMacAIChatDock.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacAIChatMarkdown.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm $(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_MARKDOWN_SRCS)) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(CORE_RECOLOR_OBJ) -framework Cocoa -framework QuartzCore -framework ImageIO -Wl,-dead_strip -o "$@"
+$(AI_CHAT_VIEW_TEST): mac/tests/SPDFMacAIChatDockChecks.h mac/tests/SPDFMacAIChatViewTests.mm mac/SPDFMacAIChatView.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacPanelSearchField.mm mac/SPDFMacAIChatDock.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacAIChatMarkdown.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm $(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_MARKDOWN_SRCS)) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(CORE_RECOLOR_OBJ)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacAIChatViewTests.mm mac/SPDFMacAIChatView.mm mac/SPDFMacSidebarNavigation.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacPanelSearchField.mm mac/SPDFMacAIChatDock.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacAIChatMarkdown.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm $(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_MARKDOWN_SRCS)) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(CORE_RECOLOR_OBJ) -framework Cocoa -framework QuartzCore -framework ImageIO -Wl,-dead_strip -o "$@"
 .PHONY: mac-ai-reader-acceptance
 mac-ai-reader-acceptance: $(AI_CONTEXT_TEST) $(AI_ANALYSIS_TEST) $(AI_CHAT_VIEW_TEST)
 	"$(AI_CONTEXT_TEST)"
@@ -22,3 +22,13 @@ mac-ai-reader-acceptance: $(AI_CONTEXT_TEST) $(AI_ANALYSIS_TEST) $(AI_CHAT_VIEW_
 	"$(AI_CHAT_VIEW_TEST)"
 
 endif
+
+.PHONY: mac-ai-chat-organization-tests
+mac-ai-chat-organization-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatOrganizationTests.mm mac/SPDFMacAIChatStore.mm -framework Foundation -o "$(BUILD)/SPDFMacAIChatOrganizationTests"
+	"$(BUILD)/SPDFMacAIChatOrganizationTests"
+
+.PHONY: mac-ai-chat-history-tests
+mac-ai-chat-history-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatHistoryViewTests.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacPanelSearchField.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm -framework Cocoa -framework QuartzCore -o "$(BUILD)/SPDFMacAIChatHistoryViewTests"
+	"$(BUILD)/SPDFMacAIChatHistoryViewTests"

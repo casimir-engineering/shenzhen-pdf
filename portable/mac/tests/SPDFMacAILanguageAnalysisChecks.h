@@ -15,6 +15,7 @@ static void CheckLanguageAnalysis(NSURL* root) {
     [service analyzeDocumentAtPath:@"/language.pdf" landscape:NO settings:settings completion:finish];
     Check(Wait(^BOOL{return done;}) && result && transport.calls==1,"one request generates summary, chapters and tags together");
     Check([transport.payload[@"outputLanguage"] isEqual:@"French"] && [transport.instruction containsString:@"chapter titles in outputLanguage"],"background language applies to chapters and all metadata");
+    Check([transport.instruction containsString:@"without emojis"] && [transport.instruction containsString:@"specific subject"],"chapter instruction requires plain descriptive topics");
     Check([result[@"tags"] isEqual:@[@"Électronique",@"Carte"]] && [result[@"language"] isEqual:@"fr"],"tags are trimmed, deduplicated and language-stamped");
     NSString* frenchKey=result[@"cacheKey"];
     SPDFMacAIAnalysisCache* reloaded=[[SPDFMacAIAnalysisCache alloc] initWithRootURL:root];

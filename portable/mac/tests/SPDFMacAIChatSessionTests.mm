@@ -8,11 +8,12 @@ static int failures;
 @interface FakeTransport : SPDFMacAITransport
 @property(copy) void (^reply)(NSDictionary*,NSError*);
 @property NSArray* messages;
+@property NSArray* definitions;
 @property NSUInteger sends;
 @end
 @implementation FakeTransport
 - (SPDFMacAIRequestToken*)sendMessages:(NSArray*)messages tools:(NSArray*)tools model:(NSString*)model apiKey:(NSString*)key completion:(void (^)(NSDictionary*,NSError*))completion {
-    (void)tools; (void)model; (void)key; self.messages=messages; self.reply=completion; self.sends++;
+    (void)model; (void)key; self.definitions=tools; self.messages=messages; self.reply=completion; self.sends++;
     return [SPDFMacAIRequestToken new];
 }
 @end
@@ -30,6 +31,7 @@ static int failures;
 - (BOOL)undoLastAction:(NSError**)error { (void)error; return YES; }
 @end
 #import "SPDFMacAIChatSnapshotChecks.h"
+#import "SPDFMacAIChatCompletionChecks.h"
 int main(void) { @autoreleasepool {
     NSURL* citation=[NSURL URLWithString:@"spdf-ai://document?path=doc:fixture&page=2&revision=abc"];
     NSDictionary* arguments=SPDFMacAICitationArguments(citation);
@@ -43,6 +45,7 @@ int main(void) { @autoreleasepool {
     CheckChatSnapshots(snapshotRoot);
     CheckStoreSnapshot([snapshotRoot URLByAppendingPathComponent:@"store"]);
     CheckSessionConflict([snapshotRoot URLByAppendingPathComponent:@"conflict"]);
+    CheckChatCompletion([snapshotRoot URLByAppendingPathComponent:@"completion"]);
     [NSFileManager.defaultManager removeItemAtURL:snapshotRoot error:nil];
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     FakeTransport* transport=[FakeTransport new]; FakeTools* tools=[FakeTools new];
@@ -54,7 +57,8 @@ int main(void) { @autoreleasepool {
     CHECK(transport.sends==1 && session.running,"explicit send starts request");
     NSString* system=transport.messages.firstObject[@"content"];
     CHECK([system containsString:@"Be as brief as possible"] && [system containsString:@"follow the user's specifications closely"] &&
-        [system containsString:@"Perform requested actions with tools"],"system prompt requires brief, faithful, action-oriented responses");
+        [system containsString:@"Perform requested actions with tools"] && [system containsString:@"without emojis"] &&
+        [system containsString:@"do not repeat the same arguments"],"system prompt requires brief, faithful, action-oriented responses");
     CHECK([system containsString:@"Default response language: French"] &&
         [system containsString:@"Explicit user language instructions take precedence"],"chat respects selected language with explicit user override");
     void (^late)(NSDictionary*,NSError*)=transport.reply;

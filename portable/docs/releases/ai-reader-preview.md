@@ -1,5 +1,13 @@
 # AI reader preview
 
+- Chat history now has folders, timestamps and short generated titles. Right-click
+  to rename a chat or move it; removing a folder keeps its conversations.
+- History search shows highlighted message excerpts. Search inside a chat is
+  separate. Chat actions align with the reader toolbar, Hide comes first, and
+  Chats shows its selected state. Empty chats no longer show a blank dark block.
+- Generated chapters use plain, more descriptive titles. A successful final
+  tool action no longer becomes an Error solely because the step limit was reached.
+
 - Ask questions about open documents; click cited sources to open the page and highlight the passage.
 - Browse saved chats in the left sidebar; read and continue a chat in a resizable panel beside the document, with search, Undo and Redo.
 - Preview pages, organize groups, control the reader, and manage supported PDF comments.

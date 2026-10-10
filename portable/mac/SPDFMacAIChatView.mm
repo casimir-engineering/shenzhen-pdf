@@ -128,7 +128,10 @@
     NSString* _submissionError; NSButton* _send; NSButton* _stop; NSButton* _undo; NSUInteger _visibleLimit; NSString* _chatID; BOOL _history; BOOL _running; BOOL _preserveScroll; __weak SPDFMacAIChatSession* _displayedSession;
 }
 - (BOOL)isFlipped { return YES; }
-- (void)drawRect:(NSRect)dirty { (void)dirty; [SPDFCollectionColor(@"window") setFill]; NSRectFill(self.bounds); }
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty; [SPDFCollectionColor(@"window") setFill]; NSRectFill(self.bounds);
+    [SPDFCollectionColor(@"line") setFill]; NSRectFill(NSMakeRect(0,35.5,NSWidth(self.bounds),.5));
+}
 - (void)viewDidChangeEffectiveAppearance {
     [super viewDidChangeEffectiveAppearance]; self.needsDisplay=YES;
     if(_displayedSession && !_history) { _chatID=nil; [self displaySession:_displayedSession]; }
@@ -141,7 +144,10 @@
     if(top && widthChanged) dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
 }
 - (NSTextView*)composer { return _composer; }
-- (void)setHistorySearchQuery:(NSString*)query {if(![_chatSearch.stringValue isEqual:query])_chatSearch.stringValue=query ?: @"";}
+- (void)setChatSearchQuery:(NSString*)query {
+    _chatSearch.stringValue=query ?: @""; _displayedMessages=nil;
+    if(_displayedSession) [self displaySession:_displayedSession];
+}
 - (NSButton*)button:(NSString*)title action:(NSString*)action {
     SPDFChatButton* b=[[SPDFChatButton alloc] initWithFrame:NSZeroRect];
     b.title=title ?: @"Untitled chat"; b.font=[NSFont systemFontOfSize:13]; b.bordered=NO;
@@ -153,15 +159,15 @@
     if (!(self=[super initWithFrame:frame])) return nil;
     _visibleLimit=40; _undo=[self button:@"Undo" action:@"undo"]; _undo.enabled=NO; _undo.toolTip=@"Undo the assistant’s last action";
     _redo=[self button:@"Redo" action:@"redo"];_redo.enabled=NO;
-    NSArray* buttons=@[[self button:@"New chat" action:@"new"],[self button:@"Past chats" action:@"history"],_undo,_redo,
-        [self button:@"AI settings" action:@"settings"],[self button:@"Hide chat panel" action:@"close"]];
-    NSArray* symbols=@[@"square.and.pencil",@"bubble.left.and.bubble.right",@"arrow.uturn.backward",@"arrow.uturn.forward",@"gearshape",@"sidebar.left"];
+    NSArray* buttons=@[[self button:@"Hide chat panel" action:@"close"],[self button:@"New chat" action:@"new"],_undo,_redo,
+        [self button:@"AI settings" action:@"settings"]];
+    NSArray* symbols=@[@"sidebar.left",@"square.and.pencil",@"arrow.uturn.backward",@"arrow.uturn.forward",@"gearshape"];
     for(NSUInteger i=0;i<buttons.count;i++){NSButton* button=buttons[i];button.image=[NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:nil];button.title=@"";[button.widthAnchor constraintEqualToConstant:28].active=YES;}
     NSStackView* header=[NSStackView stackViewWithViews:buttons];header.spacing=8;header.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:header];
-    _chatSearch=[NSSearchField new];SPDFConfigurePanelSearchField(_chatSearch);_chatSearch.placeholderString=@"Search previous chats";
+    _chatSearch=[NSSearchField new];SPDFConfigurePanelSearchField(_chatSearch);_chatSearch.placeholderString=@"Search this chat";
     _chatSearch.accessibilityLabel=_chatSearch.placeholderString;_chatSearch.delegate=self;_chatSearch.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:_chatSearch];
     [NSLayoutConstraint activateConstraints:@[[_chatSearch.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:12],
-        [_chatSearch.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-12],[_chatSearch.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
+        [_chatSearch.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-12],[_chatSearch.topAnchor constraintEqualToAnchor:self.topAnchor constant:44],
         [_chatSearch.heightAnchor constraintEqualToConstant:30]]];
     _status=SPDFCollectionText(@"Ready for your question",13,NSFontWeightSemibold,NO);
     _status.identifier=@"chatStatus"; _status.translatesAutoresizingMaskIntoConstraints=NO; _status.maximumNumberOfLines=2; [self addSubview:_status];
@@ -214,11 +220,11 @@
     _stopHistoryTrailing=[_stop.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16];
     [NSLayoutConstraint activateConstraints:@[
         [header.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:16],
-        [header.topAnchor constraintEqualToAnchor:_chatSearch.bottomAnchor constant:6],
+        [header.topAnchor constraintEqualToAnchor:self.topAnchor constant:4],
         [header.trailingAnchor constraintLessThanOrEqualToAnchor:self.trailingAnchor constant:-16],
         [_status.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
         [_status.trailingAnchor constraintEqualToAnchor:_progress.leadingAnchor constant:-8],
-        [_status.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:12],
+        [_status.topAnchor constraintEqualToAnchor:_chatSearch.bottomAnchor constant:12],
         [_progress.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16],
         [_progress.centerYAnchor constraintEqualToAnchor:_status.centerYAnchor],
         [_progress.widthAnchor constraintEqualToConstant:16], [_progress.heightAnchor constraintEqualToConstant:16],
@@ -251,7 +257,7 @@
     ]];
     return self;
 }
-- (void)controlTextDidChange:(NSNotification*)note { (void)note;if(self.searchChats)self.searchChats([_chatSearch.stringValue copy]); }
+- (void)controlTextDidChange:(NSNotification*)note { (void)note; [self setChatSearchQuery:_chatSearch.stringValue]; }
 - (void)submit {
     NSString* text=[_composer.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!text.length || !_send.enabled) return;
@@ -279,6 +285,14 @@
     // owns its inter-message spacing, so a final blank paragraph must not add it again.
     while(safe.length && [NSCharacterSet.newlineCharacterSet characterIsMember:[safe.string characterAtIndex:safe.length-1]])
         [safe deleteCharactersInRange:NSMakeRange(safe.length-1,1)];
+    NSString* query=_chatSearch.stringValue;
+    if(query.length) {
+        NSRange rest=NSMakeRange(0,safe.length), hit;
+        while(rest.length && (hit=[safe.string rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch range:rest]).location!=NSNotFound) {
+            [safe addAttribute:NSBackgroundColorAttributeName value:[NSColor colorWithSRGBRed:.70 green:.53 blue:.12 alpha:.38] range:hit];
+            rest=NSMakeRange(NSMaxRange(hit),safe.length-NSMaxRange(hit));
+        }
+    }
     SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(120,self.bounds.size.width-48),40)];
     view.verticallyResizable=NO; view.horizontallyResizable=NO;
     view.editable=NO; view.selectable=YES; view.drawsBackground=NO; view.delegate=self;
@@ -344,15 +358,25 @@
     else if(state==SPDFMacAIChatActivityWorking) title=@"Working on your documents";
     else if(state==SPDFMacAIChatActivityCompleted) title=@"Complete · Ready for your reply";
     else if(state==SPDFMacAIChatActivityError) title=@"Error · Review the details";
+    else if(state==SPDFMacAIChatActivityPaused) title=@"Paused · Ready to continue";
     else if(state==SPDFMacAIChatActivityStopped) title=@"Stopped · Ready for your next message";
     _status.stringValue=issueVisible ? @"Message not sent" : title;
     _activityDetail.stringValue=issueVisible ? _submissionError : session.activityDetail.length ? session.activityDetail : fallback;
+    if(_chatSearch.stringValue.length && !issueVisible && !session.running) {
+        NSUInteger matches=0;
+        for(NSDictionary* message in session.chat[@"messages"]) {
+            NSString* role=message[@"role"], *content=message[@"content"];
+            if(([role isEqual:@"user"] || [role isEqual:@"assistant"]) && [content isKindOfClass:NSString.class] &&
+               [content rangeOfString:_chatSearch.stringValue options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location!=NSNotFound) matches++;
+        }
+        _activityDetail.stringValue=matches ? [NSString stringWithFormat:@"%lu matching message%@",(unsigned long)matches,matches==1 ? @"" : @"s"] : @"No matches in this chat";
+    }
     _activityDetail.toolTip=_activityDetail.stringValue;
     if(session.running) [_progress startAnimation:nil]; else [_progress stopAnimation:nil];
     NSString* latest=@"";
     for(NSDictionary* message in [session.chat[@"messages"] reverseObjectEnumerator])
         if([message[@"role"] isEqual:@"user"] && [message[@"content"] isKindOfClass:NSString.class]) { latest=message[@"content"]; break; }
-    _prompt.hidden=_history || !latest.length;
+    _prompt.hidden=_history || !latest.length || _chatSearch.stringValue.length;
     _prompt.stringValue=latest.length ? [@"You: " stringByAppendingString:latest] : @"";
     CGFloat promptHeight=[_prompt.stringValue boundingRectWithSize:NSMakeSize(MAX(240,self.bounds.size.width-36),CGFLOAT_MAX)
         options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName:_prompt.font}].size.height;
@@ -377,24 +401,28 @@
 }
 - (void)displaySession:(SPDFMacAIChatSession*)session {
     BOOL differentChat=_chatID && ![_chatID isEqual:session.chat[@"id"]];
-    if(differentChat) { _visibleLimit=40; _submissionError=nil; }
+    if(differentChat) { _visibleLimit=40; _submissionError=nil; _chatSearch.stringValue=@""; }
     [self refreshActivityFromSession:session];
     NSArray* messages=session.chat[@"messages"];
     if (!_history && [_chatID isEqual:session.chat[@"id"]] && [_displayedMessages isEqual:messages]) return;
     _history=NO; [self refreshActivityFromSession:session]; _chatID=session.chat[@"id"];
     _displayedMessages=[[NSArray alloc] initWithArray:messages ?: @[] copyItems:YES]; [self clearRows];
     if (!messages.count) {
-        [self addText:@"# Document chat\nAsk about a document, find an answer across groups, or organize your tabs.\n\nTry **“Find the power requirements in my open documents”** or **“Summarize this document and suggest chapters.”**\n\nOnly requested context is sent to your model. Stop cancels a running task. Undo and Redo are available for supported edits." role:@"Shenzhen PDF"];
+        NSTextField* empty=SPDFCollectionText(@"Ask about this document, find an answer across groups, or organize your tabs.",13,NSFontWeightRegular,YES);
+        empty.maximumNumberOfLines=0; empty.identifier=@"chatEmptyState";
+        empty.translatesAutoresizingMaskIntoConstraints=NO; [_messages addArrangedSubview:empty];
+        [empty.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
     } else {
-        NSUInteger visible=0; BOOL hasOlder=NO;
+        NSUInteger visible=0; BOOL hasOlder=NO; NSString* query=_chatSearch.stringValue;
         for (NSDictionary* message in messages.reverseObjectEnumerator) {
-            if ([message[@"role"] isEqual:@"preview"] && [message[@"local"] boolValue]) {
+            if ([message[@"role"] isEqual:@"preview"] && [message[@"local"] boolValue] && !query.length) {
                 if(visible>=_visibleLimit) { hasOlder=YES; break; }
                 [self addPreview:message[@"preview"]]; ++visible; continue;
             }
             if (![message[@"role"] isEqual:@"user"] && ![message[@"role"] isEqual:@"assistant"]) continue;
             NSString* content=message[@"content"]; if (![content isKindOfClass:NSString.class] || !content.length) continue;
-            if(visible>=_visibleLimit) { hasOlder=YES; break; }
+            if(query.length && [content rangeOfString:query options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location==NSNotFound) continue;
+            if(!query.length && visible>=_visibleLimit) { hasOlder=YES; break; }
             [self addText:content role:[message[@"role"] isEqual:@"user"] ? @"You" : @"Assistant"];
             ++visible;
         }

@@ -1,10 +1,21 @@
 #import "../SPDFMacAIChatDock.h"
 #import "../SPDFMacAIChatHistoryView.h"
 #import "../SPDFMacAIChatStore.h"
+#import "../SPDFMacSidebarModeControl.h"
+#import "../SPDFMacCollectionStyle.h"
+@interface ChatReaderSurface : NSView @end
+@implementation ChatReaderSurface
+- (void)drawRect:(NSRect)rect {[SPDFCollectionColor(@"window") setFill];NSRectFill(rect);}
+@end
 static void CheckChatDock(void) {
     NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1240,720) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
-    NSView* root=window.contentView;
-    SPDFMacAIChatHistoryView* history=[[SPDFMacAIChatHistoryView alloc] initWithFrame:NSMakeRect(0,0,240,720)];
+    window.contentView=[[ChatReaderSurface alloc] initWithFrame:window.contentView.bounds];
+    NSView* root=window.contentView; root.wantsLayer=YES;
+    SPDFSidebarNavigationControl* navigation=[[SPDFSidebarNavigationControl alloc] initWithFrame:NSMakeRect(8,684,224,36)];
+    spdf_sidebar_mode_control_configure_navigation(navigation,YES,YES);
+    navigation.spdf_selectedSidebarMode=SPDFSidebarModeChats;
+    [navigation setCollapseTarget:navigation action:@selector(performClick:)]; [root addSubview:navigation];
+    SPDFMacAIChatHistoryView* history=[[SPDFMacAIChatHistoryView alloc] initWithFrame:NSMakeRect(0,0,240,684)];
     history.autoresizingMask=NSViewHeightSizable;[root addSubview:history];
     NSView* reader=[[NSView alloc] initWithFrame:NSMakeRect(241,0,999,720)];[root addSubview:reader];
     reader.wantsLayer=YES;
@@ -18,12 +29,24 @@ static void CheckChatDock(void) {
     session.activityState=SPDFMacAIChatActivityCompleted;
     session.chat=@{@"id":@"layout",@"messages":@[@{@"role":@"user",@"content":@"What power supply does the board need?"},@{@"role":@"assistant",@"content":@"Use a **5 V regulated supply**, rated for at least **2 A**.\n\nSee [Power requirements, page 2](spdf-ai://document?path=board.pdf&page=2)."}]};
     [view displaySession:(id)session];
+    [root layoutSubtreeIfNeeded];
+    NSView* hide=Find(view,@"close"); NSView* chatIcon=nil;
+    for(NSView* child in navigation.subviews) if([child.accessibilityLabel isEqual:@"Chats"]) chatIcon=child;
+    Check(chatIcon && fabs(NSMidY([hide convertRect:hide.bounds toView:root])-NSMidY([chatIcon convertRect:chatIcon.bounds toView:root]))<.01,@"chat toolbar icons align with production sidebar icon row");
     [history displayChats:@[@{@"id":@"layout",@"title":@"Board power requirements",@"updated":@0},@{@"id":@"second",@"title":@"Translate generated chapters to English",@"updated":@0}] selectedID:@"layout"];
     for(NSString* appearance in @[NSAppearanceNameDarkAqua,NSAppearanceNameAqua]) {
         window.appearance=[NSAppearance appearanceNamed:appearance];
         [window.effectiveAppearance performAsCurrentDrawingAppearance:^{reader.layer.backgroundColor=NSColor.textBackgroundColor.CGColor;}];
         [root layoutSubtreeIfNeeded];
         Capture(root,[NSString stringWithFormat:@"workspace-%@",appearance]);
+        NSArray* transcript=session.chat[@"messages"];
+        session.chat=@{@"id":@"empty-layout",@"messages":@[]}; session.activityState=SPDFMacAIChatActivityIdle;
+        [view displaySession:(id)session]; [root layoutSubtreeIfNeeded];
+        Capture(root,[NSString stringWithFormat:@"workspace-empty-%@",appearance]);
+        NSStackView* rows=[view valueForKey:@"messages"];
+        Check(rows.arrangedSubviews.count==1 && [rows.arrangedSubviews.firstObject isKindOfClass:NSTextField.class],@"layer-backed reader empty chat never paints a message bubble");
+        session.chat=@{@"id":@"layout",@"messages":transcript}; session.activityState=SPDFMacAIChatActivityCompleted;
+        [view displaySession:(id)session];
     }
     for(NSNumber* width in @[@999,@700,@600,@999]) {
         [dock.split setFrameSize:NSMakeSize(width.doubleValue,720)];[dock.split adjustSubviews];[root layoutSubtreeIfNeeded];

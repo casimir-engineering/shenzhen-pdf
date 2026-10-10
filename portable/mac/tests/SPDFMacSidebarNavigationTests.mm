@@ -13,6 +13,7 @@ static void Check(BOOL ok, const char* label) { if (!ok) { fprintf(stderr,"FAIL:
 @end
 @implementation SidebarFixture
 - (void)changed:(id)sender { (void)sender; self.changes++; }
+- (void)showAIChats:(NSView*)sender { [(SPDFSidebarNavigationControl*)sender.superview setSpdf_selectedSidebarMode:SPDFSidebarModeChats]; }
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return 24; }
 - (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
     (void)table; (void)column;
@@ -161,6 +162,10 @@ static void Exercise(CGFloat width, CGFloat height, BOOL dark, NSInteger focus, 
     NSButton* chats=nil;
     for (NSButton* row in navigation.accessibilityChildren) if ([row.accessibilityLabel isEqual:@"Chats"]) chats=row;
     Check(chats!=nil && NSMaxX(chats.frame)<=NSMinX(groupButton.frame),"Chats sits separately beside Groups");
+    [chats mouseDown:[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1]];
+    Check([[chats valueForKey:@"navigationSelected"] boolValue] && [chats.accessibilityValue boolValue],"Chats retains selected paint and accessibility state after mouseDown resets transient button state");
+    navigation.spdf_selectedSidebarMode=SPDFSidebarModeChapters;
+    Check(![[chats valueForKey:@"navigationSelected"] boolValue],"Chats selection clears when another sidebar mode opens");
     CGFloat leftSeparator = NSMaxX(collapse.frame)+8, rightSeparator = NSMinX(chats.frame)-8;
     Check(fabs(NSMidX(tools)-(leftSeparator+rightSeparator)/2)<.01,"document tools are centered between separators");
     Check(NSMinX(tools)>=leftSeparator && NSMaxX(tools)<=rightSeparator,"document tools stay between separators");

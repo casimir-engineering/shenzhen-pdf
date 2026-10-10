@@ -5,9 +5,8 @@
 @property(nonatomic, copy) BOOL (^sendText)(NSString*);
 @property(nonatomic, copy) void (^action)(NSString*);
 @property(nonatomic, copy) void (^openLink)(NSURL*);
-@property(nonatomic, copy) void (^searchChats)(NSString*);
 @property(nonatomic, readonly) NSTextView* composer;
-- (void)setHistorySearchQuery:(NSString*)query;
+- (void)setChatSearchQuery:(NSString*)query;
 - (void)showSubmissionError:(NSString*)message;
 - (void)showSubmissionError:(NSString*)message recoveryAction:(NSString*)action;
 - (void)refreshActivityFromSession:(SPDFMacAIChatSession*)session;

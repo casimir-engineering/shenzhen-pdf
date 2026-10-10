@@ -11,8 +11,11 @@ static NSDictionary* Problem(NSString* text) {return @{@"error":text};}
 @implementation ShenzhenMacDelegate (AIMetadataActions)
 - (void)aiUpdateMetadata:(NSDictionary*)arguments progress:(NSProgress*)progress completion:(void (^)(NSDictionary*))completion {
     NSString* path=arguments[@"path"];NSDictionary* before=[self aiAnalysisForPath:path];
-    if(!before[@"cacheKey"] || ![arguments[@"revision"] isEqual:SPDFSearchFileStamp(path)]) {
-        completion(Problem(@"Read document_metadata and read_pages first; current cached metadata and revision are required."));return;
+    if(!before[@"cacheKey"]) {
+        completion(Problem(@"Generated metadata is not available for this document yet. Use show_document once to load its analysis, then read document_metadata. Retry the update only when analysisAvailable is true; otherwise explain that analysis is still pending."));return;
+    }
+    if(![arguments[@"revision"] isEqual:SPDFSearchFileStamp(path)]) {
+        completion(Problem(@"The document revision changed. Read read_pages again and use its returned revision before updating metadata."));return;
     }
     NSDictionary* fields=arguments[@"metadata"];
     if(![fields isKindOfClass:NSDictionary.class]){completion(Problem(@"Provide metadata fields to update."));return;}
