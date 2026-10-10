@@ -17,9 +17,13 @@ ready. It does not appear on every launch after you finish. The steps are:
    macOS will ask for access if a later open needs it. ShenzhenPDF may need to
    be reopened after granting access. Setup does not add an Accessibility step.
 2. **Collection.** Choose whether to keep local copies and history, set its
-   location, and choose storage management. Dynamic uses up to 80% of free disk
+   location, and choose storage management. Dynamic uses a selectable 50–80% (80% by default) of free disk
    space plus the space already used by Collection, adjusting as disk use
-   changes. Static sets a fixed limit; Unlimited is also available. Cleanup
+   changes. Move location transfers and verifies Collection files, then removes
+   the old stored data; small routing records keep existing tabs working. If editable
+   Collection documents exist, moving to a different disk is refused to protect
+   in-progress saves; moving to another folder on the same disk is supported.
+   Static sets a fixed limit; Unlimited is also available. Cleanup
    applies to stored history, never to originals.
 3. **OpenRouter.** Connect in your browser, or reveal the API-key field when
    you choose to use a key. Keys are stored in this Mac's Keychain. Open the
@@ -36,6 +40,10 @@ from existing installations are preserved. Defaults do not permit cloud work
 until setup is complete and an OpenRouter account is connected. **Done** returns
 you to the reader and does not make Settings appear at every startup. You can
 change chat and automatic analysis later under **Settings → Settings & AI… → AI settings**.
+Startup and background Keychain access are non-interactive: a locked or denied
+credential does not trigger a Keychain password prompt. Credentials remain in
+Keychain, and can be reconnected from AI settings when needed.
+
 Turning chat off cancels an active chat request; turning automatic analysis off
 stops analysis work.
 
