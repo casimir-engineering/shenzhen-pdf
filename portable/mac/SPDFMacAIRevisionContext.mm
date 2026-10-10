@@ -9,9 +9,11 @@ static NSString* IdentityHash(NSString* identity) {
 NSDictionary* SPDFAICollectionRevisionMetadata(SPDFMacCollectionStore* store, NSString* path, NSUInteger limit) {
     NSDictionary* documents=[store readManifest][@"documents"];NSDictionary* doc=nil,*selected=nil;
     NSString* normalized=path.stringByStandardizingPath;
-    NSString* root=store.rootURL.path.stringByStandardizingPath;
-    if([normalized hasPrefix:[root stringByAppendingString:@"/"]]) {
-        NSArray* parts=[[normalized substringFromIndex:root.length+1] pathComponents];
+    // Worker-only lookup: restored tabs may retain a path through relocation symlinks.
+    NSString* resolved=normalized.stringByResolvingSymlinksInPath;
+    NSString* root=store.rootURL.path.stringByResolvingSymlinksInPath;
+    if([resolved hasPrefix:[root stringByAppendingString:@"/"]]) {
+        NSArray* parts=[[resolved substringFromIndex:root.length+1] pathComponents];
         if(parts.count==4 && ( [parts[0] isEqual:@"editable"] || [parts[0] isEqual:@"previews"])) {
             doc=documents[parts[1]];NSString* versionID=parts[2];
             if([parts[0] isEqual:@"editable"])versionID=doc[@"editableCopies"][parts[2]][@"currentVersionID"];
@@ -19,7 +21,7 @@ NSDictionary* SPDFAICollectionRevisionMetadata(SPDFMacCollectionStore* store, NS
         }
     } else for(NSDictionary* candidate in documents.allValues)
         if(![candidate[@"sourceReplaced"] boolValue] && [candidate[@"path"] isEqual:normalized]){doc=candidate;break;}
-    if(!doc)return @{@"revisionCount":@0,@"analysisEligible":@(![normalized hasPrefix:[root stringByAppendingString:@"/"]]),@"analysisDocumentID":normalized};
+    if(!doc)return @{@"revisionCount":@0,@"analysisEligible":@(![resolved hasPrefix:[root stringByAppendingString:@"/"]]),@"analysisDocumentID":normalized};
     NSArray* versions=doc[@"versions"] ?: @[];NSMutableArray* rows=[NSMutableArray array];
     NSUInteger count=MIN(MIN(limit,100),versions.count);
     for(NSUInteger index=versions.count-count;index<versions.count;index++) {
@@ -31,7 +33,7 @@ NSDictionary* SPDFAICollectionRevisionMetadata(SPDFMacCollectionStore* store, NS
     }
     BOOL eligible=!selected || [selected[@"id"] isEqual:doc[@"latestVersionID"]];
     // Immutable historical previews never receive standalone model summaries, even if the latest snapshot.
-    if([normalized hasPrefix:[root stringByAppendingString:@"/previews/"]])eligible=NO;
+    if([resolved hasPrefix:[root stringByAppendingString:@"/previews/"]])eligible=NO;
     return @{@"revisionCount":@(versions.count),@"revisions":rows,@"moreRevisions":@(versions.count>count),
         @"analysisEligible":@(eligible),@"analysisDocumentID":doc[@"id"] ?: normalized,
         @"selectedVersionID":selected[@"id"] ?: NSNull.null,@"latestVersionID":doc[@"latestVersionID"] ?: NSNull.null};

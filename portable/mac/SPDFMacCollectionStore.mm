@@ -80,12 +80,16 @@ NSString* SPDFCollectionHashURL(NSURL* URL, NSError** error) {
               @"documents":[NSMutableDictionary dictionary]} mutableCopy];
 }
 - (BOOL)transaction:(BOOL (^)(NSMutableDictionary*, NSError**))body error:(NSError**)error {
+    NSString* previousRoot=self.rootURL.path;
     BOOL committed = [self manifestTransaction:body writeBack:YES error:error];
     // Deliver only after releasing both locks; observers may read the committed store.
     if (committed) {
-        [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:self];
+        NSString* currentRoot=self.rootURL.path;
+        NSDictionary* info=@{@"processID":@(NSProcessInfo.processInfo.processIdentifier),
+            @"roots":@[self.originalRootURL.path,previousRoot,currentRoot]};
+        [NSNotificationCenter.defaultCenter postNotificationName:SPDFCollectionStoreDidChangeNotification object:self userInfo:info];
         [NSDistributedNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionStoreDidChangeAcrossProcesses"
-            object:self.rootURL.path userInfo:@{@"processID":@(NSProcessInfo.processInfo.processIdentifier)} deliverImmediately:YES];
+            object:currentRoot userInfo:info deliverImmediately:YES];
     }
     return committed;
 }

@@ -3,7 +3,7 @@
 #import "SPDFMacAIAnalysisService.h"
 #import "SPDFMacAIDocumentContext.h"
 #import "SPDFMacAITransport.h"
-#import "SPDFMacCollectionStore.h"
+#import "SPDFMacCollectionStorePrivate.h"
 #import "SPDFMacAIToolsReader.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacMarkdownSidebarModel.h"
@@ -20,6 +20,10 @@ static char analysisServiceKey, analysisSettingsKey, analysisResultsKey, analysi
 @property(nonatomic) id token;
 @property(nonatomic,copy) void (^changed)(NSString* root);
 @property(nonatomic) NSMutableSet* roots;
+@property(nonatomic) dispatch_queue_t worker;
+- (void)trackRoot:(NSString*)root;
+- (void)receiveRoot:(NSString*)root;
+- (void)receiveRoots:(NSArray*)roots fallback:(NSString*)root;
 - (void)distributedChange:(NSNotification*)note;
 @end
 @implementation SPDFAnalysisRevisionObserver
@@ -27,9 +31,52 @@ static char analysisServiceKey, analysisSettingsKey, analysisResultsKey, analysi
     if(self.token)[NSNotificationCenter.defaultCenter removeObserver:self.token];
     [NSDistributedNotificationCenter.defaultCenter removeObserver:self];
 }
+- (NSString*)resolveRoot:(NSString*)root {
+    // Only the lazy observer worker resolves redirects/symlinks; never render or launch.
+    return [[[SPDFMacCollectionStore alloc] initWithRootURL:[NSURL fileURLWithPath:root]] rootURL].path.stringByResolvingSymlinksInPath;
+}
+- (void)trackRoot:(NSString*)root {
+    if(!self.enabled || !root)return;
+    @synchronized(self) { if([self.roots containsObject:root])return;[self.roots addObject:root]; }
+    dispatch_async(self.worker,^{
+        if(!self.enabled)return;
+        NSString* resolved=[self resolveRoot:root];
+        @synchronized(self) { if(self.enabled && resolved)[self.roots addObject:resolved]; }
+    });
+}
+- (void)receiveRoot:(NSString*)root {
+    if(!self.enabled || !root.length)return;
+    root=root.stringByStandardizingPath;
+    @synchronized(self) { if([self.roots containsObject:root]) { if(self.changed)self.changed(root);return; } }
+    // A relocation is announced at its new root. Bridge previously observed aliases
+    // off the main thread, then retain the new root for later fast invalidations.
+    dispatch_async(self.worker,^{
+        if(!self.enabled)return;
+        NSString* changedRoot=[self resolveRoot:root];NSArray* observed;
+        @synchronized(self) { observed=self.roots.allObjects; }
+        for(NSString* known in observed) {
+            if(!self.enabled)return;
+            if(![[self resolveRoot:known] isEqual:changedRoot])continue;
+            @synchronized(self) { [self.roots addObject:root];[self.roots addObject:changedRoot]; }
+            if(self.changed)self.changed(changedRoot);break;
+        }
+    });
+}
+- (void)receiveRoots:(NSArray*)roots fallback:(NSString*)root {
+    if(!self.enabled)return;
+    NSMutableArray* normalized=[NSMutableArray array];
+    if([roots isKindOfClass:NSArray.class])for(id item in roots)
+        if([item isKindOfClass:NSString.class] && [item isAbsolutePath])[normalized addObject:[item stringByStandardizingPath]];
+    @synchronized(self) {
+        for(NSString* item in normalized)if([self.roots containsObject:item]) {
+            [self.roots addObjectsFromArray:normalized];if(self.changed)self.changed(item);return;
+        }
+    }
+    [self receiveRoot:root];
+}
 - (void)distributedChange:(NSNotification*)note {
     if([note.userInfo[@"processID"] intValue]==NSProcessInfo.processInfo.processIdentifier)return;
-    if(self.changed && [note.object isKindOfClass:NSString.class])self.changed(note.object);
+    if([note.object isKindOfClass:NSString.class])[self receiveRoots:note.userInfo[@"roots"] fallback:note.object];
 }
 @end
 static NSString* CollectionCopyRoot(NSDictionary* candidate) {
@@ -62,9 +109,10 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
 - (SPDFAnalysisRevisionObserver*)aiObserveCollectionAnalysisRevisions:(NSDictionary*)candidate {
     SPDFAnalysisRevisionObserver* observer=objc_getAssociatedObject(self,&analysisRevisionObserverKey);
     NSString* root=CollectionCopyRoot(candidate);
-    if(observer) { @synchronized(observer) { if(root)[observer.roots addObject:root]; } return observer; }
+    if(observer) { [observer trackRoot:root];return observer; }
     observer=[SPDFAnalysisRevisionObserver new];observer.roots=[NSMutableSet set];observer.enabled=YES;
-    if(root)[observer.roots addObject:root];
+    observer.worker=dispatch_queue_create("com.intuition.shenzhenpdf.ai-revision-roots",DISPATCH_QUEUE_SERIAL);
+    [observer trackRoot:root];
     __weak SPDFAnalysisRevisionObserver* weakObserver=observer;
     __weak ShenzhenMacDelegate* weakSelf=self;
     observer.changed=^(NSString* changedRoot){
@@ -85,8 +133,8 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
         };
     observer.token=[NSNotificationCenter.defaultCenter addObserverForName:SPDFCollectionStoreDidChangeNotification
         object:nil queue:nil usingBlock:^(NSNotification* note) {
-            if([note.object isKindOfClass:SPDFMacCollectionStore.class] && weakObserver.changed)
-                weakObserver.changed([(SPDFMacCollectionStore*)note.object rootURL].path);
+            if([note.object isKindOfClass:SPDFMacCollectionStore.class])
+                [weakObserver receiveRoots:note.userInfo[@"roots"] fallback:[(SPDFMacCollectionStore*)note.object originalRootURL].path];
         }];
     [NSDistributedNotificationCenter.defaultCenter addObserver:observer selector:@selector(distributedChange:)
         name:@"SPDFCollectionStoreDidChangeAcrossProcesses" object:nil suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
@@ -149,6 +197,7 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
     settings:(SPDFMacAISettings*)settings {
             ShenzhenMacDelegate* owner=self;
             NSString* path=candidate[@"path"];
+            if(objc_getAssociatedObject(owner,&analysisSettingsKey)!=settings || !settings.enabled || !settings.automaticAnalysis)return;
             if(CollectionCopyCandidate(candidate))[self aiObserveCollectionAnalysisRevisions:candidate];
             if (!owner || !CurrentCollectionGeneration(owner,candidate) || objc_getAssociatedObject(owner,&analysisSettingsKey)!=settings ||
                 !settings.enabled || !settings.automaticAnalysis || ![settings.model isEqual:analysis[@"model"] ?: settings.model] ||

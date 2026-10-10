@@ -74,6 +74,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 - (void)rebuildSidebar {}
 - (void)aiRememberAnalysis:(NSDictionary*)a forPath:(NSString*)p {}
 @end
+#import "SPDFMacAIRevisionRelocationChecks.h"
 static int ProcessAnalysis(NSString* directory) {
     NSURL* root=[NSURL fileURLWithPath:directory];
     AnalysisTransport* transport=[AnalysisTransport new];transport.markerPath=[directory stringByAppendingPathComponent:@"requests"];
@@ -260,6 +261,7 @@ int main(int argc,const char** argv) { @autoreleasepool {
         "copy becoming historical during cache lease cannot return cached latest analysis");
     raceCache.afterLease=nil;
     [NSApplication sharedApplication];
+    CheckRevisionRelocation([root URLByAppendingPathComponent:@"relocation"],settings);
     AnalysisReaderProbe* reader=[AnalysisReaderProbe new];[reader seedPath:@"/test.pdf"];
     settings.enabled=NO;[reader configureAIAnalysis:settings];[reader aiDocumentDidOpen:@"/test.pdf"];
     Check(reader.candidateReads==0,"production disabled document-open does not gather candidates or create service");
