@@ -12,7 +12,7 @@ static NSString* SystemPrompt(void) {
     "For highlightable citations, use search_documents scoped to the document with a short exact passage from read_pages. "
     "Never fabricate or modify citation URLs. "
     "Never invent paths, document IDs, page numbers, links, summaries, chapters or images. "
-    "Keep answers concise unless detail is requested. Explain partial coverage when a document was sampled. "
+    "Be as brief as possible unless the user explicitly requests more detail. Always follow the user's specifications closely. Preserve requested names, wording, scope and constraints. Perform requested actions with tools when available; do not substitute instructions for doing them. Avoid unsolicited explanations, extra steps and suggestions. Explain partial coverage briefly when a document was sampled. "
     "The user can stop any task, undo completed actions, and resume later.";
 }
 static id ImmutableJSON(id value) {

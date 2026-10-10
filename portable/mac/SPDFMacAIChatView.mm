@@ -39,14 +39,20 @@
 @property(nonatomic) BOOL measuring;
 @end
 @implementation SPDFChatMessageView
+- (void)drawRect:(NSRect)dirty {
+    [self.backgroundColor setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:7 yRadius:7] fill];
+    [super drawRect:dirty];
+}
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay=YES; }
 - (void)setFrameSize:(NSSize)size {
     [super setFrameSize:size];
     if(!self.contentHeight || self.measuring) return;
     self.measuring=YES;
-    self.textContainer.containerSize=NSMakeSize(MAX(1,size.width),CGFLOAT_MAX);
+    self.textContainer.containerSize=NSMakeSize(MAX(1,size.width-2*self.textContainerInset.width),CGFLOAT_MAX);
     [self.layoutManager invalidateLayoutForCharacterRange:NSMakeRange(0,self.string.length) actualCharacterRange:nil];
     [self.layoutManager ensureLayoutForTextContainer:self.textContainer];
-    CGFloat h=MAX(18,ceil(NSMaxY([self.layoutManager usedRectForTextContainer:self.textContainer])));
+    CGFloat h=MAX(18,ceil(NSMaxY([self.layoutManager usedRectForTextContainer:self.textContainer])))+2*self.textContainerInset.height;
     if(fabs(h-self.contentHeight.constant)>.5) { self.contentHeight.constant=h; self.superview.needsLayout=YES; }
     self.measuring=NO;
 }
@@ -259,7 +265,7 @@
 - (void)addText:(NSString*)text role:(NSString*)role {
     NSTextField* label=SPDFCollectionText(role,11,NSFontWeightSemibold,YES); [_messages addArrangedSubview:label];
     BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
-    NSMutableAttributedString* safe=[SPDFMacAIChatMarkdown(text,MAX(240,self.bounds.size.width-48),dark) mutableCopy];
+    NSMutableAttributedString* safe=[SPDFMacAIChatMarkdown(text,MAX(220,self.bounds.size.width-68),dark) mutableCopy];
     // The document renderer terminates blocks with newlines. A chat row already
     // owns its inter-message spacing, so a final blank paragraph must not add it again.
     while(safe.length && [NSCharacterSet.newlineCharacterSet characterIsMember:[safe.string characterAtIndex:safe.length-1]])
@@ -267,13 +273,15 @@
     SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(240,self.bounds.size.width-48),40)];
     view.verticallyResizable=NO; view.horizontallyResizable=NO;
     view.editable=NO; view.selectable=YES; view.drawsBackground=NO; view.delegate=self;
-    view.textContainerInset=NSZeroSize; view.textContainer.lineFragmentPadding=0;
+    view.backgroundColor=SPDFCollectionColor([role isEqual:@"You"] ? @"selected" : @"control");
+    view.accessibilityLabel=role;
+    view.textContainerInset=NSMakeSize(10,8); view.textContainer.lineFragmentPadding=0;
     view.textContainer.widthTracksTextView=YES; [view.textStorage setAttributedString:safe];
     [view.layoutManager ensureLayoutForTextContainer:view.textContainer];
     CGFloat height=ceil(NSMaxY([view.layoutManager usedRectForTextContainer:view.textContainer]));
     view.translatesAutoresizingMaskIntoConstraints=NO; [_messages addArrangedSubview:view];
     [view.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
-    view.contentHeight=[view.heightAnchor constraintEqualToConstant:MAX(18,height)]; view.contentHeight.active=YES;
+    view.contentHeight=[view.heightAnchor constraintEqualToConstant:MAX(18,height)+2*view.textContainerInset.height]; view.contentHeight.active=YES;
     [_messages setCustomSpacing:16 afterView:view];
 }
 - (void)addPreview:(NSDictionary*)preview {

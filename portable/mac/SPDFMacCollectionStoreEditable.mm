@@ -133,6 +133,10 @@ static NSURL* CopyURL(NSURL* root, NSString* documentID, NSString* copyID, NSStr
     return ok ? [self readManifest][@"documents"][info[@"document"][@"id"]] : nil;
 }
 - (NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename error:(NSError**)error {
+    return [self renameEditablePath:path filename:filename documentTitle:filename expectedTitle:nil error:error];
+}
+- (NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename
+    documentTitle:(NSString*)title expectedTitle:(NSString*)expectedTitle error:(NSError**)error {
     if (!ValidComponent(filename) || [filename containsString:@":"]) {
         if(error)*error=SPDFCollectionError(9,@"Enter a valid document filename."); return nil;
     }
@@ -142,6 +146,9 @@ static NSURL* CopyURL(NSURL* root, NSString* documentID, NSString* copyID, NSStr
     BOOL ok=[self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
         NSMutableDictionary* doc=manifest[@"documents"][info[@"document"][@"id"]];
         NSMutableDictionary* copy=doc[@"editableCopies"][info[@"copyID"]];
+        if (expectedTitle && ![doc[@"title"] isEqual:expectedTitle]) {
+            if(failure)*failure=SPDFCollectionError(9,@"The Collection name changed. Read the document again before renaming it."); return NO;
+        }
         NSURL* source=CopyURL(self.rootURL,doc[@"id"],info[@"copyID"],copy[@"filename"]);
         renamed=CopyURL(self.rootURL,doc[@"id"],info[@"copyID"],filename);
         if (!source || !renamed || ![source.path.stringByResolvingSymlinksInPath isEqual:path.stringByResolvingSymlinksInPath]) return NO;
@@ -152,7 +159,7 @@ static NSURL* CopyURL(NSURL* root, NSString* documentID, NSString* copyID, NSStr
         installed=YES;
         NSMutableArray* names=[copy[@"previousNames"] mutableCopy] ?: [NSMutableArray array];
         [names addObject:copy[@"filename"]]; copy[@"previousNames"]=names;
-        copy[@"filename"]=filename; doc[@"title"]=filename;
+        copy[@"filename"]=filename; doc[@"title"]=title;
         return YES;
     } error:error];
     if (installed) unlink((ok ? path : renamed.path).fileSystemRepresentation);

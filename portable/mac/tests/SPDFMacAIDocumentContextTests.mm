@@ -123,6 +123,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
 #import "SPDFMacAICitationNavigationChecks.h"
+#import "SPDFMacAICollectionRenameChecks.h"
 int main(void) { @autoreleasepool {
     NSString* emojiBoundary=[[@"a" stringByPaddingToLength:63999 withString:@"a" startingAtIndex:0] stringByAppendingString:@"😀x"];
     NSString* boundedEmoji=SPDFAIBoundedText(emojiBoundary,64000);
@@ -335,6 +336,7 @@ int main(void) { @autoreleasepool {
     Check([collectionTarget[@"readPath"] isEqual:path] && ![collectionTarget[@"archived"] boolValue],"Collection latest uses original when available");
     collectionTarget=SPDFAICollectionOpenTarget(collectionID,YES,controlProgress);
     Check([collectionTarget[@"archived"] boolValue] && [NSFileManager.defaultManager fileExistsAtPath:collectionTarget[@"readPath"]],"explicit Collection copy materializes saved document");
+    CheckAICollectionRename(reader,collection,captured,collectionTarget[@"readPath"],group);
     Check(SPDFAICollectionOpenTarget(@"/etc/passwd",NO,controlProgress)[@"error"]!=nil,"Collection rejects arbitrary path IDs");
     [reader seedTabs:@[Tab(path,group)]]; result=nil;
     SPDFMacAITools* jobTools=[[SPDFMacAITools alloc] initWithReader:reader];

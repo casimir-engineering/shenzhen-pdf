@@ -163,6 +163,12 @@ int main(void) { @autoreleasepool {
     for(NSString* appearance in @[NSAppearanceNameDarkAqua,NSAppearanceNameAqua]) {
         window.appearance=[NSAppearance appearanceNamed:appearance];
         [view displayChats:@[]]; [view displaySession:(id)fixture]; [view layoutSubtreeIfNeeded];
+        NSTextView* assistant=(id)messages.arrangedSubviews[1];
+        NSTextView* user=(id)messages.arrangedSubviews[3];
+        [window.effectiveAppearance performAsCurrentDrawingAppearance:^{
+            Check(![[assistant.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace]
+                isEqual:[user.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace]],@"user and assistant have distinct shades in each theme");
+        }];
         NSBitmapImageRep* rep=[view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
         Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-ai-chat-%@.png",appearance] atomically:YES],@"chat native preview saved");
     }
@@ -184,12 +190,14 @@ int main(void) { @autoreleasepool {
         @{@"role":@"assistant",@"content":@"Which document should I use: **Power supply** or **Board layout**?"}]};
     fixture.activityState=SPDFMacAIChatActivityCompleted; fixture.activityDetail=@"Waiting for your next message.";
     [view displaySession:(id)fixture]; Capture(view,@"question");
+    window.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    [view displaySession:(id)fixture]; Capture(view,@"question-dark");
     NSTextView* compact=(id)messages.arrangedSubviews[1];
     NSView* nextRole=messages.arrangedSubviews[2];
     NSRect bodyRect=[compact convertRect:compact.bounds toView:transcript.documentView];
     NSRect nextRect=[nextRole.superview convertRect:[nextRole alignmentRectForFrame:nextRole.frame] toView:transcript.documentView];
-    Check(NSHeight(compact.frame)<=24 && NSMinY(nextRect)-NSMaxY(bodyRect)>=15 && NSMinY(nextRect)-NSMaxY(bodyRect)<=20,
-        @"short messages use compact measured rows and consistent16–20point separation");
+    Check(NSHeight(compact.frame)<=40 && NSMinY(nextRect)-NSMaxY(bodyRect)>=15 && NSMinY(nextRect)-NSMaxY(bodyRect)<=20,
+        @"short messages include comfortable padding and consistent16–20point separation");
     Check([compact.string hasSuffix:@"Board layout?"] && ![compact.string hasSuffix:@"\n"],@"only renderer-added terminal blank lines are removed");
     Check(InspectTargets(view)>=14,@"minimum-height chat keeps every header and footer action reachable");
     Check(NSHeight(transcript.frame)>80 && NSContainsRect(view.bounds,view.composer.enclosingScrollView.frame),@"minimum-height chat keeps transcript and composer usable");
