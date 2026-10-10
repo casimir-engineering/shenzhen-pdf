@@ -104,3 +104,25 @@ from incomplete inspection. Brevity and bounded retrieval remain. Exact citation
 rules and deterministic link recovery are unchanged. Request tests check the
 general policy and reject the previous engineering-specific wording; session
 construction remains inert. No new runtime behavior or model call was added.
+
+## Empty bubbles in a reopened chat
+
+Read-only inspection of the reported “Latest” transcript found the final answer
+intact. Four intermediate assistant/tool-call records contained only two line
+breaks. The transcript treated any nonzero string length as visible content,
+created an Assistant heading, then trimmed the Markdown to an empty bubble.
+This looked like erased answers and wasted the visible-message budget.
+
+The view now excludes whitespace-only records from visible rows and pagination,
+and creates a role heading only after Markdown produces visible content. Existing
+saved chats need no migration or edits. New tool rounds canonicalize whitespace
+content to an empty string while retaining all tool calls, results and reasoning.
+Meaningful answer text is preserved verbatim.
+
+Session and production reader tests pass. A new fixture checks 45 empty tool
+records do not hide real messages or create an older-messages control, and covers
+reopen/search/clear. The previous session fails the normalization assertion; the previous view fails
+the empty-row, reopen and display-budget checks (121 failed assertions).
+An optional read-only replay of the reported transcript verified its final answer
+and previews inside the real dock layout; its native offscreen render was
+inspected. No app launch, screenshot or conversation rewrite was performed.

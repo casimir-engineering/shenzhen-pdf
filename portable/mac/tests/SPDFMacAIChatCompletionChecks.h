@@ -8,6 +8,16 @@ static void CheckChatCompletion(NSURL* root) {
     transport.reply(@{@"content":@"  "},nil);
     CHECK(!session.running && session.activityState==SPDFMacAIChatActivityError && [session.chat[@"messages"] count]==1,
         "empty response never persists a blank assistant bubble or reports completion");
+    [session newChat];[session send:@"Read evidence" model:@"fake/model" apiKey:@"fixture"];
+    transport.reply(@{@"content":@"\n\n",@"tool_calls":@[@{@"id":@"blank-round",@"function":@{@"name":@"read_pages",@"arguments":@"{}"}}]},nil);
+    CHECK([session.chat[@"messages"][1][@"content"] isEqual:@""] && [session.chat[@"messages"][1][@"tool_calls"] count]==1,
+        "whitespace narration is normalized while the tool call remains intact");
+    tools.reply(@{@"pages":@[]});
+    CHECK([transport.messages[2][@"tool_calls"] count]==1 && [transport.messages[3][@"role"] isEqual:@"tool"],
+        "normalization preserves tool call/result protocol on continuation");
+    transport.reply(@{@"content":@"  The real answer stays.\n"},nil);
+    CHECK([[session.chat[@"messages"] lastObject][@"content"] isEqual:@"  The real answer stays.\n"],
+        "meaningful assistant text is preserved verbatim");
     for (NSNumber* wrapFailure in @[@NO,@YES]) {
         [session newChat]; [session send:@"Rewrite generated chapters" model:@"fake/model" apiKey:@"fixture"];
         for (NSUInteger index=0;index<12;index++) {
