@@ -77,6 +77,9 @@ int main(void) { @autoreleasepool {
             }
         }
     }
+    [controller selectSection:@"overview"];
+    [(NSButton*)Find(controller.window.contentView,@"showDefaults") performClick:nil];
+    Check(Find(controller.window.contentView,@"defaultReader:pdf") && Find(controller.window.contentView,@"defaultReader:epub") && Find(controller.window.contentView,@"defaultReader:md"),@"per-format default reader choices remain available in ordinary Settings");
     [controller selectSection:@"ai"];
     SPDFMacSearchablePicker* model=(id)Find(controller.window.contentView,@"model");
     Check([model isKindOfClass:SPDFMacSearchablePicker.class],@"model choice is searchable dropdown, not text input");
@@ -205,8 +208,16 @@ int main(void) { @autoreleasepool {
     Check(Find(wizard.window.contentView,@"accessibility")==nil,@"no Accessibility prompt");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
     Check(wizard.wizardStep==1 && [wizardChange[@"wizardStep"] integerValue]==1,@"step transitions persist");
-    NSTextField* percent=(id)Find(wizard.window.contentView,@"collectionDynamicPercent");
-    Check([percent.stringValue isEqual:@"80%"] && !percent.editable,@"dynamic budget displays fixed 80 percent");
+    NSSlider* percent=(id)Find(wizard.window.contentView,@"collectionDynamicPercent");
+    Check(percent.minValue==50 && percent.maxValue==80 && percent.integerValue==80 && !percent.continuous,@"dynamic percentage defaults to 80 within 50–80 and saves on release");
+    for(NSNumber* value in @[@50,@65,@80]) {
+        percent.integerValue=value.integerValue; [NSApp sendAction:percent.action to:percent.target from:percent];
+        Check([wizardChange[@"collectionDynamicPercent"] isEqual:value],@"dynamic percentage change reaches persistence");
+        Check([[(NSTextField*)Find(wizard.window.contentView,@"collectionDynamicPercentLabel") stringValue] isEqual:[value.stringValue stringByAppendingString:@"%"]],@"percentage label follows selected value");
+    }
+    [wizard updateState:@{@"collectionDynamicPercent":@60}];
+    Check(percent.integerValue==60 && [[(NSTextField*)Find(wizard.window.contentView,@"collectionDynamicPercentLabel") stringValue] isEqual:@"60%"],@"persisted percentage updates the existing controls");
+    Check([[(NSButton*)Find(wizard.window.contentView,@"setCollectionLocation") title] isEqual:@"Move location…"],@"location action describes moving files");
     Check(Find(wizard.window.contentView,@"collectionStorageGiB")==nil,@"dynamic mode has no static-limit field");
     NSPopUpButton* storage=(id)Find(wizard.window.contentView,@"collectionStorageMode");
     [storage selectItemAtIndex:1]; [NSApp sendAction:storage.action to:storage.target from:storage];

@@ -46,7 +46,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
 @implementation ShenzhenMacDelegate (SPDFMacAISettingsIntegration)
 - (NSDictionary*)unifiedSettingsState {
     SPDFMacAISettings* ai=ReadSettings(); NSDictionary* collection=SPDFMacCollectionStore.defaultStore.settings;
-    BOOL connected=[SPDFMacAICredentials APIKeyWithError:nil].length>0;
+    BOOL connected=ai.connectionConfigured; // Status display must never read Keychain at launch.
     NSDictionary* budget=[SPDFMacCollectionStore.defaultStore storageBudget];
     NSString* budgetText=[budget[@"storageMode"] isEqual:@"unlimited"] ? @"No storage limit" : [budget[@"capacityAvailable"] boolValue] ?
         [NSString stringWithFormat:@"Current limit: %@",[NSByteCountFormatter stringFromByteCount:[budget[@"storageLimitBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]] : @"Disk capacity unavailable";
@@ -79,11 +79,12 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
             InvalidateAuth(reader);
             BOOL saved=[SPDFMacAICredentials storeAPIKey:secret error:&error];
             SPDFMacUnifiedSettingsController* c=objc_getAssociatedObject(reader,&settingsControllerKey);
+            if (saved) [reader applyUnifiedSettings:@{@"connectionConfigured":@YES}];
             [c updateState:[reader unifiedSettingsState]];
             [c updateState:@{@"connecting":@NO,@"connectionStatus":saved ?
                 @"Connected." :
                 (error.localizedDescription ?: @"The API key could not be saved. Try again.")}];
-            if (saved) { [reader applyUnifiedSettings:@{@"connectionConfigured":@YES}]; [reader requestAIModels]; }
+            if (saved) [reader requestAIModels];
             else if (error) [reader->_window presentError:error];
         };
     } else [controller updateState:[self unifiedSettingsState]];
@@ -128,9 +129,8 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
     NSMutableDictionary* storage=[NSMutableDictionary dictionary];
     if(changes[@"collectionStorageMode"]) {
         storage[@"storageMode"]=changes[@"collectionStorageMode"];
-        if([changes[@"collectionStorageMode"] isEqual:@"dynamic"])storage[@"storageDynamicPercent"]=@80;
     }
-    if(changes[@"collectionDynamicPercent"])storage[@"storageDynamicPercent"]=@80;
+    if(changes[@"collectionDynamicPercent"])storage[@"storageDynamicPercent"]=@(MAX(50,MIN(80,[changes[@"collectionDynamicPercent"] integerValue])));
     if(changes[@"collectionStorageGiB"]) {
         double size=[changes[@"collectionStorageGiB"] doubleValue];
         if(!isfinite(size) || size<=0 || size>1000000) {
@@ -201,11 +201,12 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         NSURL* URL=[auth startWithCompletion:^(BOOL connected,NSError* problem) {
             __typeof__(self) reader=weakSelf; if (!reader ||
                 [objc_getAssociatedObject(reader,&authGenerationKey) unsignedIntegerValue]!=generation) return;
+            if (connected) [reader applyUnifiedSettings:@{@"connectionConfigured":@YES}];
             [controller updateState:[reader unifiedSettingsState]];
             [controller updateState:@{@"connecting":@NO,@"connectionStatus":connected ? @"Connected." :
                 problem.code==NSURLErrorCancelled ? @"Connection cancelled. Connect again when you are ready." : @"Connection failed. Try again."}];
             if (problem && problem.code!=NSURLErrorCancelled) [controller.window presentError:problem];
-            if (connected) { [reader applyUnifiedSettings:@{@"connectionConfigured":@YES}]; [reader requestAIModels]; }
+            if (connected) [reader requestAIModels];
         } error:&error];
         if (URL) [NSWorkspace.sharedWorkspace openURL:URL]; else { [controller updateState:@{@"connecting":@NO,@"connectionStatus":error.localizedDescription ?: @"Could not begin browser sign-in. Try again."}]; if (error) [controller.window presentError:error]; }
     } else if ([action isEqual:@"disconnect"]) {

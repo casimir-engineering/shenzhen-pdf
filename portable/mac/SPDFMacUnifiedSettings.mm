@@ -311,11 +311,18 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [modes addItemsWithTitles:@[@"Dynamic",@"Static limit",@"Unlimited"]];
     [modes selectItemAtIndex:[mode isEqual:@"static"] ? 1 : [mode isEqual:@"unlimited"] ? 2 : 0];
     modes.target=self; modes.action=@selector(storageModeChanged:); modes.identifier=@"collectionStorageMode";
-    [self row:@"Storage limit" detail:@"Automatic cleanup never deletes originals." control:modes];
+    [self row:@"Storage limit" detail:@"Dynamic adapts to free space; Static uses a fixed size." control:modes];
     if([mode isEqual:@"dynamic"]) {
-        NSTextField* amount=SPDFCollectionText(@"80%",13,NSFontWeightSemibold,NO);
-        amount.identifier=@"collectionDynamicPercent";
-        [self row:@"Available storage" detail:@"Uses up to 80% of free space plus existing Collection storage. The limit adjusts as disk usage changes." control:amount];
+        NSInteger value=self.state[@"collectionDynamicPercent"] ? MAX(50,MIN(80,[self.state[@"collectionDynamicPercent"] integerValue])) : 80;
+        NSSlider* percent=[NSSlider sliderWithValue:value minValue:50 maxValue:80 target:self action:@selector(dynamicPercentChanged:)];
+        percent.identifier=@"collectionDynamicPercent"; percent.accessibilityLabel=@"Dynamic storage percentage, 50 to 80 percent"; percent.continuous=NO;
+        [percent.widthAnchor constraintEqualToConstant:120].active=YES; self.controls[percent.identifier]=percent;
+        NSTextField* amount=SPDFCollectionText([NSString stringWithFormat:@"%ld%%",(long)value],13,NSFontWeightSemibold,NO);
+        amount.identifier=@"collectionDynamicPercentLabel"; self.controls[amount.identifier]=amount;
+        [amount.widthAnchor constraintEqualToConstant:36].active=YES;
+        NSStackView* control=[NSStackView stackViewWithViews:@[percent,amount]]; control.spacing=8;
+        [control.widthAnchor constraintEqualToConstant:164].active=YES;
+        [self row:@"Available storage" detail:@"50–80% of free space + existing Collection." control:control];
     } else if([mode isEqual:@"static"]) {
         NSTextField* amount=[NSTextField new]; amount.font=[NSFont systemFontOfSize:13];
         amount.identifier=@"collectionStorageGiB";
@@ -334,7 +341,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     self.storageBudget=self.content.arrangedSubviews.lastObject;
     self.storageBudget.identifier=@"collectionBudgetText"; self.storageBudget.hidden=!budget.length;
     [self actionRow:@"Collection location" detail:self.state[@"collectionLocation"] ?: @"The default location is inside ShenzhenPDF’s application support folder."
-        label:@"Set location…" action:@"setCollectionLocation"];
+        label:@"Move location…" action:@"setCollectionLocation"];
     NSStackView* locationRow=self.content.arrangedSubviews.lastObject;
     self.storageLocation=[(NSStackView*)locationRow.arrangedSubviews.firstObject arrangedSubviews].lastObject;
     self.storageLocation.identifier=@"collectionLocation";
@@ -352,6 +359,11 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     // Host persistence can process another navigation event before returning.
     // Only refresh the page that owned this control; never restore a stale step.
     if(self.sectionGeneration==generation && [self.section isEqual:@"collection"]) [self selectSection:@"collection"];
+}
+- (void)dynamicPercentChanged:(NSSlider*)sender {
+    NSInteger value=MAX(50,MIN(80,(NSInteger)llround(sender.doubleValue))); sender.integerValue=value;
+    [(NSTextField*)self.controls[@"collectionDynamicPercentLabel"] setStringValue:[NSString stringWithFormat:@"%ld%%",(long)value]];
+    [self emit:@{@"collectionDynamicPercent":@(value)}];
 }
 - (void)storageAmountChanged:(NSTextField*)sender {
     NSString* text=[sender.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -454,6 +466,11 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     }
     if([self.section isEqual:@"defaults"] && state[@"defaultFormats"]) [self refreshDefaultRows];
     if([self.section isEqual:@"collection"]) {
+        if(state[@"collectionDynamicPercent"]) {
+            NSInteger value=MAX(50,MIN(80,[merged[@"collectionDynamicPercent"] integerValue]));
+            [(NSSlider*)self.controls[@"collectionDynamicPercent"] setIntegerValue:value];
+            [(NSTextField*)self.controls[@"collectionDynamicPercentLabel"] setStringValue:[NSString stringWithFormat:@"%ld%%",(long)value]];
+        }
         if(state[@"collectionBudgetText"]) {
             self.storageBudget.stringValue=merged[@"collectionBudgetText"];
             self.storageBudget.hidden=!self.storageBudget.stringValue.length;
