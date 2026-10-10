@@ -223,7 +223,8 @@ are identified explicitly. Text-only models are not silently replaced.
 - A citation with an invented text highlight falls back to its verified page,
   including in existing chats. Unverified document/page links remain blocked.
 
-- Brief AI results can appear in pastel cards with a large value and a verified
-  **View evidence** button. Cards persist in chats and support text selection/search.
+- Brief AI results appear in compact lavender cards with a large value and a
+  contrasting **View evidence** button. Layout adapts to narrow panels; cards
+  persist in chats and support text selection/search.
 - AI: `present_answer` displays a final card from a short label, value and retrieved
   citation, without another answer-generation request.

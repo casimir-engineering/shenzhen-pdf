@@ -8,13 +8,22 @@ paper white, reader charcoal, annotation mint, tab lavender, selection blue. The
 signature is a large answer paired with a verified source action inside the chat.
 Reject dashboard metrics, celebratory decoration and extra toolbar controls.
 
-Hierarchy: 12-point medium label, 32-point semibold value, 12-point semibold source
-button. Use the system font and a 16-point horizontal inset. A mint surface with
-dark green text gives this answer a distinct focus inside the neutral transcript.
-Corners are 10 points; the 28-point evidence button reuses the reader's reliable
-full-bounds tracking class, with a quieter green tint, focus ring and no bitmap
-icons. Light/dark variants preserve contrast. Long values wrap rather than clip;
-height is measured from text layout. Text remains selectable and chat-searchable.
+Hierarchy: 12-point medium label, 36-point semibold short answer (34 points for
+15–24 characters, 28 for longer values). Lavender surfaces use #D8CDE9 in dark
+mode and #EEE8F7 in light, with #2E253F answer ink and #655574 supporting text.
+18-point side insets and 16-point top/bottom insets form a compact answer slip.
+The 31-point evidence capsule uses #3B304D, pale text and a vector right arrow.
+It shares the answer row when the measured value and button fit, otherwise moves
+below right. Height follows content rather than a fixed minimum. Short cards are
+97 points high, down from 138. Full-bounds clicks, hover, pressed and keyboard
+focus states use the reader's established button tracking. Text stays selectable
+and searchable; long values wrap without clipping or semantic abbreviation.
+
+A web UX design agent reviewed the initial and revised native renders. Its ranked
+critique replaced wasted vertical space and the disabled-looking outline button
+with a tighter horizontal arrangement and a contrasting source action. The review
+rated the final design 9.2/10 for visual design and usability (subjective design
+ratings) after its narrow-panel typography adjustment was applied. Light, dark, hover, pressed and narrow native captures were inspected.
 
 ## Implementation
 

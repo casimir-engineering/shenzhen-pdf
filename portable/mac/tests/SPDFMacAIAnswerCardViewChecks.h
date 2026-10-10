@@ -18,9 +18,19 @@ static void RunAnswerCardViewChecks(void) {
         Check(answer && evidence && answer.selectable,@"native card has selectable answer and evidence button");
         Check(NSContainsRect(answer.bounds,evidence.frame),@"evidence button remains inside the card");
         NSRect text=[answer.layoutManager usedRectForTextContainer:answer.textContainer];
-        Check(NSMaxY(text)+answer.textContainerOrigin.y<NSMinY(evidence.frame),@"answer and evidence button never overlap");
+        NSRange valueRange=[answer.string rangeOfString:@"3.1 mm"];
+        NSRect value=[answer.layoutManager boundingRectForGlyphRange:[answer.layoutManager glyphRangeForCharacterRange:valueRange actualCharacterRange:NULL] inTextContainer:answer.textContainer];
+        value=NSOffsetRect(value,answer.textContainerOrigin.x,answer.textContainerOrigin.y);
+        Check(!NSIntersectsRect(value,evidence.frame),@"answer and evidence button never overlap");
+        Check(NSHeight(answer.bounds)<115 && NSMinY(evidence.frame)<NSMaxY(value),@"short result and source action share a compact row");
+        Check(fabs(NSMidY(value)-NSMidY(evidence.frame))<1,@"evidence button aligns with the answer optically");
+        Check(NSMaxY(text)+answer.textContainerOrigin.y<=NSHeight(answer.bounds)-12,@"text keeps lower inset");
         Click(window,evidence,NSMakePoint(2,2));Click(window,evidence,NSMakePoint(NSWidth(evidence.bounds)-2,NSHeight(evidence.bounds)-2));
-        if ([appearance isEqual:NSAppearanceNameDarkAqua]) Capture(answer,@"answer-card");
+        if ([appearance isEqual:NSAppearanceNameDarkAqua]) {
+            Capture(answer,@"answer-card");
+            [evidence mouseEntered:nil]; Capture(answer,@"answer-card-hover"); [evidence mouseExited:nil];
+            [evidence highlight:YES]; Capture(answer,@"answer-card-pressed"); [evidence highlight:NO];
+        }
         Capture(view,[appearance isEqual:NSAppearanceNameAqua] ? @"answer-card-light" : @"answer-card-dark");
     }
     Check(opened==4,@"evidence clicks work at all visible corners in both appearances");
@@ -38,5 +48,6 @@ static void RunAnswerCardViewChecks(void) {
     [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.04]];[view layoutSubtreeIfNeeded];
     answer=(id)Find(view,@"answerCard");NSButton* button=(id)Find(view,@"answerEvidence");
     Check(NSMaxY([answer.layoutManager usedRectForTextContainer:answer.textContainer])+answer.textContainerOrigin.y<NSMinY(button.frame),@"long answer reflows above evidence at narrow width");
+    Check(NSHeight(answer.bounds)<220,@"long fallback stays compact at minimum width");
     Capture(view,@"answer-card-narrow");[window orderOut:nil];
 }
