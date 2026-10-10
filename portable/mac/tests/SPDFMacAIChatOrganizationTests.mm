@@ -10,6 +10,9 @@ int main(void){@autoreleasepool{
     NSDictionary* stale=@{@"id":identifier,@"title":@"Please help me inspect the board",@"updated":@1234,
         @"messages":@[@{@"role":@"user",@"content":@"Does this board need a regulated 5 V power supply?"},@{@"role":@"assistant",@"content":@"Use a regulated supply rated for two amps."}]};
     CHECK([store saveChat:stale error:nil],"save conversation");
+    CHECK([store.folders.firstObject[@"name"] isEqual:@"General"] && ![store.folders.firstObject[@"id"] length],"General is the lazy default folder");
+    CHECK([store setFolder:@"" collapsed:YES error:nil] && [store.folders.firstObject[@"collapsed"] boolValue],"General collapse persists");
+    CHECK(![store createFolderNamed:@"general" error:nil],"default folder name reserved without duplicates");
     NSString* folder=[store createFolderNamed:@"Board design" error:nil];CHECK(folder.length,"create folder");
     CHECK(![store createFolderNamed:@"board DESIGN" error:nil],"reject duplicate folder name");
     CHECK(![store renameChat:identifier title:@"  \n " error:nil],"reject blank chat title");
@@ -25,7 +28,7 @@ int main(void){@autoreleasepool{
     NSDictionary* loaded=[reopened chatWithID:identifier];
     CHECK([loaded[@"title"] isEqual:@"Power supply sizing"],"rename survives stale session save and reopening");
     CHECK([loaded[@"folder"] isEqual:folder],"folder survives stale session save and reopening");
-    CHECK([reopened.folders.firstObject[@"collapsed"] boolValue],"folder collapse survives reopening");
+    CHECK([reopened.folders[1][@"collapsed"] boolValue],"folder collapse survives reopening");
     NSArray* matches=[reopened chatsMatchingQuery:@"regulated"];
     CHECK(matches.count==1 && [matches[0][@"snippet"] containsString:@"regulated"],"message search returns surrounding text with query");
     CHECK([matches[0][@"query"] isEqual:@"regulated"],"view receives query for highlight");
@@ -34,6 +37,25 @@ int main(void){@autoreleasepool{
     CHECK([reopened removeFolder:folder error:nil],"remove folder");
     CHECK([[reopened chatWithID:identifier][@"folder"] isEqual:@""],"removing folder keeps chat in unfiled");
     CHECK(![reopened moveChat:identifier toFolder:NSUUID.UUID.UUIDString error:nil],"invalid destination rejected");
+    NSDictionary* snapshot=[store organizationSnapshot];
+    NSArray* batch=@[@{@"operation":@"create_folder",@"name":@"Switches"},
+        @{@"operation":@"move_chat",@"chatID":identifier,@"folderName":@"Switches"},
+        @{@"operation":@"rename_chat",@"chatID":identifier,@"name":@"Travel dimensions"}];
+    NSProgress* progress=[NSProgress progressWithTotalUnitCount:1];
+    NSDictionary* receipt=[store organizeChats:batch expectedRevision:snapshot[@"revision"] progress:progress error:nil];
+    CHECK(receipt && [[store chatWithID:identifier][@"title"] isEqual:@"Travel dimensions"],"one atomic AI batch creates, moves and renames");
+    CHECK(![store organizeChats:batch expectedRevision:snapshot[@"revision"] progress:progress error:nil],"stale batch rejected");
+    NSDictionary* redo=[store swapOrganizationReceipt:receipt progress:progress error:nil];
+    CHECK(redo && [[store chatWithID:identifier][@"title"] isEqual:@"Power supply sizing"],"undo restores all chat organization");
+    NSDictionary* undo=[store swapOrganizationReceipt:redo progress:progress error:nil];
+    CHECK(undo && [[store chatWithID:identifier][@"title"] isEqual:@"Travel dimensions"],"redo restores batch");
+    [store renameChat:identifier title:@"Human edit" error:nil];
+    CHECK(![store swapOrganizationReceipt:undo progress:progress error:nil],"undo cannot overwrite human rename");
+    snapshot=[store organizationSnapshot];
+    CHECK((![store organizeChats:@[@{@"operation":@"create_folder",@"name":@"Rollback"},@{@"operation":@"move_chat",@"chatID":@"missing",@"folderName":@"Rollback"}]
+        expectedRevision:snapshot[@"revision"] progress:progress error:nil]),"invalid batch fails atomically");
+    CHECK([[store organizationSnapshot][@"revision"] isEqual:snapshot[@"revision"]],"invalid batch writes nothing");
+    [progress cancel];CHECK(![store organizeChats:batch expectedRevision:snapshot[@"revision"] progress:progress error:nil],"cancelled batch writes nothing");
     CHECK([reopened deleteChatWithID:identifier error:nil],"delete chat");
     CHECK(![reopened setSuggestedTitle:@"late" forChatID:identifier error:nil],"late title response cannot resurrect deleted chat");
     NSURL* organizationURL=[root URLByAppendingPathComponent:@".organization.json"];

@@ -20,12 +20,14 @@ static int failures;
 @interface FakeTools : NSObject <SPDFMacAIChatTools>
 @property NSUInteger calls;
 @property NSUInteger cancellations;
+@property NSUInteger contextReads;
 @property(copy) void (^reply)(NSDictionary*);
 @end
 @implementation FakeTools
 - (void)performTool:(NSString*)name arguments:(NSDictionary*)args completion:(void (^)(NSDictionary*))completion {
     (void)name; (void)args; self.calls++; self.reply=completion;
 }
+- (NSDictionary*)conversationContext {self.contextReads++;return @{@"path":@"doc:active-fixture",@"title":@"Active drawing",@"page":@1};}
 - (void)cancel { self.cancellations++; }
 - (BOOL)canUndo { return self.calls>0; }
 - (BOOL)undoLastAction:(NSError**)error { (void)error; return YES; }
@@ -33,6 +35,7 @@ static int failures;
 #import "SPDFMacAIChatSnapshotChecks.h"
 #import "SPDFMacAIChatCompletionChecks.h"
 #import "SPDFMacAIChatVisionChecks.h"
+#import "SPDFMacAIReasoningChecks.h"
 int main(void) { @autoreleasepool {
     NSURL* citation=[NSURL URLWithString:@"spdf-ai://document?path=doc:fixture&page=2&revision=abc"];
     NSDictionary* arguments=SPDFMacAICitationArguments(citation);
@@ -48,16 +51,18 @@ int main(void) { @autoreleasepool {
     CheckSessionConflict([snapshotRoot URLByAppendingPathComponent:@"conflict"]);
     CheckChatCompletion([snapshotRoot URLByAppendingPathComponent:@"completion"]);
     CheckChatVision([snapshotRoot URLByAppendingPathComponent:@"vision"]);
+    CheckReasoning([snapshotRoot URLByAppendingPathComponent:@"reasoning"]);
     [NSFileManager.defaultManager removeItemAtURL:snapshotRoot error:nil];
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     FakeTransport* transport=[FakeTransport new]; FakeTools* tools=[FakeTools new];
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
     CHECK(![NSFileManager.defaultManager fileExistsAtPath:root.path],"construction is disk-inert");
-    CHECK(!transport.sends,"construction is network-inert");
+    CHECK(!transport.sends && !tools.contextReads,"construction is network-inert and does not request reader context");
     session.defaultLanguage=@"fr";
     [session send:@"Explain this document" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
     CHECK(transport.sends==1 && session.running,"explicit send starts request");
     NSString* system=transport.messages.firstObject[@"content"];
+    CHECK(tools.contextReads==1 && [system containsString:@"doc:active-fixture"] && [system containsString:@"extension lines"] && [system containsString:@"extreme positions"],"explicit send carries focused context and general dimension interpretation instructions");
     CHECK([system containsString:@"Be as brief as possible"] && [system containsString:@"follow the user's specifications closely"] &&
         [system containsString:@"Perform requested actions with tools"] && [system containsString:@"without emojis"] &&
         [system containsString:@"do not repeat the same arguments"],"system prompt requires brief, faithful, action-oriented responses");

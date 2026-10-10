@@ -2,6 +2,7 @@
 #import "SPDFMacDelegatePrivate.h"
 @interface ShenzhenMacDelegate (SPDFMacAIToolsReader)
 - (NSDictionary*)aiWorkspaceContext;
+- (NSDictionary*)aiCurrentDocumentContext;
 - (NSDictionary*)aiWorkspaceContextWithArguments:(NSDictionary*)arguments;
 - (NSDictionary*)aiDocumentMetadataForPath:(NSString*)path;
 - (NSArray<NSString*>*)aiDocumentPaths;

@@ -7,6 +7,7 @@
 - (void)cancel;
 - (BOOL)undoLastAction:(NSError**)error;
 @optional
+- (NSDictionary*)conversationContext;
 @property(nonatomic,readonly) BOOL canRedo;
 - (void)undoWithCompletion:(void (^)(NSDictionary*))completion;
 - (void)redoWithCompletion:(void (^)(NSDictionary*))completion;

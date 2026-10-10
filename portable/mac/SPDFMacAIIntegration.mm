@@ -126,6 +126,16 @@ static char stateKey;
         __weak ShenzhenMacDelegate* owner=self;
         state.historyView.action=^(NSString* action){ [owner aiChatAction:action]; };
         state.historyView.searchChanged=^(NSString* query){ [owner searchAIChats:query]; };
+        __weak SPDFReaderAIState* weakState=state;
+        state.historyView.renameItem=^(NSString* identifier,BOOL folder,NSString* name){
+            NSError* error=nil;SPDFReaderAIState* live=weakState;
+            BOOL ok=folder ? [live.store renameFolder:identifier name:name error:&error] :
+                [live.store renameChat:identifier title:name error:&error];
+            ShenzhenMacDelegate* reader=owner;
+            if(!ok && reader)[reader->_window presentError:error ?: [NSError errorWithDomain:@"ShenzhenPDF.Chat" code:3
+                userInfo:@{NSLocalizedDescriptionKey:@"Use a unique name of 1–160 characters."}]];
+            [owner searchAIChats:live.historyView.search.stringValue];
+        };
     }
     state.historyView.hidden=NO;[self searchAIChats:state.historyView.search.stringValue];return YES;
 }
@@ -241,21 +251,18 @@ static char stateKey;
     if([command isEqual:@"move"]) {BOOL ok=parts.count==3 && [state.store moveChat:identifier toFolder:parts[2] error:&error];refresh(ok,error);return YES;}
     if([command isEqual:@"toggleFolder"]) {BOOL ok=folder && [state.store setFolder:identifier collapsed:![folder[@"collapsed"] boolValue] error:&error];refresh(ok,error);return YES;}
     if([command isEqual:@"deleteFolder"]) {BOOL ok=[state.store removeFolder:identifier error:&error];refresh(ok,error);return YES;}
-    BOOL chat=[command isEqual:@"rename"], create=[command isEqual:@"newFolder"];
-    NSDictionary* saved=chat ? [state.store chatWithID:identifier] : nil;
-    if((chat && !saved) || (!chat && !create && !folder))return YES;
-    NSAlert* alert=[NSAlert new];alert.messageText=chat ? @"Rename chat" : create ? @"New folder" : @"Rename folder";
-    [alert addButtonWithTitle:create ? @"Create" : @"Rename"];[alert addButtonWithTitle:@"Cancel"];
-    NSTextField* field=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,300,24)];
-    field.stringValue=chat ? saved[@"title"] : create ? @"New folder" : folder[@"name"];field.accessibilityLabel=@"Name";
-    alert.accessoryView=field;
-    [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response){
-        if(response!=NSAlertFirstButtonReturn)return;NSError* issue=nil;BOOL ok=NO;
-        if(chat)ok=[state.store renameChat:identifier title:field.stringValue error:&issue];
-        else if(create)ok=[state.store createFolderNamed:field.stringValue error:&issue]!=nil;
-        else ok=[state.store renameFolder:identifier name:field.stringValue error:&issue];
-        refresh(ok,issue);
-    }];[alert.window makeFirstResponder:field];[field selectText:nil];return YES;
+    if([command isEqual:@"newFolder"]) {
+        NSMutableSet* names=[NSMutableSet set];for(NSDictionary* item in state.store.folders)[names addObject:[item[@"name"] lowercaseString]];
+        NSString* name=@"New folder";NSUInteger number=2;
+        while([names containsObject:name.lowercaseString])name=[NSString stringWithFormat:@"New folder %lu",(unsigned long)number++];
+        NSString* created=[state.store createFolderNamed:name error:&error];
+        if(!created){refresh(NO,error);return YES;}
+        state.historyView.search.stringValue=@"";++state.searchGeneration;
+        [state.historyView displayFolders:state.store.folders];
+        [state.historyView displayChats:state.store.chats selectedID:state.session.chat[@"id"]];
+        [state.historyView beginRenamingItem:created folder:YES];return YES;
+    }
+    [state.historyView beginRenamingItem:identifier folder:[command isEqual:@"renameFolder"]];return YES;
 }
 - (void)aiOpenCitation:(NSURL*)URL {
     if ([URL.scheme.lowercaseString isEqual:@"https"]) { [NSWorkspace.sharedWorkspace openURL:URL]; return; }

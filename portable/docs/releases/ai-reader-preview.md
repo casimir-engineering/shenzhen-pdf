@@ -185,3 +185,16 @@ region, pixel dimensions and a clickable page citation. Rendering always uses
 original colors independently of the reader theme. Four recent images and
 9 MiB total PNG bytes can be included in one request; unavailable/omitted images
 are identified explicitly. Text-only models are not silently replaced.
+
+### Chat folders and drawing interpretation
+
+- General is the default chat folder. Drag chats onto folders; rename chats and
+  folders directly in the sidebar without an animated dialog.
+- The assistant can list saved chats, create folders and organize conversations
+  in atomic batches, with guarded Undo/Redo.
+- Chat starts with the active document context instead of blindly browsing all
+  workspace groups. Visual evidence retains a full-page overview alongside a
+  detail crop. Provider reasoning state survives tool continuations without
+  appearing in the transcript or being saved to disk.
+- Technical-drawing guidance distinguishes alternate component positions and
+  dimension endpoints from table values such as travel to closure.

@@ -1,9 +1,15 @@
 #import "SPDFMacAIChatStore.h"
 #import <sys/stat.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <sys/file.h>
 #import <fcntl.h>
 #import <unistd.h>
 static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.class] && [[NSUUID alloc] initWithUUIDString:value]; }
+static NSString* OrganizationRevision(NSDictionary* org) {
+    NSData* data=org ? [NSJSONSerialization dataWithJSONObject:org options:NSJSONWritingSortedKeys error:nil] : nil;
+    if(!data)return nil;unsigned char bytes[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,bytes);
+    NSMutableString* hash=[NSMutableString string];for(unsigned char byte:bytes)[hash appendFormat:@"%02x",byte];return hash;
+}
 @implementation SPDFMacAIChatStore { NSURL* _directory; }
 + (NSURL*)defaultDirectory {
     NSString* root = NSProcessInfo.processInfo.environment[@"SPDF_STATE_DIR"];
@@ -142,6 +148,7 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     id value=data.length ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
     if (![value isKindOfClass:NSMutableDictionary.class] || ![value[@"folders"] isKindOfClass:NSMutableArray.class] ||
         ![value[@"chats"] isKindOfClass:NSMutableDictionary.class])return nil;
+    if(value[@"generalCollapsed"] && ![value[@"generalCollapsed"] isKindOfClass:NSNumber.class])return nil;
     NSMutableSet* identifiers=[NSMutableSet set];
     for(id folder in value[@"folders"]) {
         if(![folder isKindOfClass:NSDictionary.class] || !ValidID(folder[@"id"]) ||
@@ -189,16 +196,21 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     name=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     return name.length && name.length<=160 ? name : nil;
 }
-- (NSArray<NSDictionary*>*)folders {return [[self organization][@"folders"] copy] ?: @[];}
+- (NSArray<NSDictionary*>*)folders {
+    NSDictionary* org=[self organization]; if(!org)return @[];
+    NSMutableArray* folders=[NSMutableArray arrayWithObject:@{@"id":@"",@"name":@"General",@"system":@YES,
+        @"collapsed":org[@"generalCollapsed"] ?: @NO}];
+    [folders addObjectsFromArray:org[@"folders"]];return folders;
+}
 - (NSString*)createFolderNamed:(NSString*)name error:(NSError**)error {
-    name=[self cleanName:name];if(!name)return nil;NSString* identifier=NSUUID.UUID.UUIDString;
+    name=[self cleanName:name];if(!name || [name localizedCaseInsensitiveCompare:@"General"]==NSOrderedSame)return nil;NSString* identifier=NSUUID.UUID.UUIDString;
     BOOL ok=[self editOrganization:^BOOL(NSMutableDictionary* org){
         for(NSDictionary* folder in org[@"folders"])if([folder[@"name"] localizedCaseInsensitiveCompare:name]==NSOrderedSame)return NO;
         [org[@"folders"] addObject:[@{@"id":identifier,@"name":name,@"collapsed":@NO} mutableCopy]];return YES;
     } error:error];return ok ? identifier : nil;
 }
 - (BOOL)renameFolder:(NSString*)identifier name:(NSString*)name error:(NSError**)error {
-    name=[self cleanName:name];if(!name)return NO;
+    name=[self cleanName:name];if(!name || [name localizedCaseInsensitiveCompare:@"General"]==NSOrderedSame)return NO;
     return [self editOrganization:^BOOL(NSMutableDictionary* org){
         for(NSDictionary* folder in org[@"folders"])if(![folder[@"id"] isEqual:identifier] && [folder[@"name"] localizedCaseInsensitiveCompare:name]==NSOrderedSame)return NO;
         for(NSMutableDictionary* folder in org[@"folders"])if([folder[@"id"] isEqual:identifier]){folder[@"name"]=name;return YES;}return NO;
@@ -215,6 +227,7 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
 }
 - (BOOL)setFolder:(NSString*)folderID collapsed:(BOOL)collapsed error:(NSError**)error {
     return [self editOrganization:^BOOL(NSMutableDictionary* org){
+        if(!folderID.length){org[@"generalCollapsed"]=@(collapsed);return YES;}
         for(NSMutableDictionary* folder in org[@"folders"])if([folder[@"id"] isEqual:folderID]){folder[@"collapsed"]=@(collapsed);return YES;}return NO;
     } error:error];
 }
@@ -340,5 +353,63 @@ static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.clas
     NSMutableDictionary* org=[self organization];
     if(ok && org){[org[@"chats"] removeAllObjects];ok=[self writeOrganization:org error:error];}
     flock(fd,LOCK_UN); close(fd); return ok;
+}
+
+- (NSDictionary*)organizationSnapshot {
+    NSDictionary* org=[self organization];return org ? @{@"state":org,@"revision":OrganizationRevision(org)} : nil;
+}
+- (NSDictionary*)organizeChats:(NSArray*)operations expectedRevision:(NSString*)revision progress:(NSProgress*)progress error:(NSError**)error {
+    if(![operations isKindOfClass:NSArray.class] || !operations.count || operations.count>200 || ![revision isKindOfClass:NSString.class])return nil;
+    __block NSDictionary* receipt=nil;
+    BOOL ok=[self editOrganization:^BOOL(NSMutableDictionary* org){
+        if(progress.cancelled || ![OrganizationRevision(org) isEqual:revision])return NO;
+        NSDictionary* before=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:org options:0 error:nil] options:0 error:nil];
+        for(id op in operations) {
+            if(![op isKindOfClass:NSDictionary.class] || progress.cancelled)return NO;
+            NSString* kind=op[@"operation"],*name=[self cleanName:op[@"name"]];
+            NSString* identifier=op[@"chatID"],*folderID=op[@"folderID"];
+            if([kind isEqual:@"create_folder"]) {
+                if(!name || [name localizedCaseInsensitiveCompare:@"General"]==NSOrderedSame)return NO;
+                for(NSDictionary* folder in org[@"folders"])if([folder[@"name"] localizedCaseInsensitiveCompare:name]==NSOrderedSame)return NO;
+                [org[@"folders"] addObject:[@{@"id":NSUUID.UUID.UUIDString,@"name":name,@"collapsed":@NO} mutableCopy]];
+            } else if([kind isEqual:@"move_chat"] || [kind isEqual:@"rename_chat"]) {
+                if(![self organizationChatExists:identifier])return NO;
+                NSMutableDictionary* metadata=org[@"chats"][identifier] ?: [NSMutableDictionary dictionary];
+                if([kind isEqual:@"rename_chat"]) {
+                    if(!name)return NO;metadata[@"title"]=name;metadata[@"customTitle"]=@YES;
+                } else {
+                    if(op[@"folderName"]) {
+                        NSString* wanted=[self cleanName:op[@"folderName"]];if(!wanted)return NO;folderID=nil;
+                        if([wanted localizedCaseInsensitiveCompare:@"General"]==NSOrderedSame)folderID=@"";
+                        for(NSDictionary* folder in org[@"folders"])if([folder[@"name"] localizedCaseInsensitiveCompare:wanted]==NSOrderedSame)folderID=folder[@"id"];
+                    }
+                    BOOL found=[folderID isKindOfClass:NSString.class] && !folderID.length;
+                    for(NSDictionary* folder in org[@"folders"])if([folder[@"id"] isEqual:folderID])found=YES;
+                    if(!found)return NO;metadata[@"folder"]=folderID;
+                }
+                org[@"chats"][identifier]=metadata;
+            } else if([kind isEqual:@"rename_folder"]) {
+                if(!name || !ValidID(folderID) || [name localizedCaseInsensitiveCompare:@"General"]==NSOrderedSame)return NO;
+                BOOL found=NO;
+                for(NSMutableDictionary* folder in org[@"folders"]) {
+                    if(![folder[@"id"] isEqual:folderID] && [folder[@"name"] localizedCaseInsensitiveCompare:name]==NSOrderedSame)return NO;
+                    if([folder[@"id"] isEqual:folderID]){folder[@"name"]=name;found=YES;}
+                }
+                if(!found)return NO;
+            } else return NO;
+        }
+        if(progress.cancelled)return NO;
+        receipt=@{@"before":before,@"after":OrganizationRevision(org)};return YES;
+    } error:error];
+    if(!ok && error && !*error)*error=[NSError errorWithDomain:@"ShenzhenPDF.Chat" code:6 userInfo:@{NSLocalizedDescriptionKey:@"Chat folders changed or an operation is invalid. List chats again before retrying; nothing was changed."}];
+    return ok ? receipt : nil;
+}
+- (NSDictionary*)swapOrganizationReceipt:(NSDictionary*)receipt progress:(NSProgress*)progress error:(NSError**)error {
+    __block NSDictionary* reverse=nil;
+    BOOL ok=[self editOrganization:^BOOL(NSMutableDictionary* org){
+        if(progress.cancelled || ![OrganizationRevision(org) isEqual:receipt[@"after"]] || ![receipt[@"before"] isKindOfClass:NSDictionary.class])return NO;
+        NSDictionary* current=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:org options:0 error:nil] options:0 error:nil];
+        [org setDictionary:receipt[@"before"]];reverse=@{@"before":current,@"after":OrganizationRevision(org)};return !progress.cancelled;
+    } error:error];return ok ? reverse : nil;
 }
 @end
