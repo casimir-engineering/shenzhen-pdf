@@ -1,4 +1,6 @@
 #import "SPDFMacAIChatView.h"
+#import "SPDFMacAIAnswerCard.h"
+#import "SPDFMacAIAnswerCardView.h"
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacAIChatMarkdown.h"
@@ -452,7 +454,10 @@
         for(NSUInteger i=first;i<visibleMessages.count;i++) {
             NSDictionary* message=visibleMessages[i];
             if([message[@"role"] isEqual:@"preview"])[self addPreview:message[@"preview"]];
-            else [self addText:message[@"content"] role:[message[@"role"] isEqual:@"user"] ? @"You" : @"Assistant"];
+            else if (SPDFMacAIValidatedAnswerCard(message[@"answerCard"],session.chat)) {
+                NSView* card=[[SPDFMacAIAnswerCardView alloc] initWithCard:message[@"answerCard"] width:NSWidth(self.bounds)-48 openLink:self.openLink];
+                [_messages addArrangedSubview:card]; [card.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
+            } else [self addText:message[@"content"] role:[message[@"role"] isEqual:@"user"] ? @"You" : @"Assistant"];
         }
     }
     [_chatFind updateQuery:_chatSearch.stringValue];

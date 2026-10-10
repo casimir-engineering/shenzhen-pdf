@@ -98,6 +98,18 @@ Page-only citations remain available for diagrams and other visual evidence.
 Changed or unavailable sources produce an explanation instead of navigating to
 an unverified passage. Source links contain opaque document IDs, not local paths.
 
+Brief results can appear as pastel answer cards: a small descriptive label, a
+large number, range or short phrase, and **View evidence**. The button opens the
+verified source through the same citation navigation. Card text is selectable,
+searchable and saved with the conversation. The assistant uses ordinary prose
+when essential qualifications need more space.
+
+The in-reader `present_answer` tool accepts `label` (up to 80 characters), `value`
+(up to 48 characters, including units), and an exact retrieved `citation` URL.
+It must be called alone after evidence retrieval and ends the answer immediately,
+without an extra model round. Unverified citations and oversized/multiline values
+return a tool error. This is a chat presentation tool, not a CLI/MCP command.
+
 For drawings, dimensions, scans and tables, the assistant can request the actual
 page pixels with `render_page`, then zoom into a region for small details. The
 image is both shown in chat and sent to the selected model. This needs a model

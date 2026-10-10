@@ -829,7 +829,7 @@ mac-ai-transport-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAITransportTests.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICredentials.mm mac/SPDFMacAISettings.mm mac/SPDFMacAIOpenRouterAuth.mm -framework Foundation -framework Security -framework LocalAuthentication -o "$(BUILD)/SPDFMacAITransportTests"
 	"$(BUILD)/SPDFMacAITransportTests"
 mac-ai-chat-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatSessionTests.mm mac/SPDFMacAIChatSession.mm mac/SPDFMacAIChatVision.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICitations.mm -framework Cocoa -framework ImageIO -o "$(BUILD)/SPDFMacAIChatSessionTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatSessionTests.mm mac/SPDFMacAIChatSession.mm mac/SPDFMacAIAnswerCard.mm mac/SPDFMacAIChatVision.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICitations.mm -framework Cocoa -framework ImageIO -o "$(BUILD)/SPDFMacAIChatSessionTests"
 	"$(BUILD)/SPDFMacAIChatSessionTests"
 mac-unified-settings-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacUnifiedSettingsTests.mm mac/SPDFMacUnifiedSettings.mm mac/SPDFMacSearchablePicker.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm -framework Cocoa -o "$(BUILD)/SPDFMacUnifiedSettingsTests"

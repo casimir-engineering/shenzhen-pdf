@@ -37,6 +37,7 @@ static int failures;
 #import "SPDFMacAIChatVisionChecks.h"
 #import "SPDFMacAIReasoningChecks.h"
 #import "SPDFMacAICitationRecoveryChecks.h"
+#import "SPDFMacAIAnswerCardChecks.h"
 int main(void) { @autoreleasepool {
     NSURL* citation=[NSURL URLWithString:@"spdf-ai://document?path=doc:fixture&page=2&revision=abc"];
     NSDictionary* arguments=SPDFMacAICitationArguments(citation);
@@ -53,6 +54,7 @@ int main(void) { @autoreleasepool {
     CheckChatCompletion([snapshotRoot URLByAppendingPathComponent:@"completion"]);
     CheckChatVision([snapshotRoot URLByAppendingPathComponent:@"vision"]);
     CheckReasoning([snapshotRoot URLByAppendingPathComponent:@"reasoning"]);
+    CheckAnswerCards([snapshotRoot URLByAppendingPathComponent:@"answer-cards"]);
     CheckCitationRecovery([snapshotRoot URLByAppendingPathComponent:@"citation-recovery"]);
     [NSFileManager.defaultManager removeItemAtURL:snapshotRoot error:nil];
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
