@@ -29,6 +29,7 @@ static int failures;
 - (BOOL)canUndo { return self.calls>0; }
 - (BOOL)undoLastAction:(NSError**)error { (void)error; return YES; }
 @end
+#import "SPDFMacAIChatSnapshotChecks.h"
 int main(void) { @autoreleasepool {
     NSURL* citation=[NSURL URLWithString:@"spdf-ai://document?path=doc:fixture&page=2&revision=abc"];
     NSDictionary* arguments=SPDFMacAICitationArguments(citation);
@@ -38,6 +39,11 @@ int main(void) { @autoreleasepool {
     CHECK(SPDFMacAIChatContainsCitation(cited,arguments),"retrieved citation is clickable");
     CHECK(!SPDFMacAIChatContainsCitation(@{@"messages":@[@{@"role":@"assistant",@"content":citation.absoluteString}]},arguments),"model-fabricated citation is not evidence");
     NSURL* root=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
+    NSURL* snapshotRoot=[root URLByAppendingPathExtension:@"snapshots"];
+    CheckChatSnapshots(snapshotRoot);
+    CheckStoreSnapshot([snapshotRoot URLByAppendingPathComponent:@"store"]);
+    CheckSessionConflict([snapshotRoot URLByAppendingPathComponent:@"conflict"]);
+    [NSFileManager.defaultManager removeItemAtURL:snapshotRoot error:nil];
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     FakeTransport* transport=[FakeTransport new]; FakeTools* tools=[FakeTools new];
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
@@ -46,7 +52,7 @@ int main(void) { @autoreleasepool {
     [session send:@"Explain this document" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
     CHECK(transport.sends==1 && session.running,"explicit send starts request");
     void (^late)(NSDictionary*,NSError*)=transport.reply;
-    [session cancel]; late(@{@"role":@"assistant",@"content":@"late"},nil);
+    [session cancel]; CHECK(session.activityState==SPDFMacAIChatActivityStopped,"cancel reports stopped"); late(@{@"role":@"assistant",@"content":@"late"},nil);
     CHECK([session.chat[@"messages"] count]==1,"cancel discards late assistant response");
     [session send:@"Read page 1" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
     transport.reply(@{@"role":@"assistant",@"content":@"",@"tool_calls":@[
