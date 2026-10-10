@@ -1,3 +1,4 @@
+#import "SPDFMacAIChatSearch.h"
 #import "SPDFMacAIIntegration.h"
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacAICitations.h"
@@ -220,7 +221,15 @@ static char stateKey;
     if ([action isEqual:@"history"]) { [self showAIChats:nil]; return; }
     if ([action hasPrefix:@"load:"]) {
         NSDictionary* chat=[state.store chatWithID:[action substringFromIndex:5]];
-        if (chat) { state.drafts[state.session.chat[@"id"]]=[state.view.composer.string copy] ?: @""; [state.session loadChat:chat];state.view.composer.string=state.drafts[chat[@"id"]] ?: @"";[self showAIChatForQuery:nil]; } return;
+        if (chat) {
+            NSString* query=[state.historyView.search.stringValue copy];
+            state.drafts[state.session.chat[@"id"]]=[state.view.composer.string copy] ?: @"";
+            [state.session loadChat:chat];state.view.composer.string=state.drafts[chat[@"id"]] ?: @"";
+            [self showAIChatForQuery:nil];
+            // A history content match should land at its evidence, not at the
+            // newest reply. Title-only matches still open the full conversation.
+            [state.view setChatSearchQuery:SPDFMacAIChatHasTextMatch(chat,query) ? query : @""];
+        } return;
     }
     if ([action isEqual:@"deleteAll"] || [action hasPrefix:@"delete:"]) {
         NSAlert* alert=[NSAlert new]; alert.messageText=[action isEqual:@"deleteAll"] ? @"Delete all chats?" : @"Delete this chat?";

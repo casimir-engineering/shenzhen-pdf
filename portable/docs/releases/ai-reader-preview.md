@@ -207,3 +207,14 @@ are identified explicitly. Text-only models are not silently replaced.
 - The chat prompt requires answers to address the requested quantity, inspect
   readable diagram evidence before requesting more crops, and check general
   notes and tolerances instead of substituting a nearby table specification.
+
+### Chat reliability and search
+
+- Search within a chat scrolls to the matching passage and highlights it.
+  Return moves to the next occurrence; Shift-Return goes to the previous one.
+  Opening a message-content result from chat history reveals its passage too.
+- Truncated model responses get one bounded retry with more output room.
+  Incomplete tool actions are never executed, Stop remains available, and empty
+  answers no longer appear as successful completions.
+- The assistant distinguishes movement from the full swept envelope when the
+  user's question concerns a clearance or enclosure opening.
