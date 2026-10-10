@@ -89,6 +89,10 @@ int main(void) { @autoreleasepool {
     [window.contentView layoutSubtreeIfNeeded];
     [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]]; [window.contentView layoutSubtreeIfNeeded];
     Check(NSHeight(answer.frame)>wide,@"message height reflows at narrower width");
+    NSRange finalGlyph=NSMakeRange(answer.layoutManager.numberOfGlyphs-1,1);
+    NSRect finalLine=[answer.layoutManager boundingRectForGlyphRange:finalGlyph inTextContainer:answer.textContainer];
+    Check([answer.string hasSuffix:@"next message."] && NSMaxY(finalLine)<=NSHeight(answer.bounds)+.5,
+        @"compact measurement preserves the final line of long wrapped prose");
     Check(InspectTargets(view)>=10,@"all narrow chat header controls tested at visible corners");
     NSScrollView* transcript=[view valueForKey:@"scroll"];
     NSView* label=messages.arrangedSubviews.firstObject;
@@ -180,6 +184,13 @@ int main(void) { @autoreleasepool {
         @{@"role":@"assistant",@"content":@"Which document should I use: **Power supply** or **Board layout**?"}]};
     fixture.activityState=SPDFMacAIChatActivityCompleted; fixture.activityDetail=@"Waiting for your next message.";
     [view displaySession:(id)fixture]; Capture(view,@"question");
+    NSTextView* compact=(id)messages.arrangedSubviews[1];
+    NSView* nextRole=messages.arrangedSubviews[2];
+    NSRect bodyRect=[compact convertRect:compact.bounds toView:transcript.documentView];
+    NSRect nextRect=[nextRole.superview convertRect:[nextRole alignmentRectForFrame:nextRole.frame] toView:transcript.documentView];
+    Check(NSHeight(compact.frame)<=24 && NSMinY(nextRect)-NSMaxY(bodyRect)>=15 && NSMinY(nextRect)-NSMaxY(bodyRect)<=20,
+        @"short messages use compact measured rows and consistent16–20point separation");
+    Check([compact.string hasSuffix:@"Board layout?"] && ![compact.string hasSuffix:@"\n"],@"only renderer-added terminal blank lines are removed");
     Check(InspectTargets(view)>=14,@"minimum-height chat keeps every header and footer action reachable");
     Check(NSHeight(transcript.frame)>80 && NSContainsRect(view.bounds,view.composer.enclosingScrollView.frame),@"minimum-height chat keeps transcript and composer usable");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Ready for your reply"] && send.enabled,@"finished question explicitly invites the user’s reply");
@@ -190,6 +201,13 @@ int main(void) { @autoreleasepool {
     [view displaySession:(id)fixture]; Capture(view,@"error");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Error"] &&
         [[(NSTextField*)Find(view,@"chatActivityDetail") stringValue] containsString:@"another window"],@"error heading and recovery detail remain visible");
+    view.composer.string=@"Please summarize this document.";
+    [view showSubmissionError:@"macOS blocked the saved OpenRouter key. Authorize access to send this message." recoveryAction:@"authorize"];
+    Capture(view,@"authorize-minimum");
+    NSView* issue=Find(view,@"chatSubmissionIssue");
+    Check(NSContainsRect(view.bounds,issue.frame) && NSContainsRect(view.bounds,view.composer.enclosingScrollView.frame) &&
+        NSHeight(transcript.frame)>20 && InspectTargets(view)>=16,@"authorization recovery and preserved draft fit at520×400");
+    [view showSubmissionError:nil]; view.composer.string=@"";
     fixture.chat=@{@"id":@"question",@"messages":@[
         @{@"role":@"user",@"content":@"Use the board layout."},
         @{@"role":@"assistant",@"content":@"Updated answer with the requested document."}]};

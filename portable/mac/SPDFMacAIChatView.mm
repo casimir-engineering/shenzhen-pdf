@@ -46,7 +46,7 @@
     self.textContainer.containerSize=NSMakeSize(MAX(1,size.width),CGFLOAT_MAX);
     [self.layoutManager invalidateLayoutForCharacterRange:NSMakeRange(0,self.string.length) actualCharacterRange:nil];
     [self.layoutManager ensureLayoutForTextContainer:self.textContainer];
-    CGFloat h=MAX(24,ceil([self.layoutManager usedRectForTextContainer:self.textContainer].size.height)+8);
+    CGFloat h=MAX(18,ceil(NSMaxY([self.layoutManager usedRectForTextContainer:self.textContainer])));
     if(fabs(h-self.contentHeight.constant)>.5) { self.contentHeight.constant=h; self.superview.needsLayout=YES; }
     self.measuring=NO;
 }
@@ -259,18 +259,22 @@
 - (void)addText:(NSString*)text role:(NSString*)role {
     NSTextField* label=SPDFCollectionText(role,11,NSFontWeightSemibold,YES); [_messages addArrangedSubview:label];
     BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
-    NSAttributedString* safe=SPDFMacAIChatMarkdown(text,MAX(240,self.bounds.size.width-48),dark);
+    NSMutableAttributedString* safe=[SPDFMacAIChatMarkdown(text,MAX(240,self.bounds.size.width-48),dark) mutableCopy];
+    // The document renderer terminates blocks with newlines. A chat row already
+    // owns its inter-message spacing, so a final blank paragraph must not add it again.
+    while(safe.length && [NSCharacterSet.newlineCharacterSet characterIsMember:[safe.string characterAtIndex:safe.length-1]])
+        [safe deleteCharactersInRange:NSMakeRange(safe.length-1,1)];
     SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(240,self.bounds.size.width-48),40)];
     view.verticallyResizable=NO; view.horizontallyResizable=NO;
     view.editable=NO; view.selectable=YES; view.drawsBackground=NO; view.delegate=self;
     view.textContainerInset=NSZeroSize; view.textContainer.lineFragmentPadding=0;
     view.textContainer.widthTracksTextView=YES; [view.textStorage setAttributedString:safe];
     [view.layoutManager ensureLayoutForTextContainer:view.textContainer];
-    CGFloat height=ceil([view.layoutManager usedRectForTextContainer:view.textContainer].size.height)+8;
+    CGFloat height=ceil(NSMaxY([view.layoutManager usedRectForTextContainer:view.textContainer]));
     view.translatesAutoresizingMaskIntoConstraints=NO; [_messages addArrangedSubview:view];
     [view.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
-    view.contentHeight=[view.heightAnchor constraintEqualToConstant:MAX(24,height)]; view.contentHeight.active=YES;
-    [_messages setCustomSpacing:20 afterView:view];
+    view.contentHeight=[view.heightAnchor constraintEqualToConstant:MAX(18,height)]; view.contentHeight.active=YES;
+    [_messages setCustomSpacing:16 afterView:view];
 }
 - (void)addPreview:(NSDictionary*)preview {
     if(![preview isKindOfClass:NSDictionary.class]) return;
@@ -322,7 +326,7 @@
     if(state==SPDFMacAIChatActivityThinking) title=@"Thinking…";
     else if(state==SPDFMacAIChatActivityWorking) title=@"Working on your documents";
     else if(state==SPDFMacAIChatActivityCompleted) title=@"Complete · Ready for your reply";
-    else if(state==SPDFMacAIChatActivityError) title=@"Error · Ready to retry";
+    else if(state==SPDFMacAIChatActivityError) title=@"Error · Review the details";
     else if(state==SPDFMacAIChatActivityStopped) title=@"Stopped · Ready for your next message";
     _status.stringValue=issueVisible ? @"Message not sent" : title;
     _activityDetail.stringValue=issueVisible ? _submissionError : session.activityDetail.length ? session.activityDetail : fallback;
