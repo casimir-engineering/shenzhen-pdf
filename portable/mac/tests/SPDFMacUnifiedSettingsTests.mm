@@ -97,7 +97,16 @@ int main(void) { @autoreleasepool {
     Check([selected isEqual:@"three/beta"],@"model dropdown arrows and Return choose exact model");
     query.stringValue=@"one/"; [filterProbe refreshChoices];
     Check([[filterProbe valueForKey:@"filtered"] count]==1,@"model dropdown searches provider IDs");
+    query.stringValue=@""; filterProbe.selectedID=@"three/beta"; [filterProbe refreshChoices];
+    selected=nil; [filterProbe control:query textView:nil doCommandBySelector:@selector(insertNewline:)];
+    Check([selected isEqual:@"three/beta"],@"opening model list and pressing Return preserves the current choice");
     Check([filterProbe control:query textView:nil doCommandBySelector:@selector(cancelOperation:)],@"Escape dismisses model dropdown without committing");
+    filterProbe.choices=@[]; query.stringValue=@"typed while loading";
+    for(NSString* message in @[@"Loading models…",@"Could not load models. Open the list to retry."]) {
+        filterProbe.emptyMessage=message; [filterProbe refreshChoices];
+        NSTextField* feedback=(id)[(id<NSTableViewDelegate>)filterProbe tableView:table viewForTableColumn:table.tableColumns.firstObject row:0];
+        Check([feedback.stringValue isEqual:message],@"typed model query preserves loading and failure feedback");
+    }
     Check(Find(controller.window.contentView,@"saveCredential")==nil,@"API key alternative is initially hidden");
     [(NSButton*)Find(controller.window.contentView,@"revealKey") performClick:nil];
     NSSecureTextField* editingKey=[controller valueForKey:@"secret"];
@@ -185,6 +194,17 @@ int main(void) { @autoreleasepool {
     [storage selectItemAtIndex:1]; [NSApp sendAction:storage.action to:storage.target from:storage];
     Check([wizardChange[@"collectionStorageMode"] isEqual:@"static"] && [wizardChange[@"collectionStorageGiB"] doubleValue]>0,@"static selection persists a positive initial budget atomically");
     Check([(NSTextField*)Find(wizard.window.contentView,@"collectionStorageGiB") doubleValue]>0,@"static amount matches a positive actual limit");
+    NSTextField* limit=(id)Find(wizard.window.contentView,@"collectionStorageGiB"); double priorLimit=limit.doubleValue;
+    for(NSString* invalid in @[@"",@"oops",@"10oops",@"-5",@"0",@"nan",@"1000001"]) {
+        wizardChange=nil; limit.stringValue=invalid; [NSApp sendAction:limit.action to:limit.target from:limit];
+        Check(wizardChange==nil && limit.doubleValue==priorLimit,@"invalid storage input never changes the saved budget");
+        Check(!Find(wizard.window.contentView,@"storageValidation").hidden,@"invalid storage input explains the unchanged limit");
+    }
+    limit.stringValue=@"12.5"; [NSApp sendAction:limit.action to:limit.target from:limit];
+    Check([wizardChange[@"collectionStorageGiB"] doubleValue]==12.5 && Find(wizard.window.contentView,@"storageValidation").hidden,@"valid storage input saves and clears validation");
+    [wizard updateState:@{@"collectionBudgetText":@"Moving Collection…",@"collectionLocation":@"/Volumes/Archive/Collection"}];
+    Check([[(NSTextField*)Find(wizard.window.contentView,@"collectionBudgetText") stringValue] isEqual:@"Moving Collection…"],@"relocation progress refreshes in place");
+    Check([[(NSTextField*)Find(wizard.window.contentView,@"collectionLocation") stringValue] isEqual:@"/Volumes/Archive/Collection"],@"relocation destination refreshes in place");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
     Check(Find(wizard.window.contentView,@"autoAnalyze")==nil && Find(wizard.window.contentView,@"aiEnabled")==nil,@"wizard contains connection and model only");
     NSTextField* disclosure=(id)Find(wizard.window.contentView,@"aiUploadDisclosure");
@@ -196,6 +216,11 @@ int main(void) { @autoreleasepool {
     Check(Find(wizard.window.contentView,@"defaultReader:pdf")!=nil && Find(wizard.window.contentView,@"defaultReader:epub")!=nil,@"defaults are separate per format");
     [(NSButton*)Find(wizard.window.contentView,@"defaultReader:epub") performClick:nil];
     Check([wizardAction isEqual:@"defaultReader:epub"],@"default format routes independently");
+    NSSearchField* formats=(id)Find(wizard.window.contentView,@"formatSearch"); formats.stringValue=@"unknown format";
+    [wizard controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:formats]];
+    Check(Find(wizard.window.contentView,@"noMatchingFormats")!=nil,@"unmatched file-type search gives explicit feedback");
+    formats.stringValue=@".pdf"; [wizard controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:formats]];
+    Check(Find(wizard.window.contentView,@"defaultReader:pdf")!=nil && Find(wizard.window.contentView,@"noMatchingFormats")==nil,@"file-type search accepts a dotted extension");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
     Check([wizardAction isEqual:@"wizardDone"] && !wizard.window.visible,@"wizard Done closes instead of opening settings");
     Check(!controller.window.visible,@"verification never shows a window");

@@ -47,14 +47,25 @@
         if(!query.length || [words localizedCaseInsensitiveContainsString:query]) [matches addObject:choice];
     }
     self.filtered=matches; [self.table reloadData];
-    if(matches.count) [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+    if(matches.count) {
+        NSUInteger selected=0;
+        if(!query.length) for(NSUInteger i=0;i<matches.count;i++)
+            if([matches[i][@"id"] isEqual:self.selectedID]) { selected=i; break; }
+        [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:selected] byExtendingSelection:NO];
+        [self.table scrollRowToVisible:(NSInteger)selected];
+    }
     [self setSelectedID:self.selectedID];
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView*)table { (void)table; return MAX((NSUInteger)1,self.filtered.count); }
 - (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
     (void)table; (void)column;
     NSTextField* label=[NSTextField wrappingLabelWithString:@""];
-    if(!self.filtered.count) { label.stringValue=self.search.stringValue.length ? @"No matching models" : (self.emptyMessage ?: @"No models available"); label.textColor=NSColor.secondaryLabelColor; return label; }
+    if(!self.filtered.count) {
+        // A typed query must not disguise a loading/failed catalogue as a search miss.
+        label.stringValue=self.choices.count && self.search.stringValue.length ? @"No matching models" :
+            (self.emptyMessage ?: @"No models available");
+        label.textColor=NSColor.secondaryLabelColor; return label;
+    }
     NSDictionary* choice=self.filtered[(NSUInteger)row];
     NSString* name=choice[@"name"] ?: choice[@"id"];
     NSMutableAttributedString* text=[[NSMutableAttributedString alloc] initWithString:name attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]}];
