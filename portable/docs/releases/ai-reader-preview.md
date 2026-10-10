@@ -230,3 +230,8 @@ are identified explicitly. Text-only models are not silently replaced.
   citation, without another answer-generation request.
 - Reopened chats omit empty intermediate tool messages instead of showing blank
   Assistant bubbles. Saved answers and source previews remain available.
+
+- Sparse PDF/image page reads now include a bounded visual preview, preventing
+  title-block text from being presented as the complete page. The tool labels
+  text-only coverage and other sparse pages requiring inspection. This runs
+  only during an explicit assistant read, with no launch or document-open work.

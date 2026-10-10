@@ -125,6 +125,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
 #import "SPDFMacAIPageToolChecks.h"
+#import "SPDFMacAISparsePageChecks.h"
 #import "SPDFMacAIChatFolderToolChecks.h"
 #import "SPDFMacAICitationNavigationChecks.h"
 #import "SPDFMacAICollectionRenameChecks.h"
@@ -176,6 +177,9 @@ int main(void) { @autoreleasepool {
     progress=[NSProgress progressWithTotalUnitCount:1];
     PageRegionChecks(root);
     CheckPageImageTool(path);
+    CheckSparsePageRead(path,root); CheckSparsePageBudgets(path);
+    NSString* replay=NSProcessInfo.processInfo.environment[@"SPDF_SPARSE_READ_REPLAY"];
+    if (replay.length) CheckSparsePageRead(replay,root);
     NSDictionary* preview=SPDFAIPagePreview(path,NO,1,progress,&error);
     Check(preview && [NSData dataWithContentsOfFile:preview[@"path"]].length>0,"trusted preview generated");
     [NSFileManager.defaultManager removeItemAtPath:[preview[@"path"] stringByDeletingLastPathComponent] error:nil];
@@ -230,6 +234,7 @@ int main(void) { @autoreleasepool {
     while (!result && deadline.timeIntervalSinceNow>0) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Check(result && !result[@"error"] && [result[@"path"] isEqual:SPDFAIDocumentIdentifier(path)],"opaque ID resolves to authorized document");
     Check([result[@"pages"][0][@"citation"] containsString:@"doc:"],"citation URL contains opaque ID");
+    [SPDFMacAIChatStore discardTemporaryPreview:result[@"_localPreview"]];
     NSMutableDictionary* navigationCandidate=[candidate mutableCopy]; navigationCandidate[@"path"]=markdown;
     navigationCandidate[@"title"]=markdown.lastPathComponent; reader.testCandidates=@[navigationCandidate.copy];
     result=nil;

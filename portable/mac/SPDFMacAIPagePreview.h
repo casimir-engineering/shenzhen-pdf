@@ -15,3 +15,7 @@ NSDictionary* SPDFAIPagePreviewWithOptions(NSString* path, BOOL landscape, NSUIn
     NSDictionary* options, NSProgress* progress, NSError** error);
 NSDictionary* SPDFAIPagePreviewForCandidateWithOptions(NSDictionary* candidate, NSUInteger page,
     NSDictionary* options, NSProgress* progress, NSError** error);
+
+// Explicit read_pages only: supplement sparse fixed-layout text with at most
+// one bounded preview. Never invoked by launch, document open or background indexing.
+void SPDFAISupplementSparsePageRead(NSMutableDictionary* result, NSDictionary* candidate, NSProgress* progress);
