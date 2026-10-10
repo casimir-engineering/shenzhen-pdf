@@ -99,3 +99,34 @@ sidebar navigation/workspace; workspace panel policy; launch-work policy; update
 (32 cases); source-size ratchet and whitespace checks. The old session failed
 nine new boundary/title assertions; the corrected session passes. Provider
 responses were deterministic fixtures, including distinct title requests.
+
+## Reopening regression and chronological order
+
+A subsequent user screenshot showed the underlying blank-bubble failure was
+still present in populated conversations. An empty-state replacement did not
+address that failure. A production-dock probe reproduced the missing lifecycle:
+hide the chat (width becomes zero), then show the same cached conversation.
+
+The message view measured at one point of available width and updated its height
+constraint inside `setFrameSize:` while NSStackView was assigning cached frames.
+On return, constraints recovered but child frames stayed thousands of points
+high and outside the stack. The baseline failed 35 geometry assertions. Height
+measurement is now deferred/coalesced until the current layout transaction ends,
+skips hidden/zero-width views and caches measured width. The same lifecycle,
+including three hide/show cycles, narrow/wide resizing and loading another chat
+while hidden, passes with compact message frames and visible glyphs.
+
+The user's revised order is chronological: older messages above, new replies at
+the bottom. Opening a conversation and sending a question reveal the newest
+message. Replies follow the bottom while the reader is there; scrolling up keeps
+both the visible messages and their position. Loading older history prepends it
+without moving the previous first message. Local search retains chronological
+order. These behaviors have a separate long-conversation regression fixture.
+
+![Reopened chat with chronological messages, readable table and citation](images/chat-reopen-chronological.png)
+
+This image is a native offscreen fixture, not a capture of the running app.
+Final chat-view, document-context, analysis, session, sidebar, launch-policy and
+updater checks passed, alongside source-size and whitespace checks. Independent
+code review found no blocking or medium issues in the corrected lifecycle and
+scroll behavior. No live provider request or user-app restart was used.

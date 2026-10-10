@@ -86,7 +86,7 @@ The chat toolbar offers **Hide chat panel** first, then **New chat**, **Undo**,
 **Redo** and **AI settings**, aligned with the reader toolbar, with hover labels. Thinking, current-tool activity, pauses, errors,
 and readiness for your reply appear above the transcript. Your latest question
 stays visible there, and both user and assistant messages remain in the saved
-conversation, newest first. Chats are saved on this Mac. The Chats view lets you reopen a
+conversation, oldest first with new replies at the bottom. Chats are saved on this Mac. The Chats view lets you reopen a
 conversation or delete one or all conversations; deletion asks for confirmation
 and removes transcripts and their saved page previews, not documents or
 Collection history. Answers render Markdown and can include local page previews

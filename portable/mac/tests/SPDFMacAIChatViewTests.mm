@@ -67,8 +67,12 @@ static void Click(NSWindow* window,NSButton* button,NSPoint local) {
     method_exchangeImplementations(original,injected); [hit mouseDown:down]; method_exchangeImplementations(original,injected);
 }
 #import "SPDFMacAIChatDockChecks.h"
+#import "SPDFMacAIChatReopenChecks.h"
+#import "SPDFMacAIChatOrderChecks.h"
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
+    RunChatReopenChecks();
+    RunChatOrderChecks();
     NSAttributedString* safe=SPDFMacAIChatMarkdown(@"**Evidence** [page](spdf-ai://document?path=test&page=2) [site](https://example.com) [unsafe](file:///tmp/private) ![hidden](file:///tmp/private.png) ![remote](https://example.com/tracker.png)",500,YES);
     __block NSUInteger links=0,attachments=0;
     [safe enumerateAttributesInRange:NSMakeRange(0,safe.length) options:0 usingBlock:^(NSDictionary* a,NSRange r,BOOL* stop){
@@ -85,8 +89,8 @@ int main(void) { @autoreleasepool {
     ]};
     [view displaySession:(id)fixture]; [window.contentView layoutSubtreeIfNeeded];
     NSStackView* messages=[view valueForKey:@"messages"];
-    NSTextView* answer=(id)messages.arrangedSubviews[1]; CGFloat wide=NSHeight(answer.frame);
-    Check([answer.string hasPrefix:@"Power requirements"],@"latest assistant response appears first");
+    NSTextView* answer=(id)messages.arrangedSubviews[3]; CGFloat wide=NSHeight(answer.frame);
+    Check([answer.string hasPrefix:@"Power requirements"],@"assistant response follows the user in chronological order");
     Check([[(NSTextField*)Find(view,@"latestUserPrompt") stringValue] containsString:@"What is the board’s power requirement?"],@"latest user question stays visible above a long answer");
     [window setContentSize:NSMakeSize(520,580)]; [window.contentView layoutSubtreeIfNeeded];
     [window.contentView layoutSubtreeIfNeeded];
@@ -98,14 +102,9 @@ int main(void) { @autoreleasepool {
         @"compact measurement preserves the final line of long wrapped prose");
     Check(InspectTargets(view)>=10,@"all narrow chat header controls tested at visible corners");
     NSScrollView* transcript=[view valueForKey:@"scroll"];
-    NSView* label=messages.arrangedSubviews.firstObject;
-    NSRect labelRect=[label.superview convertRect:[label alignmentRectForFrame:label.frame] toView:transcript.contentView];
-    NSDate* layoutDeadline=[NSDate dateWithTimeIntervalSinceNow:.2];
-    while(!NSContainsRect(transcript.contentView.bounds,labelRect) && layoutDeadline.timeIntervalSinceNow>0) {
-        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]]; [view layoutSubtreeIfNeeded];
-        labelRect=[label.superview convertRect:[label alignmentRectForFrame:label.frame] toView:transcript.contentView];
-    }
-    Check(NSContainsRect(transcript.contentView.bounds,labelRect),@"first message label fully visible after narrow reflow");
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]]; [view layoutSubtreeIfNeeded];
+    Check(fabs(NSMaxY(transcript.contentView.bounds)-NSHeight(transcript.documentView.bounds))<2,
+        @"newest message bottom stays visible after narrow reflow");
     NSTextField* question=(id)Find(view,@"latestUserPrompt");
     Check(NSContainsRect(view.bounds,[question convertRect:question.bounds toView:view]) &&
         NSMaxY([question convertRect:question.bounds toView:view])<=NSMinY(transcript.frame),@"question context fits above the transcript without overlap at minimum width");
@@ -118,6 +117,7 @@ int main(void) { @autoreleasepool {
     if(citationRange.location!=NSNotFound) {
         NSRange glyph=[answer.layoutManager glyphRangeForCharacterRange:NSMakeRange(citationRange.location,1) actualCharacterRange:nil];
         NSRect rect=[answer.layoutManager boundingRectForGlyphRange:glyph inTextContainer:answer.textContainer];
+        [answer scrollRangeToVisible:citationRange];[view layoutSubtreeIfNeeded];
         NSPoint point=[answer convertPoint:NSMakePoint(NSMidX(rect)+answer.textContainerOrigin.x,NSMidY(rect)+answer.textContainerOrigin.y) toView:nil];
         Check([view hitTest:[view.superview convertPoint:point fromView:nil]]==answer,@"native citation glyph hit reaches its message view");
         __block NSURL* opened; view.openLink=^(NSURL* URL){ opened=URL; };
@@ -182,8 +182,8 @@ int main(void) { @autoreleasepool {
     for(NSString* appearance in @[NSAppearanceNameDarkAqua,NSAppearanceNameAqua]) {
         window.appearance=[NSAppearance appearanceNamed:appearance];
         [view displayChats:@[]]; [view displaySession:(id)fixture]; [view layoutSubtreeIfNeeded];
-        NSTextView* assistant=(id)messages.arrangedSubviews[1];
-        NSTextView* user=(id)messages.arrangedSubviews[3];
+        NSTextView* assistant=(id)messages.arrangedSubviews[3];
+        NSTextView* user=(id)messages.arrangedSubviews[1];
         [window.effectiveAppearance performAsCurrentDrawingAppearance:^{
             Check(![[assistant.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace]
                 isEqual:[user.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace]],@"user and assistant have distinct shades in each theme");
@@ -217,7 +217,7 @@ int main(void) { @autoreleasepool {
     NSRect nextRect=[nextRole.superview convertRect:[nextRole alignmentRectForFrame:nextRole.frame] toView:transcript.documentView];
     Check(NSHeight(compact.frame)<=40 && NSMinY(nextRect)-NSMaxY(bodyRect)>=15 && NSMinY(nextRect)-NSMaxY(bodyRect)<=20,
         @"short messages include comfortable padding and consistent16–20point separation");
-    Check([compact.string hasSuffix:@"Board layout?"] && ![compact.string hasSuffix:@"\n"],@"only renderer-added terminal blank lines are removed");
+    Check([compact.string hasSuffix:@"design notes."] && ![compact.string hasSuffix:@"\n"],@"only renderer-added terminal blank lines are removed");
     Check(InspectTargets(view)>=12,@"minimum-height chat keeps every header and footer action reachable");
     Check(NSHeight(transcript.frame)>80 && NSContainsRect(view.bounds,view.composer.enclosingScrollView.frame),@"minimum-height chat keeps transcript and composer usable");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Ready for your reply"] && send.enabled,@"finished question explicitly invites the user’s reply");
@@ -242,7 +242,7 @@ int main(void) { @autoreleasepool {
         @{@"role":@"user",@"content":@"Use the board layout."},
         @{@"role":@"assistant",@"content":@"Updated answer with the requested document."}]};
     [view displaySession:(id)fixture];
-    Check([[(NSTextView*)messages.arrangedSubviews[1] string] hasPrefix:@"Updated answer"] &&
+    Check([[(NSTextView*)messages.arrangedSubviews[3] string] hasPrefix:@"Updated answer"] &&
         [[(NSTextField*)Find(view,@"latestUserPrompt") stringValue] containsString:@"Use the board layout"],@"same-count transcript changes refresh both question context and answer");
     NSMutableArray* longMessages=[NSMutableArray array];
     for(NSUInteger i=0;i<45;i++) [longMessages addObject:@{@"role":@"user",@"content":[NSString stringWithFormat:@"Message %lu",(unsigned long)i]}];
