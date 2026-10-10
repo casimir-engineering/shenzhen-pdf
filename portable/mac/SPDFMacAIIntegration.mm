@@ -276,8 +276,8 @@ static char stateKey;
 - (void)aiOpenCitation:(NSURL*)URL {
     if ([URL.scheme.lowercaseString isEqual:@"https"]) { [NSWorkspace.sharedWorkspace openURL:URL]; return; }
     SPDFReaderAIState* state=[self readerAIState];
-    NSDictionary* args=SPDFMacAICitationArguments(URL);
-    if (!SPDFMacAIChatContainsCitation(state.session.chat,args)) {
+    NSDictionary* args=SPDFMacAIResolveCitation(state.session.chat,SPDFMacAICitationArguments(URL));
+    if (!args) {
         NSAlert* alert=[NSAlert new]; alert.messageText=@"This link has no retrieved evidence";
         alert.informativeText=@"Ask the assistant to retrieve the passage again before opening its citation.";
         [alert addButtonWithTitle:@"OK"]; [alert beginSheetModalForWindow:self->_window completionHandler:nil]; return;

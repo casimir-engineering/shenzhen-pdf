@@ -61,3 +61,34 @@ actions, plain chapter titles and untrusted-document boundaries. No answer value
 or document-specific example is embedded. Chat session/request tests pass,
 including a prompt-size ceiling and checks that the brevity rule reaches the
 provider request. This checks wiring, not a guarantee of live model compliance.
+
+## Restore evidence checks without long replies
+
+The next saved conversation exposed two different failures. The model read all
+four pages as text but rendered only the specification tables on pages 3 and 4;
+it nevertheless claimed no dimensional drawing existed. Its answer also appended
+an unretrieved Chinese search phrase to an otherwise valid page-3 citation, which
+the evidence gate correctly rejected.
+
+The revised prompt is 344 words versus the earlier 765-word version. It again
+distinguishes individual steps, total travel, component size and
+clearance envelopes; requires inspecting the relevant drawing and its arrows and
+general notes; and forbids absence claims about uninspected pages. It retains the
+1–3 sentence response default, avoids repeat crops of readable evidence, and
+requires verbatim tool citations. Metadata lookup is optional when the relevant
+page is already known. No document-specific numbers or answers are encoded.
+
+Citation handling now deterministically removes an invented highlight query only
+if the exact page, document, revision and layout already have a retrieved page
+citation. New answers are repaired before persistence; clicking the same defect
+in existing chats uses that safe page fallback. Exact retrieved text highlights
+are preserved. Unknown pages, revisions and document identities remain blocked.
+There is no additional model request, launch work or document-open work.
+
+Validation: chat tests pass; the pre-change session fails four new assertions.
+Reader acceptance tests pass, including real PDF citation navigation and search
+highlights. A read-only native replay of the reported saved chat recovers its one
+broken link. Existing constructor checks prove no network, disk or reader-context
+work at session creation. Live model accuracy and latency have not been measured;
+these tests verify prompt delivery and deterministic citation behavior, not model
+compliance. The user's running app was not launched, stopped or captured.
