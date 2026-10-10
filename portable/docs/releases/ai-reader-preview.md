@@ -1,6 +1,7 @@
 # AI reader preview
 
-- Ask questions about open documents and get answers linked to retrieved pages.
+- Ask questions about open documents; click cited sources to open the page and highlight the passage.
+- Keep chat in a separate window, pin it above the reader or all apps, and see questions, replies and work status.
 - Preview pages, organize groups, control the reader, and manage supported PDF comments.
 - Request a separate PDF export, OCR copy or translated copy; stop work and undo eligible changes.
 - Complete the four-step first-run setup; new installations default chat and summaries on.
@@ -32,15 +33,24 @@ existing saved preferences are preserved. This does not start cloud work before
 the wizard is complete and an OpenRouter account is connected. You can change
 these preferences later under **Settings → Settings & AI… → AI settings**. Select a model
 from the catalog; availability can change and is checked with OpenRouter.
-Press **⌘K**, then Return with an empty search field to start a new
-chat. Return sends a message, Shift-Return adds a line. With a nonempty search
+Press **⌘K**, then Return with an empty search field to open
+chat; choose **New chat** for a separate conversation. Return sends a message, Shift-Return adds a line. With a nonempty search
 query, Return continues to open the selected search result; use the explicit
 Ask action to start a new chat with that query as a draft, then press Return to send. The chat can be stopped with
 **Stop** or closed with Escape. Saved conversations are available from **Chats**;
 deleting chats removes their transcripts and saved page previews from this Mac.
+Chat now has its own native resizable window with independent search, normal
+macOS Close/Minimize behavior, and two remembered pin modes: above Shenzhen PDF
+or above all apps. Closing it preserves the unsent draft and conversation.
+Activity shows when the model is thinking, which tool is working, when a reply
+is ready, and actionable failures. User messages remain in the saved history.
+The authorization-send path no longer loses the user message when its composer
+clears, which previously could stop the first tool call with a false save conflict.
 
 Answers can cite exact retrieved passages and show relevant page previews.
-Selecting a citation returns to that document and page. The assistant can
+Selecting a text-search citation opens that document and page with the passage
+highlighted; page-only links support visual sources. Source revision and layout
+checks reject stale links, and opening a citation keeps chat available. The assistant can
 organize tab groups, change supported reader controls, read and edit PDF
 comments, close/reopen tabs, safely rename eligible files, find and open
 Collection documents, and perform supported document jobs. It asks tools for
