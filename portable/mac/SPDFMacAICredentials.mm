@@ -1,25 +1,29 @@
 #import "SPDFMacAICredentials.h"
 #import "SPDFMacAITransport.h"
-#import <LocalAuthentication/LocalAuthentication.h>
+#import "SPDFMacKeychainNoninteractive.h"
 @interface SPDFMacAISystemKeychain : NSObject <SPDFMacAIKeychainAccess> @end
 @implementation SPDFMacAISystemKeychain
 - (OSStatus)copyMatching:(NSDictionary*)query result:(NSData**)result {
-    CFTypeRef object=NULL; OSStatus status=SecItemCopyMatching((__bridge CFDictionaryRef)query,&object);
+    __block CFTypeRef object=NULL;
+    OSStatus status=SPDFKeychainWithoutInteraction(^{ return SecItemCopyMatching((__bridge CFDictionaryRef)query,&object); });
     id value=CFBridgingRelease(object); if(result)*result=[value isKindOfClass:NSData.class] ? value : nil;
     return status==errSecSuccess && ![value isKindOfClass:NSData.class] ? errSecDecode : status;
 }
-- (OSStatus)add:(NSDictionary*)attributes { return SecItemAdd((__bridge CFDictionaryRef)attributes,NULL); }
-- (OSStatus)update:(NSDictionary*)query attributes:(NSDictionary*)attributes {
-    return SecItemUpdate((__bridge CFDictionaryRef)query,(__bridge CFDictionaryRef)attributes);
+- (OSStatus)add:(NSDictionary*)attributes {
+    return SPDFKeychainWithoutInteraction(^{ return SecItemAdd((__bridge CFDictionaryRef)attributes,NULL); });
 }
-- (OSStatus)remove:(NSDictionary*)query { return SecItemDelete((__bridge CFDictionaryRef)query); }
+- (OSStatus)update:(NSDictionary*)query attributes:(NSDictionary*)attributes {
+    return SPDFKeychainWithoutInteraction(^{ return SecItemUpdate((__bridge CFDictionaryRef)query,(__bridge CFDictionaryRef)attributes); });
+}
+- (OSStatus)remove:(NSDictionary*)query {
+    return SPDFKeychainWithoutInteraction(^{ return SecItemDelete((__bridge CFDictionaryRef)query); });
+}
 @end
 static NSMutableDictionary* Query(void) {
-    LAContext* context=[LAContext new]; context.interactionNotAllowed=YES;
-    return [@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+    NSMutableDictionary* query=[@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService:@"com.intuition.shenzhenpdf.openrouter",
-        (__bridge id)kSecAttrAccount:@"api-key",(__bridge id)kSecAttrSynchronizable:@NO,
-        (__bridge id)kSecUseAuthenticationContext:context} mutableCopy];
+        (__bridge id)kSecAttrAccount:@"api-key",(__bridge id)kSecAttrSynchronizable:@NO} mutableCopy];
+    SPDFKeychainDisallowAuthenticationUI(query); return query;
 }
 static BOOL ValidKey(NSString* key) {
     return [key isKindOfClass:NSString.class] && [key hasPrefix:@"sk-or-"] && key.length>=20 && key.length<=512 &&

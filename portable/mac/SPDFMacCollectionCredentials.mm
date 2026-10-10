@@ -1,21 +1,23 @@
 #import "SPDFMacCollectionCredentials.h"
 #import "SPDFMacPassword.h"
-#import <LocalAuthentication/LocalAuthentication.h>
+#import "SPDFMacKeychainNoninteractive.h"
 
 @interface SPDFCollectionSystemKeychain : NSObject <SPDFCollectionKeychainAccess>
 @end
 @implementation SPDFCollectionSystemKeychain
 - (OSStatus)copyMatching:(NSDictionary*)query result:(NSData**)result {
-    CFTypeRef value=NULL;
-    OSStatus status=SecItemCopyMatching((__bridge CFDictionaryRef)query,&value);
+    __block CFTypeRef value=NULL;
+    OSStatus status=SPDFKeychainWithoutInteraction(^{ return SecItemCopyMatching((__bridge CFDictionaryRef)query,&value); });
     id object=CFBridgingRelease(value);
     if (status==errSecSuccess && ![object isKindOfClass:NSData.class]) return errSecDecode;
     if (result) *result=object;
     return status;
 }
-- (OSStatus)add:(NSDictionary*)attributes { return SecItemAdd((__bridge CFDictionaryRef)attributes,NULL); }
+- (OSStatus)add:(NSDictionary*)attributes {
+    return SPDFKeychainWithoutInteraction(^{ return SecItemAdd((__bridge CFDictionaryRef)attributes,NULL); });
+}
 - (OSStatus)update:(NSDictionary*)query attributes:(NSDictionary*)attributes {
-    return SecItemUpdate((__bridge CFDictionaryRef)query,(__bridge CFDictionaryRef)attributes);
+    return SPDFKeychainWithoutInteraction(^{ return SecItemUpdate((__bridge CFDictionaryRef)query,(__bridge CFDictionaryRef)attributes); });
 }
 @end
 
@@ -33,13 +35,12 @@ static NSError* KeychainError(OSStatus status) {
         userInfo:@{NSLocalizedDescriptionKey:description ?: @"The document password could not be accessed in Keychain."}];
 }
 static NSMutableDictionary* Query(NSString* hash) {
-    LAContext* context=[LAContext new]; context.interactionNotAllowed=YES;
     // Background capture/thumbnail work must never summon Keychain authentication UI.
     // A locked/denied Keychain is reported to the caller, which can keep the session credential.
-    return [@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+    NSMutableDictionary* query=[@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService:@"com.intuition.shenzhenpdf.collection.password",
-        (__bridge id)kSecAttrAccount:hash,(__bridge id)kSecAttrSynchronizable:@NO,
-        (__bridge id)kSecUseAuthenticationContext:context} mutableCopy];
+        (__bridge id)kSecAttrAccount:hash,(__bridge id)kSecAttrSynchronizable:@NO} mutableCopy];
+    SPDFKeychainDisallowAuthenticationUI(query); return query;
 }
 @implementation SPDFMacCollectionCredentials {
     id<SPDFCollectionKeychainAccess> _keychain;
