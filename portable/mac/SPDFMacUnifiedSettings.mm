@@ -199,7 +199,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         action:@selector(performAction:) key:connected ? @"disconnect" : @"connect"];
     connect.enabled=!connecting; self.controls[@"connection"]=connect;
     NSStackView* connectionRow=[self row:connected ? @"Connected to OpenRouter" : @"OpenRouter account"
-        detail:self.state[@"connectionStatus"] ?: @"Sign in in your browser. Your credential stays in macOS Keychain." control:connect];
+        detail:self.state[@"connectionStatus"] ?: (connected ? @"Your credential is stored in macOS Keychain." : @"Sign in in your browser. Your credential stays in macOS Keychain.") control:connect];
     NSStackView* connectionWords=connectionRow.arrangedSubviews.firstObject;
     self.connectionTitle=connectionWords.arrangedSubviews.firstObject; self.connectionDetail=connectionWords.arrangedSubviews.lastObject;
     [self buildKeyAlternative];
@@ -420,7 +420,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         button.identifier=connected ? @"disconnect" : @"connect"; button.accessibilityLabel=button.title;
         button.enabled=!connecting; [button invalidateIntrinsicContentSize];
         self.connectionTitle.stringValue=connected ? @"Connected to OpenRouter" : @"OpenRouter account";
-        self.connectionDetail.stringValue=merged[@"connectionStatus"] ?: @"Sign in in your browser. Your credential stays in macOS Keychain.";
+        self.connectionDetail.stringValue=merged[@"connectionStatus"] ?: (connected ? @"Your credential is stored in macOS Keychain." : @"Sign in in your browser. Your credential stays in macOS Keychain.");
         self.modelDetail.stringValue=[merged[@"modelsLoading"] boolValue] ? @"Loading models…" : ([merged[@"modelStatus"] length] ? merged[@"modelStatus"] : @"Search available OpenRouter models.");
         SPDFMacSearchablePicker* model=(id)self.controls[@"model"];
         model.emptyMessage=[merged[@"modelsLoading"] boolValue] ? @"Loading models…" : ([merged[@"modelStatus"] length] ? merged[@"modelStatus"] : @"No models available");
