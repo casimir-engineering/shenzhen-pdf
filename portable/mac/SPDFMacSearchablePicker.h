@@ -1,7 +1,8 @@
 #pragma once
 #import <Cocoa/Cocoa.h>
+#import "SPDFMacGroupActionButton.h"
 // A native, keyboard-operable searchable dropdown. Data is requested only when opened.
-@interface SPDFMacSearchablePicker : NSButton
+@interface SPDFMacSearchablePicker : SPDFGroupActionButton
 @property(nonatomic,copy) NSArray<NSDictionary*>* choices;
 @property(nonatomic,copy) NSString* selectedID;
 @property(nonatomic,copy) NSString* emptyMessage;

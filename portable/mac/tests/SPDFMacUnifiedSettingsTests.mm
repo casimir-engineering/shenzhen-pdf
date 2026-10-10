@@ -128,8 +128,23 @@ int main(void) { @autoreleasepool {
         action=nil; pendingMouseUp=up; [hit mouseDown:down];
         Check([action isEqual:@"connect"],@"full-bounds native click reaches connect on first press");
     }
+    SPDFMacSearchablePicker* clickPicker=(id)Find(controller.window.contentView,@"model");
+    id pickerTarget=clickPicker.target; SEL pickerAction=clickPicker.action;
+    clickPicker.target=controller; clickPicker.action=NSSelectorFromString(@"performAction:");
+    clickPicker.identifier=@"pickerTargetProbe";
+    for(NSValue* value in @[[NSValue valueWithPoint:NSMakePoint(2,2)],[NSValue valueWithPoint:NSMakePoint(NSWidth(clickPicker.bounds)-2,NSHeight(clickPicker.bounds)-2)]]) {
+        NSPoint point=[clickPicker convertPoint:value.pointValue toView:nil];
+        NSView* root=controller.window.contentView;
+        Check([root hitTest:[root.superview convertPoint:point fromView:nil]]==clickPicker,@"model dropdown full bounds are unobstructed");
+        NSTimeInterval stamp=NSProcessInfo.processInfo.systemUptime;
+        NSEvent* down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:0 timestamp:stamp windowNumber:controller.window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];
+        pendingMouseUp=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:point modifierFlags:0 timestamp:stamp+.01 windowNumber:controller.window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];
+        action=nil; [clickPicker mouseDown:down];
+        Check([action isEqual:@"pickerTargetProbe"],@"model dropdown first press fires across its full bounds");
+    }
+    clickPicker.identifier=@"model"; clickPicker.target=pickerTarget; clickPicker.action=pickerAction;
     method_exchangeImplementations(original,injected);
-    Check([action isEqual:@"connect"],@"browser connect routes to host");
+
     NSButton* autoAnalyze=(NSButton*)Find(controller.window.contentView,@"autoAnalyze"); [autoAnalyze performClick:nil];
     Check([change[@"autoAnalyze"] boolValue],@"automatic analysis is separate explicit preference");
     [(NSButton*)Find(controller.window.contentView,@"revealKey") performClick:nil];
@@ -163,9 +178,18 @@ int main(void) { @autoreleasepool {
     Check(Find(wizard.window.contentView,@"accessibility")==nil,@"no Accessibility prompt");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
     Check(wizard.wizardStep==1 && [wizardChange[@"wizardStep"] integerValue]==1,@"step transitions persist");
-    Check([(NSTextField*)Find(wizard.window.contentView,@"collectionDynamicPercent") doubleValue]==80,@"wizard default is dynamic 80 percent");
+    NSTextField* percent=(id)Find(wizard.window.contentView,@"collectionDynamicPercent");
+    Check([percent.stringValue isEqual:@"80%"] && !percent.editable,@"dynamic budget displays fixed 80 percent");
+    Check(Find(wizard.window.contentView,@"collectionStorageGiB")==nil,@"dynamic mode has no static-limit field");
+    NSPopUpButton* storage=(id)Find(wizard.window.contentView,@"collectionStorageMode");
+    [storage selectItemAtIndex:1]; [NSApp sendAction:storage.action to:storage.target from:storage];
+    Check([wizardChange[@"collectionStorageMode"] isEqual:@"static"] && [wizardChange[@"collectionStorageGiB"] doubleValue]>0,@"static selection persists a positive initial budget atomically");
+    Check([(NSTextField*)Find(wizard.window.contentView,@"collectionStorageGiB") doubleValue]>0,@"static amount matches a positive actual limit");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
     Check(Find(wizard.window.contentView,@"autoAnalyze")==nil && Find(wizard.window.contentView,@"aiEnabled")==nil,@"wizard contains connection and model only");
+    NSTextField* disclosure=(id)Find(wizard.window.contentView,@"aiUploadDisclosure");
+    Check([disclosure.stringValue containsString:@"sent to OpenRouter"] && [disclosure.stringValue containsString:@"credits"] && !disclosure.hidden,
+        @"wizard discloses default automatic upload and account credits before completion");
     [(NSButton*)Find(wizard.window.contentView,@"connect") performClick:nil];
     Check([wizardAction isEqual:@"connect"],@"wizard connect directly invokes browser action");
     [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];

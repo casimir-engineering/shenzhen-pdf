@@ -209,7 +209,11 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [model.heightAnchor constraintEqualToConstant:28].active=YES; self.controls[@"model"]=model;
     NSStackView* modelRow=[self row:@"Model" detail:self.state[@"modelStatus"] ?: @"Search available OpenRouter models." control:model];
     self.modelDetail=[(NSStackView*)modelRow.arrangedSubviews.firstObject arrangedSubviews].lastObject;
-    if(self.setupWizard) return;
+    if(self.setupWizard) {
+        [self text:@"After setup, opened documents are sent to OpenRouter for summaries and missing chapters. This uses account credits. Change this in AI settings." size:12 bold:NO secondary:YES];
+        self.content.arrangedSubviews.lastObject.identifier=@"aiUploadDisclosure";
+        return;
+    }
     [self add:[self toggle:@"aiEnabled" label:@"Enable document chat"]];
     [self add:[self toggle:@"autoAnalyze" label:@"Prepare summaries, keywords and missing chapters automatically"]];
     [self text:@"Automatic preparation sends document text to OpenRouter and its provider after opening, in the background. It uses paid tokens. Existing chapters stay intact; generated information is cached for unchanged documents." size:12 bold:NO secondary:YES];
@@ -286,17 +290,19 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [modes selectItemAtIndex:[mode isEqual:@"static"] ? 1 : [mode isEqual:@"unlimited"] ? 2 : 0];
     modes.target=self; modes.action=@selector(storageModeChanged:); modes.identifier=@"collectionStorageMode";
     [self row:@"Storage limit" detail:@"Automatic cleanup never deletes originals." control:modes];
-    if(![mode isEqual:@"unlimited"]) {
-        BOOL dynamic=![mode isEqual:@"static"];
+    if([mode isEqual:@"dynamic"]) {
+        NSTextField* amount=SPDFCollectionText(@"80%",13,NSFontWeightSemibold,NO);
+        amount.identifier=@"collectionDynamicPercent";
+        [self row:@"Available storage" detail:@"Uses up to 80% of free space plus existing Collection storage. The limit adjusts as disk usage changes." control:amount];
+    } else if([mode isEqual:@"static"]) {
         NSTextField* amount=[NSTextField new]; amount.font=[NSFont systemFontOfSize:13];
-        amount.identifier=dynamic ? @"collectionDynamicPercent" : @"collectionStorageGiB";
-        amount.stringValue=[NSString stringWithFormat:@"%@",self.state[amount.identifier] ?: (dynamic ? @80 : @10)];
+        amount.identifier=@"collectionStorageGiB";
+        double value=[self.state[@"collectionStorageGiB"] doubleValue];
+        amount.stringValue=[NSString stringWithFormat:@"%g",value>0 ? value : 10];
         amount.target=self; amount.action=@selector(storageAmountChanged:); amount.delegate=self;
-        amount.accessibilityLabel=dynamic ? @"Percentage of available storage" : @"Storage limit in GiB";
+        amount.accessibilityLabel=@"Storage limit in GiB";
         [amount.widthAnchor constraintEqualToConstant:80].active=YES;
-        [self row:dynamic ? @"Available storage (%)" : @"Limit (GiB)"
-            detail:dynamic ? @"Uses up to this share of free space plus existing Collection storage. The limit adjusts as disk usage changes." : @"Keep Collection within a fixed storage budget."
-            control:amount];
+        [self row:@"Limit (GiB)" detail:@"Keep Collection within a fixed storage budget." control:amount];
     }
     NSString* budget=self.state[@"collectionBudgetText"];
     if(budget.length) [self text:budget size:12 bold:NO secondary:YES];
@@ -304,13 +310,18 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         label:@"Set location…" action:@"setCollectionLocation"];
 }
 - (void)storageModeChanged:(NSPopUpButton*)sender {
-    [self emit:@{@"collectionStorageMode":@[@"dynamic",@"static",@"unlimited"][(NSUInteger)sender.indexOfSelectedItem]}];
+    NSString* mode=@[@"dynamic",@"static",@"unlimited"][(NSUInteger)sender.indexOfSelectedItem];
+    NSMutableDictionary* changes=[@{@"collectionStorageMode":mode} mutableCopy];
+    if([mode isEqual:@"static"]) {
+        double amount=[self.state[@"collectionStorageGiB"] doubleValue];
+        if(amount<=0) amount=[self.state[@"collectionEffectiveStorageGiB"] doubleValue];
+        changes[@"collectionStorageGiB"]=@(amount>0 ? amount : 10);
+    }
+    [self emit:changes];
     [self selectSection:@"collection"];
 }
 - (void)storageAmountChanged:(NSTextField*)sender {
-    double value=sender.doubleValue;
-    if([sender.identifier isEqual:@"collectionDynamicPercent"]) value=MAX(1,MIN(100,value));
-    else value=MAX(.1,value);
+    double value=MAX(.1,sender.doubleValue);
     sender.stringValue=[NSString stringWithFormat:@"%g",value]; [self emit:@{sender.identifier:@(value)}];
 }
 - (void)buildDefaults {
