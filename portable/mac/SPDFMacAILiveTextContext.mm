@@ -24,11 +24,14 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
     NSMutableArray* pages=[NSMutableArray array], *outline=[NSMutableArray array]; NSUInteger characters=0;
     BOOL truncated=NO;
     __block CC_SHA256_CTX digest; CC_SHA256_Init(&digest);
+    __block CC_SHA256_CTX compatibilityDigest; CC_SHA256_Init(&compatibilityDigest);
+    NSMutableSet* fontSizes=[NSMutableSet set];
     SPDFMarkdownPageConfiguration* config=plan.configuration;
     CGFloat geometry[]={config.paperSize.width,config.paperSize.height,config.printableRect.origin.x,
         config.printableRect.origin.y,config.printableRect.size.width,config.printableRect.size.height,
         config.headingKeepThreshold,(CGFloat)config.includesCodeLanguageControlSpacing};
     CC_SHA256_Update(&digest,geometry,sizeof(geometry));
+    CC_SHA256_Update(&compatibilityDigest,geometry,sizeof(geometry));
     // Resource dependencies come from the rendered image runs, including
     // placeholders, rather than scanning source examples for apparent paths.
     __block NSError* dependencyError=nil;
@@ -38,7 +41,7 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
     [rendered.attributedString enumerateAttributesInRange:NSMakeRange(0,rendered.attributedString.length)
         options:0 usingBlock:^(NSDictionary* attrs,NSRange range,BOOL* stop) {
         NSFont* font=attrs[NSFontAttributeName];
-        if (font) { CGFloat size=font.pointSize; CC_SHA256_Update(&digest,&size,sizeof(size)); }
+        if (font) { [fontSizes addObject:@(font.pointSize)]; CGFloat size=font.pointSize; CC_SHA256_Update(&digest,&size,sizeof(size)); }
         NSString* target=attrs[SPDFMarkdownImageTargetAttribute];
         if (![target isKindOfClass:NSString.class] || !target.length) return;
         NSURL* URL=[NSURL URLWithString:target relativeToURL:[NSURL fileURLWithPath:path]];
@@ -64,6 +67,7 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
                 if (!hash) { dependencyFailed=YES; *stop=YES;return; }
                 NSData* content=[hash dataUsingEncoding:NSUTF8StringEncoding];
                 CC_SHA256_Update(&digest,content.bytes,(CC_LONG)content.length);
+                CC_SHA256_Update(&compatibilityDigest,content.bytes,(CC_LONG)content.length);
             }
         }
         NSTextAttachment* attachment=attrs[NSAttachmentAttributeName];
@@ -82,6 +86,7 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
                 }
                 dependencyBytes+=bytes.length;
                 CC_SHA256_Update(&digest,bytes.bytes,(CC_LONG)bytes.length);
+                CC_SHA256_Update(&compatibilityDigest,bytes.bytes,(CC_LONG)bytes.length);
             }
         }
     }];
@@ -99,6 +104,12 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
             CC_SHA256_Update(&digest,range,sizeof(range));
         }
     }
+    for (NSNumber* size in [fontSizes.allObjects sortedArrayUsingSelector:@selector(compare:)]) {
+        double value=size.doubleValue;CC_SHA256_Update(&compatibilityDigest,&value,sizeof(value));
+    }
+    unsigned char compatibilityBytes[CC_SHA256_DIGEST_LENGTH];CC_SHA256_Final(compatibilityBytes,&compatibilityDigest);
+    NSMutableString* compatibility=[NSMutableString string];
+    for (NSUInteger i=0;i<sizeof(compatibilityBytes);i++) [compatibility appendFormat:@"%02x",compatibilityBytes[i]];
     unsigned char bytes[CC_SHA256_DIGEST_LENGTH]; CC_SHA256_Final(bytes,&digest);
     NSMutableString* identity=[NSMutableString string];
     for (NSUInteger i=0;i<sizeof(bytes);i++) [identity appendFormat:@"%02x",bytes[i]];
@@ -130,6 +141,6 @@ NSDictionary* SPDFAIDocumentContextForCandidate(NSDictionary* candidate, NSUInte
         if (![dependencyStamps[dependency] isEqual:SPDFSearchFileStamp(dependency) ?: @"missing"])
             return LiveError(error,@"Image dependency changed while reading.");
     NSUInteger next=first+pages.count;
-    return @{@"revision":candidate[@"revision"],@"layoutIdentity":identity,@"pageCount":@(plan.pages.count),@"pages":pages,
+    return @{@"revision":candidate[@"revision"],@"layoutIdentity":identity,@"revisionCompatibility":compatibility,@"pageCount":@(plan.pages.count),@"pages":pages,
         @"outline":outline,@"truncated":@(truncated || next<=plan.pages.count),@"nextPage":next<=plan.pages.count ? @(next) : NSNull.null};
 }

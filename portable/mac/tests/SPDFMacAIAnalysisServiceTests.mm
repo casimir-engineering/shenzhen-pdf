@@ -3,6 +3,8 @@
 #import "SPDFMacAISettings.h"
 #import "SPDFMacAITransport.h"
 #import "SPDFMacAICredentials.h"
+#import "SPDFMacAIRevisionContext.h"
+#import "SPDFMacCollectionStore.h"
 #import "SPDFMacSearchFileCache.h"
 #import "SPDFMacAIIntegration.h"
 #import "SPDFMacAIToolsReader.h"
@@ -93,16 +95,21 @@ int main(int argc,const char** argv) { @autoreleasepool {
             return changed && hashes%3==0 ? [@"b" stringByPaddingToLength:64 withString:@"b" startingAtIndex:0] : hash;
         } keyProvider:^NSString*(NSError** error) { (void)error;keys++;return @"sk-or-v1-offline-test-key"; }];
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:[root URLByAppendingPathComponent:@"settings.yaml"]];
+    settings.enabled=NO;settings.automaticAnalysis=NO;
     [service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:nil];
     Check([service valueForKey:@"worker"]==nil && hashes==0 && contexts==0 && keys==0 && transport.calls==0 && ![NSFileManager.defaultManager fileExistsAtPath:root.path],"disabled analysis is fully inert");
-    settings.enabled=YES;settings.automaticAnalysis=YES;__block BOOL done=NO;__block NSDictionary* result=nil;__block NSError* failure=nil;
+    settings.enabled=YES;settings.automaticAnalysis=YES;
+    [service analyzeCandidate:@{@"path":@"/old.pdf",@"analysisEligible":@NO} settings:settings completion:nil];
+    Check([service valueForKey:@"worker"]==nil && hashes==0 && contexts==0 && keys==0,
+        "older Collection candidate skips even worker creation and hashing");
+    __block BOOL done=NO;__block NSDictionary* result=nil;__block NSError* failure=nil;
     void (^completion)(NSDictionary*,NSError*)=^(NSDictionary* a,NSError* e){result=a;failure=e;done=YES;Check(NSThread.isMainThread,"analysis completion main queue");};
     [service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && result && !failure && transport.calls==1,"analysis produces validated result");
     Check([result[@"analyzedPages"] isEqual:@[@1,@2]] && ![result[@"partial"] boolValue],"accurate complete coverage");
     done=NO;[service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && transport.calls==1 && contexts==2 && keys==1,"same content deduplicates analysis and key access");
-    Check([result[@"promptVersion"] isEqual:@"analysis-excerpts-v2"] && [result[@"cacheKey"] length]==64,"cache records model prompt and complete identity");
+    Check([result[@"promptVersion"] isEqual:@"analysis-revisions-v3"] && [result[@"cacheKey"] length]==64,"cache records model prompt and complete identity");
     settings.model=@"fixture/another-model";done=NO;
     [service analyzeDocumentAtPath:@"/test.pdf" landscape:NO settings:settings completion:completion];
     Check(Wait(^BOOL{return done;}) && result && transport.calls==2,"model change causes fresh analysis");
@@ -134,6 +141,80 @@ int main(int argc,const char** argv) { @autoreleasepool {
     Check(Wait(^BOOL{return transport.held!=nil;}),"request can remain in flight");
     [service cancelAll];transport.held(@{@"content":@"{\"summary\":\"Late\",\"keywords\":[],\"chapters\":[]}"},nil);
     Check(Wait(^BOOL{return done;}) && !result && failure.code==NSURLErrorCancelled && ![cache analysisForHash:hash],"late cancelled response cannot write analysis");
+    [NSFileManager.defaultManager removeItemAtURL:root error:nil];
+    // A new revision updates the prior summary with an exact bounded delta, never another full upload.
+    NSURL* revisions=[root URLByAppendingPathComponent:@"revisions"];
+    __block NSString* revisionHash=[@"d" stringByPaddingToLength:64 withString:@"d" startingAtIndex:0];
+    __block NSString* revisionText=@"Motor speed is 240 RPM. Disconnect power first.";
+    __block NSString* revisionLayout=@"fixed-pages-v1";
+    AnalysisTransport* incremental=[AnalysisTransport new];
+    incremental.reply=@"{\"summary\":\"Motor speed and safety\",\"keywords\":[\"motor\"],\"chapters\":[]}";
+    SPDFMacAIAnalysisService* revisionService=[[SPDFMacAIAnalysisService alloc]
+        initWithCache:[[SPDFMacAIAnalysisCache alloc] initWithRootURL:revisions] transport:incremental
+        contextProvider:^NSDictionary*(NSString* p,BOOL l,NSProgress* g,NSError** e) {
+            return @{@"layoutIdentity":revisionLayout,@"pageCount":@1,@"pages":@[@{@"page":@1,@"text":revisionText}],@"outline":@[]};
+        } hashProvider:^NSString*(NSString* p,NSProgress* g,NSError** e) {return revisionHash;}
+        keyProvider:^NSString*(NSError** e) {return @"fixture";}];
+    done=NO;[revisionService analyzeDocumentAtPath:@"/revisions.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && result && incremental.payload[@"pages"],"initial revision sends bounded excerpts");
+    revisionHash=[@"e" stringByPaddingToLength:64 withString:@"e" startingAtIndex:0];
+    revisionText=@"Motor speed is 360 RPM. Disconnect power first.";
+    done=NO;[revisionService analyzeDocumentAtPath:@"/revisions.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && result && [incremental.payload[@"mode"] isEqual:@"updatePreviousAnalysis"] &&
+        !incremental.payload[@"pages"] && incremental.payload[@"previousAnalysis"],"next revision uploads only diff plus prior summary");
+    NSDictionary* edit=incremental.payload[@"revisionDiff"][@"edits"][0];
+    Check([edit[@"removed"] isEqual:@"24"] && [edit[@"inserted"] isEqual:@"36"] &&
+        [result[@"revisionDiff"][@"addedCharacters"] integerValue]==2,"same-size edits produce exact nonzero content diff");
+    done=NO;[revisionService analyzeDocumentAtPath:@"/revisions.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && incremental.calls==2,"same hash does not create another model summary");
+    revisionLayout=@"changed-layout";revisionHash=[@"f" stringByPaddingToLength:64 withString:@"f" startingAtIndex:0];
+    done=NO;[revisionService analyzeDocumentAtPath:@"/revisions.pdf" landscape:NO settings:settings completion:completion];
+    Check(Wait(^BOOL{return done;}) && incremental.payload[@"pages"] && !incremental.payload[@"revisionDiff"],
+        "incompatible layout safely falls back to complete bounded excerpts");
+    NSArray* oldEmoji=@[@{@"page":@1,@"text":@"A 😀 image"}],*newEmoji=@[@{@"page":@1,@"text":@"A 😄 image"}];
+    NSDictionary* emoji=SPDFAIRevisionDelta(oldEmoji,newEmoji,NO);NSDictionary* emojiEdit=emoji[@"edits"][0];
+    NSMutableString* rebuilt=[oldEmoji[0][@"text"] mutableCopy];
+    [rebuilt replaceCharactersInRange:NSMakeRange([emojiEdit[@"offsetUTF16"] unsignedIntegerValue],[emojiEdit[@"removed"] length])
+        withString:emojiEdit[@"inserted"]];
+    Check([rebuilt isEqual:newEmoji[0][@"text"]] && [NSJSONSerialization dataWithJSONObject:emoji options:0 error:nil],
+        "diff preserves composed Unicode and reconstructs the new page exactly");
+    Check(!SPDFAIRevisionDelta(@[@{@"page":@1,@"text":@"old"}],
+        @[@{@"page":@1,@"text":[@"x" stringByPaddingToLength:40000 withString:@"x" startingAtIndex:0]}],NO),
+        "oversized deltas refuse incremental upload");
+    [NSFileManager.defaultManager removeItemAtURL:root error:nil];
+    NSURL* collectionRoot=[root URLByAppendingPathComponent:@"Collection"];
+    SPDFMacCollectionStore* collection=[[SPDFMacCollectionStore alloc] initWithRootURL:collectionRoot];
+    NSDictionary* noHistory=SPDFAICollectionRevisionMetadata(collection,@"/missing-fixture.pdf",20);
+    Check([noHistory[@"revisionCount"] integerValue]==0 && ![NSFileManager.defaultManager fileExistsAtPath:collectionRoot.path],
+        "revision metadata lookup does not create an unused Collection");
+    [NSFileManager.defaultManager createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString* historyPath=[root.path stringByAppendingPathComponent:@"history.md"];
+    [collection updateSettings:@{@"choice":@"enabled",@"storageLimitBytes":@0,@"storageLimitMode":@"unlimited"} error:nil];
+    [@"The motor runs at 240 RPM." writeToFile:historyPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* firstHistory=[collection capturePath:historyPath reason:@"opened" error:nil];
+    NSString* documentID=firstHistory[@"id"];
+    [@"The motor runs at 360 RPM." writeToFile:historyPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSDictionary* nextHistory=[collection capturePath:historyPath reason:@"saved" continuingDocumentID:documentID error:nil];
+    NSDictionary* historyMetadata=SPDFAICollectionRevisionMetadata(collection,historyPath,1);
+    Check(firstHistory && nextHistory && [historyMetadata[@"revisionCount"] integerValue]==2 &&
+        [historyMetadata[@"revisions"] count]==1 && [historyMetadata[@"moreRevisions"] boolValue],
+        "metadata enumerates revision count and bounded dated rows without materializing copies");
+    Check(![NSFileManager.defaultManager fileExistsAtPath:[collectionRoot.path stringByAppendingPathComponent:@"previews"]],
+        "revision metadata creates no preview copies");
+    NSDictionary* historyDiff=SPDFAICollectionRevisionDiff(collection,historyPath,nextHistory[@"latestVersionID"],[NSProgress progressWithTotalUnitCount:1]);
+    Check([historyDiff[@"diffStatus"] isEqual:@"computed"] && [historyDiff[@"addedCharacters"] integerValue]==2 &&
+        [historyDiff[@"removedCharacters"] integerValue]==2 && [historyDiff[@"partial"] boolValue],
+        "lazy history diff detects same-byte-size content change using existing text indexes");
+    NSString* oldVersion=firstHistory[@"latestVersionID"];
+    NSURL* oldCopy=[collection materializeVersionID:oldVersion documentID:documentID error:nil];
+    Check(oldCopy && ![SPDFAICollectionRevisionMetadata(collection,oldCopy.path,0)[@"analysisEligible"] boolValue],
+        "historical Collection preview is ineligible for automatic summaries");
+    NSURL* oldEditable=[collection editableVersionID:oldVersion documentID:documentID error:nil];
+    Check(oldEditable && ![SPDFAICollectionRevisionMetadata(collection,oldEditable.path,0)[@"analysisEligible"] boolValue],
+        "editable old revision is ineligible until it becomes the latest revision");
+    [collection capturePath:historyPath reason:@"opened" continuingDocumentID:documentID error:nil];
+    Check([SPDFAICollectionRevisionMetadata(collection,historyPath,20)[@"revisionCount"] integerValue]==2,
+        "opening identical bytes does not add a duplicate Collection revision");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     [NSApplication sharedApplication];
     AnalysisReaderProbe* reader=[AnalysisReaderProbe new];[reader seedPath:@"/test.pdf"];

@@ -62,6 +62,14 @@ NSDictionary* SPDFAIValidateAnalysis(id value, NSUInteger pageCount, BOOL author
             return Invalid(error,@"Invalid analysis metadata.");
         result[key]=value[key];
     }
+    if ([value[@"revisionDiff"] isKindOfClass:NSDictionary.class]) {
+        NSDictionary* diff=value[@"revisionDiff"];
+        if ([diff[@"addedCharacters"] isKindOfClass:NSNumber.class] &&
+            [diff[@"removedCharacters"] isKindOfClass:NSNumber.class] &&
+            [diff[@"partial"] isKindOfClass:NSNumber.class])
+            result[@"revisionDiff"]=@{@"addedCharacters":diff[@"addedCharacters"],@"removedCharacters":diff[@"removedCharacters"],
+                @"partial":diff[@"partial"],@"unit":@"UTF-16 code units",@"algorithm":@"one exact replacement per changed page"};
+    }
     return result;
 }
 @interface SPDFMacAIAnalysisCache ()
@@ -72,6 +80,7 @@ NSDictionary* SPDFAIValidateAnalysis(id value, NSUInteger pageCount, BOOL author
     if ((self=[super init])) _root=rootURL;
     return self;
 }
+- (NSURL*)rootURL { return self.root; }
 - (int)lockHash:(NSString*)hash progress:(NSProgress*)progress error:(NSError**)error {
     if (!HashValid(hash)) { Invalid(error,@"Invalid analysis identity."); return -1; }
     if (![NSFileManager.defaultManager createDirectoryAtURL:self.root withIntermediateDirectories:YES
