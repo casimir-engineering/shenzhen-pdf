@@ -11,7 +11,7 @@ static void CheckCollectionRetentionMenu(SPDFMacCollectionWindow* manager) {
     Expect(@"all kept selections offer removal",SPDFCollectionSelectionIsKept(@[kept,kept]));
     [manager.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
     // Swap the selected model without reloading cells or requesting fake previews.
-    NSNumber* savedLimit = manager.store.settings[@"storageLimitBytes"] ?: @0;
+    NSDictionary* savedSettings = manager.store.settings;
     for (NSNumber* cap in @[@0,@1000000000]) {
       [manager.store updateSettings:@{@"storageLimitBytes":cap} error:nil];
       for (NSNumber* flag in @[@NO,@YES]) {
@@ -34,7 +34,7 @@ static void CheckCollectionRetentionMenu(SPDFMacCollectionWindow* manager) {
         }
       }
     }
-    [manager.store updateSettings:@{@"storageLimitBytes":savedLimit} error:nil];
+    [manager.store updateSettings:savedSettings error:nil];
     manager.rows = savedRows;
     [manager.table selectRowIndexes:savedSelection byExtendingSelection:NO]; [manager updateDetails];
 }

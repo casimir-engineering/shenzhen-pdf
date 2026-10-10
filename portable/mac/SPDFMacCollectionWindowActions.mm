@@ -96,7 +96,7 @@
 }
 - (void)keep:(id)sender {
     (void)sender;
-    if (![self.store.settings[@"storageLimitBytes"] unsignedLongLongValue]) return;
+    if (![self.store isStorageLimited]) return;
     NSArray* rows = [self selectedRowsSnapshot];
     BOOL keep = !SPDFCollectionSelectionIsKept(rows);
     [self performMutation:^(NSError** error) {
@@ -141,15 +141,16 @@
 - (void)changeLimit:(id)sender {
     (void)sender;
     double amount = 0;
-    NSScanner* scanner = [NSScanner scannerWithString:self.limitPicker.indexOfSelectedItem == 0 ? @"0" : self.limitField.stringValue];
+    NSScanner* scanner = [NSScanner scannerWithString:self.limitPicker.indexOfSelectedItem != 1 ? @"0" : self.limitField.stringValue];
     if (![scanner scanDouble:&amount] || !scanner.isAtEnd || !isfinite(amount) || amount < 0 || amount > 1e8) {
         [self showError:[NSError errorWithDomain:@"ShenzhenPDF.Collection" code:1 userInfo:@{
             NSLocalizedDescriptionKey:@"Enter a nonnegative storage limit in GB. Zero keeps all versions."}]];
         return;
     }
     unsigned long long bytes = (unsigned long long)(amount * 1e9);
+    NSDictionary* policy=@{@"storageMode":self.limitPicker.indexOfSelectedItem == 2 ? @"dynamic" : bytes ? @"static" : @"unlimited",@"storageLimitBytes":@(bytes)};
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
-        NSDictionary* plan = [self.store previewStorageLimit:bytes];
+        NSDictionary* plan = [self.store previewStoragePolicy:policy];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (![plan[@"canApply"] boolValue]) {
                 [self showError:[NSError errorWithDomain:@"ShenzhenPDF.Collection" code:1 userInfo:@{
@@ -158,7 +159,7 @@
             }
             void (^apply)(void) = ^{
                 [self performMutation:^(NSError** error) {
-                    if ([self.store applyStorageLimit:bytes reviewedPlan:plan error:error])
+                    if ([self.store applyStoragePolicy:policy reviewedPlan:plan error:error])
                         dispatch_async(dispatch_get_main_queue(), ^{
                             [NSNotificationCenter.defaultCenter postNotificationName:@"SPDFCollectionSettingsChanged" object:self.store
                                 userInfo:@{@"storageLimitOnly":@YES}];

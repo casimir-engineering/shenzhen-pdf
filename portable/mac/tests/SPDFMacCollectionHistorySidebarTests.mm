@@ -69,6 +69,7 @@ static NSView* Identified(NSView* view, NSString* identifier) {
 @property NSMutableArray<NSString*>* editableVersions;
 @end
 @implementation HistoryFixtureStore
+- (BOOL)isStorageLimited { return self.storageLimit>0; }
 - (NSDictionary*)settings { return @{@"storageLimitBytes":@(self.storageLimit)}; }
 - (NSArray*)documents {
     return @[@{@"id":@"fixture",@"title":@"Garden notes.md",@"status":@"Protected local copies",@"path":self.fixturePath ?: @"/missing/Notes.md",@"versions":(self.empty ? @[] : @[

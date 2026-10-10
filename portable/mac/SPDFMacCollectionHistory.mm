@@ -170,7 +170,7 @@
         NSDictionary* found = nil;
         for (NSDictionary* doc in [self->_store documents]) if ([doc[@"id"] isEqual:identifier]) { found = doc; break; }
         NSArray* versions = [[found[@"versions"] reverseObjectEnumerator] allObjects] ?: @[];
-        BOOL storageLimited = [self->_store.settings[@"storageLimitBytes"] unsignedLongLongValue] > 0;
+        BOOL storageLimited = [self->_store isStorageLimited];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation != self->_generation) return;
             NSString* selected = [self selectedVersion][@"id"];
@@ -339,7 +339,7 @@
     }];
 }
 - (void)keep:(id)sender {
-    if (!_storageLimited || ![_store.settings[@"storageLimitBytes"] unsignedLongLongValue]) return;
+    if (!_storageLimited || ![_store isStorageLimited]) return;
     (void)sender; NSDictionary* version = [self selectedVersion]; if (!version) return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError* error = nil;

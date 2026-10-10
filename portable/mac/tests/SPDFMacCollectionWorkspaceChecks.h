@@ -77,7 +77,7 @@ static void CheckCollectionSettingsApplyPlacement(SPDFMacCollectionWindow* manag
     NSString* evidence = NSProcessInfo.processInfo.environment[@"SPDF_COLLECTION_WINDOW_EVIDENCE"];
     for (NSString* appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]) {
         manager.window.appearance = [NSAppearance appearanceNamed:appearance];
-        for (NSInteger mode=0;mode<2;mode++) {
+        for (NSInteger mode=0;mode<3;mode++) {
             [manager.limitPicker selectItemAtIndex:mode];
             [manager performSelector:@selector(changeLimitMode:) withObject:manager.limitPicker];
             Layout(manager.window,NSMakeSize(850,590));
@@ -86,10 +86,10 @@ static void CheckCollectionSettingsApplyPlacement(SPDFMacCollectionWindow* manag
             NSView* stack = cap.superview;
             NSRect capRect = [cap convertRect:cap.bounds toView:stack];
             NSRect applyRect = [apply convertRect:apply.bounds toView:stack];
-            NSRect helpRect = [Label(manager.settingsPane,@"Unlimited by default. Set 0 to keep all saved copies.")
-                convertRect:Label(manager.settingsPane,@"Unlimited by default. Set 0 to keep all saved copies.").bounds toView:stack];
+            NSView* help=Identified(manager.settingsPane,@"CollectionStorageHelp");
+            NSRect helpRect = [help convertRect:help.bounds toView:stack];
             NSRect locationRect = [manager.locationField convertRect:manager.locationField.bounds toView:stack];
-            Expect(@"Apply sits directly below the cap, before help and Location in both limit modes",
+            Expect(@"Apply sits directly below the cap, before help and Location in all limit modes",
                 cap && apply && NSMinY(applyRect)>=NSMaxY(capRect) && NSMinY(applyRect)-NSMaxY(capRect)<=12 &&
                 NSMaxY(applyRect)<=NSMinY(helpRect) && NSMaxY(applyRect)<NSMinY(locationRect));
             Expect(@"Apply describes its storage-only action to accessibility",[apply.accessibilityLabel isEqual:@"Apply storage limit"] &&

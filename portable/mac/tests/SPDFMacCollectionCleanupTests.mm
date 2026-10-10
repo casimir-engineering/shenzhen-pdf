@@ -86,11 +86,13 @@ static NSDictionary* OpenCapture(SPDFMacCollectionStore* store,NSString* path,NS
     return [super installBytes:data hash:hash error:error];
 }
 @end
+#import "SPDFMacCollectionCapacityChecks.h"
 int main(void) { @autoreleasepool {
     NSURL* sandbox=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
     NSURL* root=[sandbox URLByAppendingPathComponent:@"Collection"];
     SPDFMacCollectionStore* store=[[SPDFMacCollectionStore alloc] initWithRootURL:root];
-    Check([[store settings][@"storageLimitBytes"] unsignedLongLongValue]==0,@"default unlimited");
+    Check([[store settings][@"storageMode"] isEqual:@"dynamic"] && store.isStorageLimited,@"default dynamic storage");
+    CapacityChecks(sandbox);
     [store previewStorageLimit:1]; [store recordUserOpenForDocumentID:@"absent" error:nil]; [store storageUsedBytes];
     Check(![NSFileManager.defaultManager fileExistsAtPath:root.path],@"unused previews, counters and reads create nothing");
     NSMutableDictionary* a=Doc(@"a",0,1,@[Version(root,@"a1",@"a1",1,NO),Version(root,@"a2",@"a2",2,NO),Version(root,@"a3",@"a3",3,NO)]);

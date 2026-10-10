@@ -138,6 +138,7 @@ static void RemoveVersion(NSMutableDictionary* manifest,NSString* documentID,NSS
         @"removals":removals,@"error":fits ? @"" : @"Kept histories or the incoming document prevent this storage limit. Increase the limit or review Keep selections."};
 }
 - (void)applyCleanupPlan:(NSDictionary*)plan toManifest:(NSMutableDictionary*)manifest {
+    if (![plan[@"removals"] count]) return;
     for (NSDictionary* removal in plan[@"removals"])
         RemoveVersion(manifest,removal[@"documentID"],removal[@"versionID"]);
     // This transient flag is removed before serialization; reclamation only runs
@@ -146,8 +147,11 @@ static void RemoveVersion(NSMutableDictionary* manifest,NSString* documentID,NSS
 }
 - (BOOL)enforceStorageLimitInManifest:(NSMutableDictionary*)manifest
                   protectedVersionID:(NSString*)versionID error:(NSError**)error {
-    unsigned long long limit=[manifest[@"settings"][@"storageLimitBytes"] unsignedLongLongValue];
-    if (!limit) return YES;
+    NSDictionary* budget=[self storageBudgetForManifest:manifest settings:manifest[@"settings"]];
+    // Unknown capacity must never become a zero-byte quota or delete retained history.
+    if (![budget[@"capacityAvailable"] boolValue]) return YES;
+    unsigned long long limit=[budget[@"storageLimitBytes"] unsignedLongLongValue];
+    if (!limit || (budget[@"usedBytes"] && [budget[@"usedBytes"] unsignedLongLongValue]<=limit)) return YES;
     NSDictionary* plan=[self cleanupPlanForManifest:manifest limit:limit protectedVersionID:versionID];
     if (![plan[@"canApply"] boolValue]) {
         if (error) *error=SPDFCollectionError(6,plan[@"error"]); return NO;
@@ -196,7 +200,8 @@ static void RemoveVersion(NSMutableDictionary* manifest,NSString* documentID,NSS
             if (failure) *failure=SPDFCollectionError(6,current[@"error"]); return NO;
         }
         [self applyCleanupPlan:current toManifest:manifest];
-        manifest[@"settings"][@"storageLimitBytes"]=@(limit); return YES;
+        manifest[@"settings"][@"storageLimitBytes"]=@(limit);
+        manifest[@"settings"][@"storageMode"]=limit ? @"static" : @"unlimited"; return YES;
     } error:error];
 }
 - (BOOL)recordUserOpenForDocumentID:(NSString*)documentID error:(NSError**)error {

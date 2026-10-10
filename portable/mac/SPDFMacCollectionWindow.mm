@@ -111,6 +111,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
             return sort == 0 ? (NSComparisonResult)-result : result;
         }];
         unsigned long long used = [self.store storageUsedBytes];
+        NSDictionary* budget = [self.store storageBudget];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation != self.generation) return;
             self.reloadingResults = YES;
@@ -139,6 +140,9 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
             self.storage.stringValue = [NSString stringWithFormat:@"%@ used · %@",
                 [NSByteCountFormatter stringFromByteCount:(long long)used countStyle:NSByteCountFormatterCountStyleFile],
                 self.store.isEnabled ? @"Capturing" : @"Capture off"];
+            if ([budget[@"storageMode"] isEqual:@"dynamic"]) self.storage.stringValue=[self.storage.stringValue stringByAppendingFormat:@" · %@",
+                [budget[@"capacityAvailable"] boolValue] ? [NSString stringWithFormat:@"Current budget: %@",
+                    [NSByteCountFormatter stringFromByteCount:[budget[@"storageLimitBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]] : @"Disk space unavailable; automatic cleanup paused"];
             [self updateDetails];
             self.loadingResults=NO;
             @synchronized(self) {
@@ -193,7 +197,7 @@ static NSDictionary* LatestSavedVersion(NSDictionary* doc) {
         if ([action isEqual:@"keep:"]) {
             BOOL kept = SPDFCollectionSelectionIsKept(selectedRows);
             button.title = kept ? @"Stop keep forever" : @"Keep forever";
-            button.hidden = [self.store.settings[@"storageLimitBytes"] unsignedLongLongValue] == 0;
+            button.hidden = ![self.store isStorageLimited];
             button.toolTip = @"Keeping any version protects this document’s entire history from automatic storage cleanup. "
                 @"Removing all Keep forever marks allows cleanup; it does not delete anything immediately. Manual deletion is still available.";
         }
