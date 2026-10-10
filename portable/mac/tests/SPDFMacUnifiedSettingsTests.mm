@@ -2,6 +2,9 @@
 #import <objc/runtime.h>
 #import "../SPDFMacUnifiedSettings.h"
 #import "../SPDFMacSearchablePicker.h"
+@interface SPDFMacSearchablePicker (Probe)
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)command;
+@end
 static int failures;
 static NSEvent* pendingMouseUp;
 @interface NSWindow (SettingsProbe)
@@ -81,6 +84,20 @@ int main(void) { @autoreleasepool {
     Check(action==nil,@"rendering settings never requests network catalogue");
     model.opened(); Check([action isEqual:@"requestModels"],@"catalogue requested only on explicit open");
     model.selected(@"test/model"); Check([change[@"model"] isEqual:@"test/model"],@"model choice persists exact identifier");
+    SPDFMacSearchablePicker* filterProbe=[[SPDFMacSearchablePicker alloc] initWithFrame:NSMakeRect(0,0,300,28)];
+    filterProbe.choices=@[@{@"id":@"one/alpha",@"name":@"Alpha"},@{@"id":@"two/beta",@"name":@"Beta"},@{@"id":@"three/beta",@"name":@"Beta 2"}];
+    NSSearchField* query=[NSSearchField new]; NSTableView* table=[NSTableView new];
+    table.dataSource=(id<NSTableViewDataSource>)filterProbe; [table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"model"]];
+    [filterProbe setValue:query forKey:@"search"]; [filterProbe setValue:table forKey:@"table"];
+    query.stringValue=@"BETA"; [filterProbe refreshChoices];
+    Check([[filterProbe valueForKey:@"filtered"] count]==2,@"model dropdown filters names case-insensitively");
+    [filterProbe control:query textView:nil doCommandBySelector:@selector(moveDown:)];
+    __block NSString* selected; filterProbe.selected=^(NSString* value){selected=value;};
+    [filterProbe control:query textView:nil doCommandBySelector:@selector(insertNewline:)];
+    Check([selected isEqual:@"three/beta"],@"model dropdown arrows and Return choose exact model");
+    query.stringValue=@"one/"; [filterProbe refreshChoices];
+    Check([[filterProbe valueForKey:@"filtered"] count]==1,@"model dropdown searches provider IDs");
+    Check([filterProbe control:query textView:nil doCommandBySelector:@selector(cancelOperation:)],@"Escape dismisses model dropdown without committing");
     Check(Find(controller.window.contentView,@"saveCredential")==nil,@"API key alternative is initially hidden");
     [(NSButton*)Find(controller.window.contentView,@"revealKey") performClick:nil];
     NSSecureTextField* editingKey=[controller valueForKey:@"secret"];
