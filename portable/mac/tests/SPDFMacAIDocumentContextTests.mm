@@ -128,6 +128,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
 #import "SPDFMacAISparsePageChecks.h"
 #import "SPDFMacAIChatFolderToolChecks.h"
 #import "SPDFMacAICitationNavigationChecks.h"
+#import "SPDFMacAICurrentViewChecks.h"
 #import "SPDFMacAICollectionRenameChecks.h"
 #import "SPDFMacAIMetadataHistoryChecks.h"
 int main(void) { @autoreleasepool {
@@ -177,6 +178,7 @@ int main(void) { @autoreleasepool {
     progress=[NSProgress progressWithTotalUnitCount:1];
     PageRegionChecks(root);
     CheckPageImageTool(path);
+    CheckCurrentView(path,root);
     CheckSparsePageRead(path,root); CheckSparsePageBudgets(path);
     NSString* replay=NSProcessInfo.processInfo.environment[@"SPDF_SPARSE_READ_REPLAY"];
     if (replay.length) CheckSparsePageRead(replay,root);

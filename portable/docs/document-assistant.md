@@ -98,6 +98,11 @@ Page-only citations remain available for diagrams and other visual evidence.
 Changed or unavailable sources produce an explanation instead of navigating to
 an unverified passage. Source links contain opaque document IDs, not local paths.
 
+The assistant can request `current_view` to see the visible document viewport,
+including its zoom, scroll position, selection and highlights. This is captured
+only when the tool is called; it does not move the document or capture other
+applications. The response includes visible page regions and source links.
+
 When a requested fixed-layout page has very little extractable text, its read
 also supplies one bounded page image. Text extraction can miss drawings, outlined
 letters and spatial relationships; the assistant sees that limitation explicitly.
