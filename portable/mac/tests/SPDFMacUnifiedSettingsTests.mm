@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
 #import "../SPDFMacUnifiedSettings.h"
+#import "../SPDFMacSearchablePicker.h"
 static int failures;
 static NSEvent* pendingMouseUp;
 @interface NSWindow (SettingsProbe)
@@ -18,7 +19,12 @@ static NSView* Find(NSView* view,NSString* identifier) {
 }
 static void Inspect(NSView* view) {
     if([view isKindOfClass:NSButton.class] && !view.hidden) {
-        Check(NSWidth(view.frame)>15 && NSHeight(view.frame)>15,[@"button has a real target " stringByAppendingString:view.identifier ?: @""]);
+        NSView* ancestor=view.superview;
+        while(ancestor && ![ancestor isKindOfClass:NSSearchField.class]) ancestor=ancestor.superview;
+        // AppKit's internal search glyph has a 16×15 drawing frame; the enclosing
+        // native field owns its tracking. Check our field rather than its private glyph.
+        if(ancestor) Check(NSHeight(ancestor.frame)>=28,@"native search field has full-height tracking");
+        else Check(NSWidth(view.frame)>15 && NSHeight(view.frame)>15,[@"button has a real target " stringByAppendingString:view.identifier ?: @""]);
         if([NSStringFromClass(view.class) isEqual:@"SPDFSettingsButton"]) {
             NSView* root=view.window.contentView;
             for(NSValue* point in @[[NSValue valueWithPoint:NSMakePoint(2,2)],
@@ -39,7 +45,7 @@ int main(void) { @autoreleasepool {
     Check(!SPDFUnifiedSettingsShouldPresent(@{},YES,YES),@"detached process skips setup");
     NSDictionary* complete=@{@"settingsExperienceVersion":@(SPDFUnifiedSettingsExperienceVersion)};
     Check(!SPDFUnifiedSettingsShouldPresent(complete,YES,NO),@"complete experience does not repeat");
-    Check(SPDFUnifiedSettingsShouldPresent(@{@"settingsExperienceVersion":@1,@"showSettingsOnLaunch":@YES},YES,NO),@"explicit launch preference respected");
+    Check(!SPDFUnifiedSettingsShouldPresent(@{@"settingsExperienceVersion":@(SPDFUnifiedSettingsExperienceVersion),@"showSettingsOnLaunch":@YES},YES,NO),@"completed wizard does not reopen legacy settings prompt");
     SPDFMacUnifiedSettingsController* controller=[[SPDFMacUnifiedSettingsController alloc]
         initWithState:@{@"collectionEnabled":@YES,@"aiEnabled":@NO,@"autoAnalyze":@NO}];
     __block NSDictionary* change; __block NSString* action; __block NSString* credential;
@@ -69,15 +75,14 @@ int main(void) { @autoreleasepool {
         }
     }
     [controller selectSection:@"ai"];
-    NSTextField* editingModel=(id)Find(controller.window.contentView,@"model");
-    [controller.window makeFirstResponder:editingModel]; [editingModel selectText:nil];
-    NSTextView* modelEditor=(NSTextView*)editingModel.currentEditor;
-    Check(modelEditor!=nil,@"model uses a native active field editor");
-    modelEditor.string=@"deepseek/unfinished-draft"; modelEditor.selectedRange=NSMakeRange(9,5);
-    [controller updateState:@{@"modelStatus":@"Model checked",@"model":@"deepseek/previously-saved"}];
-    Check(Find(controller.window.contentView,@"model")==editingModel && editingModel.currentEditor==modelEditor &&
-        [modelEditor.string isEqual:@"deepseek/unfinished-draft"] && NSEqualRanges(modelEditor.selectedRange,NSMakeRange(9,5)),
-        @"model metadata callback preserves active draft, selection and editor");
+    SPDFMacSearchablePicker* model=(id)Find(controller.window.contentView,@"model");
+    Check([model isKindOfClass:SPDFMacSearchablePicker.class],@"model choice is searchable dropdown, not text input");
+    action=nil; [controller updateState:@{@"models":@[@{@"id":@"test/model",@"name":@"Test model"}]}];
+    Check(action==nil,@"rendering settings never requests network catalogue");
+    model.opened(); Check([action isEqual:@"requestModels"],@"catalogue requested only on explicit open");
+    model.selected(@"test/model"); Check([change[@"model"] isEqual:@"test/model"],@"model choice persists exact identifier");
+    Check(Find(controller.window.contentView,@"saveCredential")==nil,@"API key alternative is initially hidden");
+    [(NSButton*)Find(controller.window.contentView,@"revealKey") performClick:nil];
     NSSecureTextField* editingKey=[controller valueForKey:@"secret"];
     editingKey.stringValue=@"local-test-draft"; [controller.window makeFirstResponder:editingKey]; [editingKey selectText:nil];
     NSTextView* keyEditor=(NSTextView*)editingKey.currentEditor; keyEditor.selectedRange=NSMakeRange(2,4);
@@ -86,6 +91,7 @@ int main(void) { @autoreleasepool {
         [editingKey.stringValue isEqual:@"local-test-draft"] && NSEqualRanges(keyEditor.selectedRange,NSMakeRange(2,4)),
         @"asynchronous status preserves secure draft, selection and focus");
     [controller.window makeFirstResponder:nil];
+    [(NSButton*)Find(controller.window.contentView,@"hideKey") performClick:nil];
     NSButton* connect=(NSButton*)Find(controller.window.contentView,@"connect");
     Method original=class_getInstanceMethod(NSWindow.class,@selector(nextEventMatchingMask:));
     Method injected=class_getInstanceMethod(NSWindow.class,@selector(settingsProbeNextEventMatchingMask:));
@@ -109,6 +115,7 @@ int main(void) { @autoreleasepool {
     Check([action isEqual:@"connect"],@"browser connect routes to host");
     NSButton* autoAnalyze=(NSButton*)Find(controller.window.contentView,@"autoAnalyze"); [autoAnalyze performClick:nil];
     Check([change[@"autoAnalyze"] boolValue],@"automatic analysis is separate explicit preference");
+    [(NSButton*)Find(controller.window.contentView,@"revealKey") performClick:nil];
     NSSecureTextField* secret=[controller valueForKey:@"secret"]; secret.stringValue=@"test-only-not-a-key";
     [(NSButton*)Find(controller.window.contentView,@"saveCredential") performClick:nil];
     Check([credential isEqual:@"test-only-not-a-key"] && !secret.stringValue.length,@"key delivered separately and immediately cleared");
@@ -123,6 +130,33 @@ int main(void) { @autoreleasepool {
     Check(Find(controller.window.contentView,@"disconnect")!=nil,@"connected account exposes disconnect");
     [controller windowWillClose:[NSNotification notificationWithName:NSWindowWillCloseNotification object:controller.window]];
     Check([action isEqual:@"dismissed"],@"closing Settings never implies Collection consent");
+    SPDFMacUnifiedSettingsController* wizard=[[SPDFMacUnifiedSettingsController alloc] initWithState:@{@"setupWizard":@YES,@"wizardStep":@0}];
+    __block NSString* wizardAction; __block NSDictionary* wizardChange;
+    wizard.actionHandler=^(NSString* value){ wizardAction=value; };
+    wizard.settingsChanged=^(NSDictionary* value){ wizardChange=value; };
+    for(NSInteger step=0;step<4;step++) {
+        [wizard setValue:@(step) forKey:@"wizardStep"]; [wizard showSetupWizard]; [wizard.window.contentView layoutSubtreeIfNeeded];
+        Inspect(wizard.window.contentView);
+        NSBitmapImageRep* rep=[wizard.window.contentView bitmapImageRepForCachingDisplayInRect:wizard.window.contentView.bounds];
+        [wizard.window.contentView cacheDisplayInRect:wizard.window.contentView.bounds toBitmapImageRep:rep];
+        [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-wizard-%ld.png",(long)step] atomically:YES];
+    }
+    [wizard setValue:@0 forKey:@"wizardStep"]; [wizard showSetupWizard];
+    Check(Find(wizard.window.contentView,@"fullDiskAccess")!=nil,@"wizard begins with Full Disk Access");
+    Check(Find(wizard.window.contentView,@"accessibility")==nil,@"no Accessibility prompt");
+    [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
+    Check(wizard.wizardStep==1 && [wizardChange[@"wizardStep"] integerValue]==1,@"step transitions persist");
+    Check([(NSTextField*)Find(wizard.window.contentView,@"collectionDynamicPercent") doubleValue]==80,@"wizard default is dynamic 80 percent");
+    [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
+    Check(Find(wizard.window.contentView,@"autoAnalyze")==nil && Find(wizard.window.contentView,@"aiEnabled")==nil,@"wizard contains connection and model only");
+    [(NSButton*)Find(wizard.window.contentView,@"connect") performClick:nil];
+    Check([wizardAction isEqual:@"connect"],@"wizard connect directly invokes browser action");
+    [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
+    Check(Find(wizard.window.contentView,@"defaultReader:pdf")!=nil && Find(wizard.window.contentView,@"defaultReader:epub")!=nil,@"defaults are separate per format");
+    [(NSButton*)Find(wizard.window.contentView,@"defaultReader:epub") performClick:nil];
+    Check([wizardAction isEqual:@"defaultReader:epub"],@"default format routes independently");
+    [(NSButton*)Find(wizard.window.contentView,@"done") performClick:nil];
+    Check([wizardAction isEqual:@"wizardDone"] && !wizard.window.visible,@"wizard Done closes instead of opening settings");
     Check(!controller.window.visible,@"verification never shows a window");
     fprintf(stderr,"Unified settings: %d failures\n",failures); return failures?1:0;
 } }
