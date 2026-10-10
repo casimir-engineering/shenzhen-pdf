@@ -39,3 +39,29 @@ BOOL SPDFMacAIChatContainsCitation(NSDictionary* chat, NSDictionary* arguments) 
     }
     return NO;
 }
+NSDictionary* SPDFMacAIResolveCitation(NSDictionary* chat, NSDictionary* arguments) {
+    if (SPDFMacAIChatContainsCitation(chat,arguments)) return arguments;
+    if (!arguments[@"query"]) return nil;
+    // A model may append a made-up search query to a genuine page link. Never
+    // navigate to that passage; recover only the independently retrieved page.
+    NSMutableDictionary* page=[arguments mutableCopy]; [page removeObjectForKey:@"query"];
+    return SPDFMacAIChatContainsCitation(chat,page) ? page : nil;
+}
+NSString* SPDFMacAIRepairCitationLinks(NSString* text, NSDictionary* chat) {
+    if (![text containsString:@"spdf-ai://"]) return text;
+    NSRegularExpression* links=[NSRegularExpression regularExpressionWithPattern:@"spdf-ai://document\\?[^\\s<>)]+"
+        options:0 error:nil];
+    NSMutableString* repaired=[text mutableCopy];
+    NSArray* matches=[links matchesInString:text options:0 range:NSMakeRange(0,text.length)];
+    for (NSTextCheckingResult* match in matches.reverseObjectEnumerator) {
+        NSURLComponents* link=[NSURLComponents componentsWithString:[text substringWithRange:match.range]];
+        NSDictionary* original=SPDFMacAICitationArguments(link.URL);
+        NSDictionary* verified=SPDFMacAIResolveCitation(chat,original);
+        if (!verified || [original isEqual:verified]) continue;
+        NSMutableArray* items=[NSMutableArray array];
+        for (NSURLQueryItem* item in link.queryItems) if (![item.name isEqual:@"query"]) [items addObject:item];
+        link.queryItems=items;
+        [repaired replaceCharactersInRange:match.range withString:link.string];
+    }
+    return repaired;
+}

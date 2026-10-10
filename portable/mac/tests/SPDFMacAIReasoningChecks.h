@@ -4,10 +4,14 @@ static void CheckReasoning(NSURL* root) {
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
     [session send:@"Read the drawing" model:@"fake/reasoning" apiKey:@"test"];
     NSString* prompt=transport.messages.firstObject[@"content"];
-    CHECK(prompt.length<1800 && [prompt containsString:@"Default to 1-3 short sentences"] &&
+    CHECK(prompt.length<3400 && [prompt containsString:@"Default to 1-3 short sentences"] &&
           [prompt containsString:@"detailed reasoning, derivations, tables or extra suggestions only when the user asks"] &&
-          [prompt containsString:@"Stop inspecting once you can answer"],
+          [prompt containsString:@"Stop inspecting once the requested quantity is supported"],
           "compact request prompt defaults to a short cited answer without unsolicited exposition");
+    CHECK([prompt containsString:@"inspect the relevant drawing before relying on a table"] &&
+          [prompt containsString:@"arrows and extension lines"] && [prompt containsString:@"uninspected pages"] &&
+          [prompt containsString:@"never add a query"] && [prompt containsString:@"Brevity limits the reply, not the evidence"],
+          "brief replies retain visual scope checks and exact citation rules");
     CHECK(![prompt containsString:@"3.1 mm"] && ![prompt containsString:@"MSK13"],
           "general evidence rules do not hardcode a document or expected answer");
     NSArray* details=@[@{@"type":@"reasoning.encrypted",@"data":@"opaque-fixture-state",@"format":@"fixture"}];
