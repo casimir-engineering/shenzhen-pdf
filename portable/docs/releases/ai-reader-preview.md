@@ -3,16 +3,32 @@
 - Ask questions about open documents and get answers linked to retrieved pages.
 - Preview pages, organize groups, control the reader, and manage supported PDF comments.
 - Request a separate PDF export, OCR copy or translated copy; stop work and undo eligible changes.
-- Connect an OpenRouter model in Settings. Chat is optional; automatic analysis has its own opt-in.
+- Complete the four-step first-run setup; new installations default chat and summaries on.
+- Cloud requests wait until setup is complete and OpenRouter is connected.
 
 ---
 
 ## For readers
 
-Open **Settings → AI & documents** to connect OpenRouter in a browser or save an API key in
-Keychain. Select a provider model ID; ShenzhenPDF validates it and reports
-whether document tools are supported. Enable document chat before sending a
-question. Press **⌘K**, then Return with an empty search field to start a new
+The first normal launch opens a four-step setup after the reader is ready:
+**Full Disk Access**, **Collection**, **OpenRouter**, then **Default reader**.
+Full Disk Access is optional; you can continue and macOS will prompt if a later
+open needs it. Collection offers a dynamic limit based on 80% of free space plus
+existing Collection storage, a fixed limit, or Unlimited. OpenRouter connects in
+the browser or through an API key field revealed on request; keys stay in
+Keychain. Open the model picker to load and search the catalog of models that
+support tool calls. The final step lets you search file types and independently
+set ShenzhenPDF as their default reader. Setup explains that document text is
+sent to OpenRouter for summaries and missing chapters and that usage spends
+account credits. It has no Accessibility step. **Done** returns to the reader;
+Settings does not appear on each startup.
+
+New installations default document chat and automatic analysis to on, and
+existing saved preferences are preserved. This does not start cloud work before
+the wizard is complete and an OpenRouter account is connected. You can change
+these preferences later under **Settings → AI & documents**. Select a model
+from the catalog; availability can change and is checked with OpenRouter.
+Press **⌘K**, then Return with an empty search field to start a new
 chat. Return sends a message, Shift-Return adds a line. With a nonempty search
 query, Return continues to open the selected search result; use the explicit
 Ask action to start a new chat with that query as a draft, then press Return to send. The chat can be stopped with
@@ -41,13 +57,21 @@ translation or text-based answers can work. Stop cancels a running job. Undo
 closes its generated tab and deletes the output only while that exact output is
 unchanged.
 
-Automatic analysis is a separate setting. When enabled, a successful open can
-send a sample for a short summary, keywords and suggested chapters; authored
-bookmarks/headings take precedence. The analysis is cached by content, layout
-and model. Unchanged cached analysis is reused. A session is limited to 20 new
-analysis requests, each sampling no more than 30 pages or 64,000 characters.
+Automatic analysis sends a bounded sample for a short summary, keywords and
+suggested chapters after a successful document open when its setting is on;
+authored bookmarks/headings take precedence. The analysis is cached by
+content, layout and model. Unchanged cached analysis is reused. A session is
+limited to 20 uncached analysis requests, each sampling no more than 30 pages
+or 64,000 characters. Collection historical previews and editable copies of
+older revisions are excluded; only the current/latest source is analyzed.
 Analysis skips locked files, files over 256 MiB, and documents with no
 extractable text.
+
+When a compatible latest revision changes, the assistant can update its prior
+summary using that summary plus a bounded exact text delta (up to 32,000 changed
+UTF-16 code units), rather than sending the full excerpt again. If page
+coverage, outline, layout or change size is incompatible, it uses the bounded
+excerpt path instead.
 
 ## For AI agents
 
@@ -72,6 +96,16 @@ Responses, messages and tool rounds also have limits; when they are reached,
 the assistant reports that the user should narrow the request or start a new
 chat. It does not claim that a partial search covered the entire workspace.
 
+The `document_metadata` tool returns cached summary/keyword/chapter metadata
+and can list Collection revision IDs, dates, file sizes and diff status without
+reading archived document bytes. Supplying a `revisionID` explicitly requests
+a lazy text diff against the preceding revision. The diff uses saved text
+indexes only; it measures neither image changes nor full-file byte changes. It
+compares at most 30 pages and 128,000 combined text characters, with a 4 MiB
+limit per index, and labels coverage partial. Missing, encrypted or oversized
+indexes report an unavailable status and reason. A first revision and an
+identical revision also have explicit statuses.
+
 Mutating tools return action receipts and validate current document revisions
 or workspace state before committing. Undo checks the recorded post-action
 state. Document jobs write into an app-owned output directory and use exclusive
@@ -86,9 +120,12 @@ retention routing. If a selected provider cannot honor those parameters, the
 request fails without a weaker-privacy retry. This is a routing request, not an
 independent guarantee about all intermediaries. Chat may use account credits or
 incur provider charges; pricing depends on the selected model and account, and
-the reader does not estimate or cap that spend. Automatic analysis is opt-in;
-interactive chat sends only the context retrieved for the user's request.
+the reader does not estimate or cap that spend. Interactive chat sends only
+the context retrieved for the user's request. Automatic analysis defaults on
+for new installations, but cloud requests require completed setup and a
+connected OpenRouter account. Existing saved preferences are preserved.
 
 See the [document assistant guide](../document-assistant.md) for setup and
 operational detail, and [AI control and Markdown authoring](../agent-interface.md)
-for the separate headless CLI/MCP interface.
+for the separate headless CLI/MCP interface. See the [revision analysis validation](../journals/ai-reader/revision-analysis-validation.md)
+for the bounded text-delta and history-index implementation details.

@@ -7,23 +7,43 @@ some document jobs. It is optional and uses an OpenRouter model you connect.
 This guide describes the current macOS implementation; Linux and Windows do not
 provide this chat interface.
 
-## Set it up
+## First setup and account
 
-Open **Settings → AI & documents** from the chat, or open **Settings** from the reader.
-Connect OpenRouter in the browser, or enter an OpenRouter API key. The key is
-stored in this Mac's Keychain; model settings and chat transcripts are stored
-locally under `~/Library/Application Support/ShenzhenPDF/`. Choose a model in
-Settings; ShenzhenPDF checks the selected identifier against OpenRouter and
-reports whether document tools are supported. The default identifier is
-`deepseek/deepseek-v4.1-flash`, but availability can change and the connection
-status is the authority.
+On the first normal launch, a four-step setup appears after the reader is
+ready. It does not appear on every launch after you finish. The steps are:
 
-Enable **document chat** to send questions. Automatic document analysis is a
-separate option: when enabled, after a document is opened it can send a bounded
-sample to generate a short summary, keywords and suggested chapters. It does
-not replace authored PDF bookmarks or Markdown headings. No document content is
-sent by automatic analysis while that option is off. Disconnecting removes the
-saved key and disables chat. Turning chat off also cancels an active request.
+1. **Full Disk Access.** Open macOS System Settings to grant access to protected
+   folders such as Mail and Safari downloads. You can continue without it;
+   macOS will ask for access if a later open needs it. ShenzhenPDF may need to
+   be reopened after granting access. Setup does not add an Accessibility step.
+2. **Collection.** Choose whether to keep local copies and history, set its
+   location, and choose storage management. Dynamic uses up to 80% of free disk
+   space plus the space already used by Collection, adjusting as disk use
+   changes. Static sets a fixed limit; Unlimited is also available. Cleanup
+   applies to stored history, never to originals.
+3. **OpenRouter.** Connect in your browser, or reveal the API-key field when
+   you choose to use a key. Keys are stored in this Mac's Keychain. Open the
+   model picker to load its searchable catalog; it includes models that support
+   tool calls. The default model ID is `deepseek/deepseek-v4.1-flash`, subject
+   to current catalog availability.
+4. **Default reader.** Search supported file types and set ShenzhenPDF as the
+   default independently for each type you choose.
+
+The AI step explains that document text is sent to OpenRouter for background
+summaries and missing chapters, and that this uses account credits. New
+installations default document chat and automatic analysis to on; saved choices
+from existing installations are preserved. Defaults do not permit cloud work
+until setup is complete and an OpenRouter account is connected. **Done** returns
+you to the reader and does not make Settings appear at every startup. You can
+change chat and automatic analysis later under **Settings → AI & documents**.
+Turning chat off cancels an active chat request; turning automatic analysis off
+stops analysis work.
+
+Model settings, setup progress and chat transcripts are stored locally under
+`~/Library/Application Support/ShenzhenPDF/`; the credential itself is not
+written there. ShenzhenPDF validates the selected model through OpenRouter and
+shows the catalog's document-tool support status. Availability may change, so
+the current catalog and connection status are authoritative.
 
 ## Ask and manage chats
 
@@ -79,6 +99,35 @@ unprotected copy. Translation requires supported source and target language
 codes and extractable text; scan-only PDFs need OCR first. Undo closes the
 generated tab and removes the output only if it is still the exact generated
 file.
+
+## Automatic summaries and Collection history
+
+Automatic analysis is cached by source content, document layout and model.
+For Collection documents it applies to the current/latest source only; an
+immutable historical preview or an editable copy based on an older saved
+revision does not receive a separate automatic summary. Authored bookmarks and
+Markdown headings remain authoritative. Scans without extractable text are
+reported as unavailable for analysis rather than given invented chapters.
+
+The assistant's `document_metadata` tool can return Collection revision count,
+date, file sizes and whether a text diff has been computed. Listing that history
+reads Collection metadata only; it does not read or compare archived file
+bytes. A caller can pass a specific `revisionID` to request a diff against the
+preceding revision. That request lazily uses the saved text indexes. It reports
+added and removed UTF-16 text units and marks the result partial. It does not
+compare images or full file bytes. It checks at most 30 pages and 128,000
+combined indexed text characters, with a 4 MiB read limit per index. Missing,
+encrypted or oversized indexes return an explicit unavailable status and
+reason; a first revision and identical revisions also have explicit statuses.
+
+When a compatible latest-document revision changes, automatic analysis can
+update its prior summary, keywords and chapters using the previous analysis and
+a bounded text delta, instead of resending the full excerpt. The delta is
+limited to 32,000 changed UTF-16 code units. If page coverage, outline, layout
+or change size is incompatible, analysis falls back to the normal bounded
+excerpt. In either case, analysis remains limited to up to 30 pages and 64,000
+characters. See [revision analysis validation](journals/ai-reader/revision-analysis-validation.md)
+for the implementation record.
 
 ## Privacy, model use and limits
 
