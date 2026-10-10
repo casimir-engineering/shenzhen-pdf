@@ -35,20 +35,20 @@ void spdf_sidebar_mode_control_configure(NSControl* control, BOOL supportsCommen
 static void Configure(NSControl* control, BOOL supportsComments, BOOL hasSearch, BOOL hasHistory, BOOL hasGroups) {
     if (!control) return;
     NSInteger selectedMode = control.spdf_selectedSidebarMode;
-    NSInteger count = 1 + supportsComments + hasSearch + hasHistory + hasGroups;
+    NSInteger count = 1 + supportsComments + hasSearch + hasHistory + 2*hasGroups;
     if (control.segmentCount != count) control.segmentCount = count;
     NSInteger segment = 0;
-    for (NSInteger mode = SPDFSidebarModeChapters; mode <= SPDFSidebarModeGroups; ++mode) {
+    for (NSInteger mode = SPDFSidebarModeChapters; mode <= SPDFSidebarModeChats; ++mode) {
         if ((mode == SPDFSidebarModeComments && !supportsComments) ||
             (mode == SPDFSidebarModeSearch && !hasSearch) ||
             (mode == SPDFSidebarModeHistory && !hasHistory) ||
-            (mode == SPDFSidebarModeGroups && !hasGroups)) continue;
+            ((mode == SPDFSidebarModeGroups || mode == SPDFSidebarModeChats) && !hasGroups)) continue;
         [control setTag:mode forSegment:segment];
         if (mode >= SPDFSidebarModeSearch) [control setEnabled:YES forSegment:segment];
         [control setLabel:mode == SPDFSidebarModeChapters ? @"Chapters" :
                          (mode == SPDFSidebarModeComments ? @"Comments" :
                           (mode == SPDFSidebarModeSearch ? @"Search" :
-                           (mode == SPDFSidebarModeHistory ? @"History" : @"Groups"))) forSegment:segment];
+                           (mode == SPDFSidebarModeHistory ? @"History" : mode == SPDFSidebarModeChats ? @"Chats" : @"Groups"))) forSegment:segment];
         ++segment;
     }
     control.spdf_selectedSidebarMode = selectedMode;

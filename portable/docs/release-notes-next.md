@@ -8,6 +8,17 @@ validated metadata from master with `./portable/cut-release.sh --publish`.
 
 ## Next release
 
+- AI chats now use a searchable history sidebar and a separate resizable chat
+  panel next to the document. The Chats icon opens history; hide/reopen preserves
+  the current conversation and draft. Saved conversations can be continued later.
+- Undo and Redo cover supported assistant changes. The assistant can update saved
+  generated chapters, summaries, tags and language, and discover native app menus
+  and visible controls. Native commands report queued dispatch separately from
+  successful completion and do not claim generic Undo support.
+- Chat keyboard behavior handles IME composition, Return/Shift-Return, Escape,
+  and Cmd-Z/Cmd-Shift-Z from an empty composer. Light/dark native layouts and full
+  button hit areas have headless regression coverage.
+
 - Dropping a tab between groups joins General. If General does not exist, it is
   created at the drop position; an existing General keeps its position and is
   revealed if hidden. This also works between collapsed groups and when moving

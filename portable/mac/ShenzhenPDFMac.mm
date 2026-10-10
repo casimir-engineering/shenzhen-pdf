@@ -8834,7 +8834,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)setWorkspaceSidebarVisibleWithoutPolicy:(BOOL)visible {
     if (!_splitView || !_sidebarContainer || !_documentContainer) return;
     if (![_splitView.subviews containsObject:_sidebarContainer])
-        [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_documentContainer];
+        [_splitView addSubview:_sidebarContainer positioned:NSWindowBelow relativeTo:_splitView.subviews.firstObject];
     _sidebarContainer.hidden = NO;
     if (visible == _sidebarVisible) {
         _sidebarDividerView.hidden = !visible;
@@ -8981,7 +8981,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (BOOL)splitView:(NSSplitView*)splitView shouldAdjustSizeOfSubview:(NSView*)view {
-    if (splitView == _splitView) return view == _documentContainer;
+    if (splitView == _splitView) return view == _documentContainer || [_documentContainer isDescendantOf:view];
     return YES;
 }
 

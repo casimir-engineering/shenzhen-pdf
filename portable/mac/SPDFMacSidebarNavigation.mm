@@ -105,7 +105,7 @@ static NSString* Symbol(NSInteger mode) {
     return self;
 }
 - (NSSize)intrinsicContentSize {
-    return NSMakeSize(NSViewNoIntrinsicMetric,self.spdf_selectedSidebarMode == SPDFSidebarModeGroups ? 36 : 64);
+    return NSMakeSize(NSViewNoIntrinsicMetric,self.spdf_selectedSidebarMode >= SPDFSidebarModeGroups ? 36 : 64);
 }
 - (void)setDocumentTitle:(NSString*)title {
     if ([_documentTitle isEqualToString:title]) return;
@@ -149,8 +149,10 @@ static NSString* Symbol(NSInteger mode) {
     if (retainedFocus) [self.window makeFirstResponder:self];
 }
 - (void)syncRows {
+    _chats.state=self.spdf_selectedSidebarMode==SPDFSidebarModeChats ? NSControlStateValueOn : NSControlStateValueOff;
     for (NSUInteger i=0;i<_rows.count;i++) {
         SPDFSidebarNavigationRow* row = _rows[i];
+        row.hidden=[self tagForSegment:i]==SPDFSidebarModeChats;
         row.title = [self labelForSegment:i] ?: @""; row.mode = [self tagForSegment:i];
         row.accessibilityLabel = row.title; row.toolTip = row.mode == SPDFSidebarModeHistory ? @"History (⌘H)" : row.title;
         row.enabled = [self isEnabledForSegment:i];
@@ -208,7 +210,7 @@ static NSString* Symbol(NSInteger mode) {
     SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
     NSRectFill(NSMakeRect((_chats ? NSMinX(_chats.frame) : NSMinX(group.frame))-8,10,.5,16));
     if (_collapse) NSRectFill(NSMakeRect(NSMaxX(_collapse.frame)+8,10,.5,16));
-    if (self.spdf_selectedSidebarMode != SPDFSidebarModeGroups) {
+    if (self.spdf_selectedSidebarMode < SPDFSidebarModeGroups) {
         NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
         [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,45,MAX(0,NSWidth(self.bounds)-8),16)
             withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],
@@ -221,7 +223,7 @@ static NSString* Symbol(NSInteger mode) {
     if (self.hidden || !NSPointInRect(local,self.bounds)) return nil;
     if (_collapse && NSPointInRect(local,_collapse.frame)) return _collapse;
     if (_chats && NSPointInRect(local,_chats.frame)) return _chats;
-    for (NSView* row in _rows) if (NSPointInRect(local,row.frame)) return row;
+    for (NSView* row in _rows) if (!row.hidden && NSPointInRect(local,row.frame)) return row;
     return nil; // Empty header space belongs to the dedicated drag surface below.
 }
 - (void)chooseRow:(NSButton*)row {

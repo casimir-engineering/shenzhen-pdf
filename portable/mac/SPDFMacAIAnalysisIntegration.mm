@@ -201,7 +201,7 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
             if(CollectionCopyCandidate(candidate))[self aiObserveCollectionAnalysisRevisions:candidate];
             if (!owner || !CurrentCollectionGeneration(owner,candidate) || objc_getAssociatedObject(owner,&analysisSettingsKey)!=settings ||
                 !settings.enabled || !settings.automaticAnalysis || ![settings.model isEqual:analysis[@"model"] ?: settings.model] ||
-                ![settings.language isEqual:analysis[@"language"] ?: settings.language] ||
+                (![analysis[@"userRequestedOverride"] boolValue] && ![settings.language isEqual:analysis[@"language"] ?: settings.language]) ||
                 !SameCandidate(candidate,Candidate(owner,path))) return;
             NSMutableDictionary* results=objc_getAssociatedObject(owner,&analysisResultsKey);
             if (!results) { results=[NSMutableDictionary dictionary]; objc_setAssociatedObject(owner,&analysisResultsKey,results,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
@@ -211,6 +211,12 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
             } else if (error) results[path]=@{@"analysis":@{@"error":error.localizedDescription ?: @"Analysis unavailable"},
                 @"candidate":candidate};
             if ([owner->_path isEqual:path]) [owner rebuildSidebar];
+}
+- (void)aiPublishUpdatedMetadata:(NSDictionary*)analysis path:(NSString*)path {
+    SPDFMacAISettings* settings=objc_getAssociatedObject(self,&analysisSettingsKey);
+    NSMutableDictionary* candidate=[Candidate(self,path) mutableCopy];
+    if(CollectionCopyCandidate(candidate))candidate[@"collectionGeneration"]=@([self aiObserveCollectionAnalysisRevisions:candidate].generation);
+    [self aiInstallAnalysis:analysis error:nil candidate:candidate settings:settings];
 }
 - (NSDictionary*)aiAnalysisForPath:(NSString*)path {
     NSDictionary* entry=[objc_getAssociatedObject(self,&analysisResultsKey) objectForKey:path ?: @""];

@@ -48,6 +48,7 @@ NSDictionary* SPDFAIValidateAnalysis(id value, NSUInteger pageCount, BOOL author
     }
     NSMutableDictionary* result=[@{@"schema":@1,@"summary":summary,@"keywords":keywords,@"tags":cleanTags,@"chapters":valid,
         @"pageCount":@(pageCount),@"generated":@YES} mutableCopy];
+    if([value[@"userRequestedOverride"] isEqual:@YES])result[@"userRequestedOverride"]=@YES;
     id analyzed=value[@"analyzedPages"];
     if (analyzed) {
         if (![analyzed isKindOfClass:NSArray.class] || [analyzed count]>10000)

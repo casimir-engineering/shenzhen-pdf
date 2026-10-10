@@ -9,7 +9,8 @@ typedef NS_ENUM(NSInteger, SPDFSidebarMode) {
     SPDFSidebarModeComments = 1,
     SPDFSidebarModeSearch = 2,
     SPDFSidebarModeHistory = 3,
-    SPDFSidebarModeGroups = 4
+    SPDFSidebarModeGroups = 4,
+    SPDFSidebarModeChats = 5
 };
 
 @interface SPDFSidebarNavigationControl : NSControl

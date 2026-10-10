@@ -59,13 +59,9 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
     return @{@"type":@"function",@"function":@{@"name":name,@"description":description,
         @"parameters":@{@"type":@"object",@"properties":properties,@"required":required,@"additionalProperties":@NO}}};
 }
-@interface SPDFMacAITools ()
-@property(nonatomic,weak) ShenzhenMacDelegate* reader;
-@property(nonatomic,strong) NSOperationQueue* queue;
-@property(nonatomic,strong) NSProgress* progress;
-@property(nonatomic) NSUInteger generation;
-@property(nonatomic,strong) NSMutableArray<NSDictionary*>* actions;
-@end
+#import "SPDFMacAIToolsPrivate.h"
+#import "SPDFMacAIMetadataActions.h"
+#import "SPDFMacAIAppAccess.h"
 @implementation SPDFMacAITools
 - (instancetype)initWithReader:(ShenzhenMacDelegate*)reader {
     if ((self=[super init])) { _reader=reader; _actions=[NSMutableArray array]; }
@@ -118,6 +114,11 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
               @"index":Field(@"integer",@"Zero-based comment index for edit/delete."),
               @"text":Field(@"string",@"Comment text for add/edit."),@"author":Field(@"string",@"Optional comment author.")},
             @[@"path",@"revision",@"operation"]),
+        Definition(@"app_controls",@"Discover or operate the app's native menus, settings and dialog controls. inspect lists current controls and menu commands; activate uses a returned ID; set supplies a text value or exact choice title. Explicit user-requested operations only. Prefer typed document tools for edits and Undo. Native commands may open confirmation, file or permission dialogs; inspect again instead of claiming completion. Passwords/API keys are excluded.",
+            @{@"operation":Field(@"string",@"inspect, activate or set"),@"id":Field(@"string",@"Returned control/menu ID"),@"value":Field(@"string",@"Text or option title")},@[]),
+        Definition(@"update_document_metadata",@"Update the document's actual saved AI metadata, not just a chat answer. Use to rewrite or translate generated chapters, edit summary or tags (max 6). Read document_metadata and read_pages first. metadata may contain summary, tags, keywords, chapters (title/page/level objects) and language (e.g. en/fr/zh-Hans). Preserve page anchors. Authored file headings remain unchanged. Reversible with Undo/Redo.",
+            @{@"path":path,@"revision":Field(@"string",@"Current source revision"),@"metadata":Field(@"object",@"Only fields to change")},@[@"path",@"revision",@"metadata"]),
+        Definition(@"redo_action",@"Redo the last undone assistant action if the document and workspace are unchanged.",@{},@[]),
         Definition(@"undo_action",@"Undo the most recent assistant action if its result is still unchanged. Never overwrites intervening human edits.",@{},@[])
     ];
 }
@@ -133,7 +134,7 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         action[@"control"] ? [self.reader aiUndoReaderControl:action[@"control"] progress:self.progress] :
         action[@"document"] ? [self.reader aiUndoDocumentAction:action[@"document"] progress:self.progress] :
         [self.reader aiRestoreWorkspace:action[@"before"] expected:action[@"after"]]);
-    if (restored) [self.actions removeLastObject];
+    if (restored) { [self.actions removeLastObject];[self retainUndoneAction:action]; }
     else if (error) *error=[NSError errorWithDomain:@"ShenzhenPDF.AI.Tool" code:1
         userInfo:@{NSLocalizedDescriptionKey:action ? @"The workspace changed after this action. Undo would overwrite your changes." : @"No assistant action to undo."}];
     return restored;
@@ -209,7 +210,13 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         }
         mapped[@"command"]=command;
     }
-    [self performInternalTool:name arguments:mapped completion:^(NSDictionary* result){ completion(Externalize(result,@"")); }];
+    [self performInternalTool:name arguments:mapped completion:^(NSDictionary* result){
+        if(result[@"actionID"] && [self.actions.lastObject[@"id"] isEqual:result[@"actionID"]]) {
+            NSMutableDictionary* action=[self.actions.lastObject mutableCopy];action[@"forward"]=@{@"name":name,@"arguments":[mapped copy]};
+            self.actions[self.actions.count-1]=action;[self.redoActions removeAllObjects];
+        }
+        completion(Externalize(result,@""));
+    }];
 }
 - (void)performInternalTool:(NSString*)name arguments:(NSDictionary*)arguments completion:(void (^)(NSDictionary*))completion {
     if (!NSThread.isMainThread) {
@@ -247,8 +254,21 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         completion(ToolError(@"Collection version must be latest or saved-copy.")); return;
     }
     if ([name isEqual:@"undo_action"]) {
-        NSError* error=nil; BOOL done=[self undoLastAction:&error];
-        completion(done ? @{@"undone":@YES} : ToolError(error.localizedDescription)); return;
+        [self undoWithCompletion:completion]; return;
+    }
+    if([name isEqual:@"app_controls"]) {
+        completion([self.reader aiAppAccess:arguments]);return;
+    }
+    if([name isEqual:@"redo_action"]) { [self redoWithCompletion:completion];return; }
+    if([name isEqual:@"update_document_metadata"]) {
+        self.progress=[NSProgress progressWithTotalUnitCount:1];
+        [self.reader aiUpdateMetadata:arguments progress:self.progress completion:^(NSDictionary* result){
+            if(result[@"error"]) {completion(result);return;}
+            NSString* identifier=NSUUID.UUID.UUIDString;
+            [self.actions addObject:@{@"id":identifier,@"metadata":result[@"metadataReceipt"]}];
+            if(self.actions.count>8)[self.actions removeObjectAtIndex:0];
+            completion(@{@"changed":@YES,@"actionID":identifier,@"undoable":@YES,@"metadata":result[@"metadata"]});
+        }];return;
     }
     if ([name isEqual:@"organize_groups"]) {
         NSDictionary* command=arguments[@"command"];

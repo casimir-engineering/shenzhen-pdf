@@ -4,6 +4,7 @@
 #import "SPDFMacAIChatMarkdown.h"
 #import "SPDFMacGroupActionButton.h"
 #import "SPDFMacAIChatStore.h"
+#import "SPDFMacPanelSearchField.h"
 @interface SPDFChatButton : SPDFGroupActionButton
 @end
 @implementation SPDFChatButton
@@ -21,9 +22,9 @@
     }
     if(self.image) {
         NSImageSymbolConfiguration* configuration=[[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightMedium]
-            configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFCollectionColor(@"text")]]];
+            configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFCollectionColor(self.enabled ? @"text" : @"secondary")]]];
         NSImage* icon=[self.image imageWithSymbolConfiguration:configuration];
-        [icon drawInRect:[self rectForSymbol:icon] fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+        [icon drawInRect:[self rectForSymbol:icon] fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : .65 respectFlipped:YES hints:nil];
         if(self.state==NSControlStateValueOn) { [NSColor.controlAccentColor setStroke]; [shape stroke]; }
     } else {
     NSMutableParagraphStyle* p=[NSMutableParagraphStyle new]; p.alignment=self.alignment; p.lineBreakMode=NSLineBreakByTruncatingTail;
@@ -83,6 +84,8 @@
 @interface SPDFChatComposer : NSTextView
 @property(nonatomic, copy) void (^submit)(void);
 @property(nonatomic, copy) void (^undoAction)(void);
+@property(nonatomic, copy) void (^redoAction)(void);
+@property(nonatomic, copy) void (^closeAction)(void);
 @end
 @implementation SPDFChatComposer
 - (BOOL)becomeFirstResponder { BOOL ok=[super becomeFirstResponder]; [(SPDFChatInputScrollView*)self.enclosingScrollView updateBorder]; return ok; }
@@ -92,12 +95,20 @@
     if(!self.string.length) [@"Ask about your documents…" drawAtPoint:NSMakePoint(13,8)
         withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:13],NSForegroundColorAttributeName:SPDFCollectionColor(@"secondary")}];
 }
+- (BOOL)performKeyEquivalent:(NSEvent*)event {
+    if(self.window.firstResponder==self && !self.hiddenOrHasHiddenAncestor && !self.hasMarkedText && !self.string.length && (event.modifierFlags & NSEventModifierFlagCommand) &&
+       [event.charactersIgnoringModifiers.lowercaseString isEqual:@"z"]) {[self keyDown:event];return YES;}
+    return [super performKeyEquivalent:event];
+}
 - (void)keyDown:(NSEvent*)event {
+    if(self.hasMarkedText) {[super keyDown:event];return;}
+    if(event.keyCode==53 && !self.hasMarkedText) { if(self.closeAction)self.closeAction();return; }
     if ((event.keyCode==36 || event.keyCode==76) && !(event.modifierFlags & NSEventModifierFlagShift)) {
         if (self.submit) self.submit(); return;
     }
-    if ((event.modifierFlags & NSEventModifierFlagCommand) && [event.charactersIgnoringModifiers isEqual:@"z"] && !self.string.length) {
-        if (self.undoAction) self.undoAction(); return;
+    if ((event.modifierFlags & NSEventModifierFlagCommand) && [event.charactersIgnoringModifiers.lowercaseString isEqual:@"z"] && !self.string.length) {
+        if(event.modifierFlags & NSEventModifierFlagShift) {if(self.redoAction)self.redoAction();}
+        else if (self.undoAction) self.undoAction(); return;
     }
     [super keyDown:event];
 }
@@ -106,13 +117,13 @@
 @implementation SPDFChatFlippedView
 - (BOOL)isFlipped { return YES; }
 @end
-@interface SPDFMacAIChatView () <NSTextViewDelegate>
+@interface SPDFMacAIChatView () <NSTextViewDelegate,NSSearchFieldDelegate>
 @end
 @implementation SPDFMacAIChatView {
     SPDFChatComposer* _composer; NSTextField* _status; NSTextField* _inputHelp; NSScrollView* _scroll; NSScrollView* _input; NSStackView* _messages;
     NSLayoutConstraint* _inputHeight; NSLayoutConstraint* _stopTrailing; NSLayoutConstraint* _stopHistoryTrailing;
     NSStackView* _issue; NSTextField* _issueText; NSButton* _recovery; NSLayoutConstraint* _issueHeight;
-    NSButton* _pinApp; NSButton* _pinAll; NSTextField* _activityDetail; NSProgressIndicator* _progress;
+    NSButton* _redo; NSSearchField* _chatSearch; NSTextField* _activityDetail; NSProgressIndicator* _progress;
     NSTextField* _prompt; NSLayoutConstraint* _promptHeight; NSArray* _displayedMessages;
     NSString* _submissionError; NSButton* _send; NSButton* _stop; NSButton* _undo; NSUInteger _visibleLimit; NSString* _chatID; BOOL _history; BOOL _running; BOOL _preserveScroll; __weak SPDFMacAIChatSession* _displayedSession;
 }
@@ -130,13 +141,7 @@
     if(top && widthChanged) dispatch_async(dispatch_get_main_queue(), ^{ [self scrollToNewest]; });
 }
 - (NSTextView*)composer { return _composer; }
-- (void)setPinMode:(NSInteger)mode {
-    _pinApp.state=mode==1 ? NSControlStateValueOn : NSControlStateValueOff;
-    _pinAll.state=mode==2 ? NSControlStateValueOn : NSControlStateValueOff;
-    _pinApp.toolTip=mode==1 ? @"Stop keeping chat above ShenzhenPDF windows" : @"Keep chat above ShenzhenPDF windows";
-    _pinAll.toolTip=mode==2 ? @"Stop keeping chat above all windows" : @"Keep chat above all windows";
-    _pinApp.needsDisplay=YES; _pinAll.needsDisplay=YES;
-}
+- (void)setHistorySearchQuery:(NSString*)query {if(![_chatSearch.stringValue isEqual:query])_chatSearch.stringValue=query ?: @"";}
 - (NSButton*)button:(NSString*)title action:(NSString*)action {
     SPDFChatButton* b=[[SPDFChatButton alloc] initWithFrame:NSZeroRect];
     b.title=title ?: @"Untitled chat"; b.font=[NSFont systemFontOfSize:13]; b.bordered=NO;
@@ -147,21 +152,22 @@
 - (instancetype)initWithFrame:(NSRect)frame {
     if (!(self=[super initWithFrame:frame])) return nil;
     _visibleLimit=40; _undo=[self button:@"Undo" action:@"undo"]; _undo.enabled=NO; _undo.toolTip=@"Undo the assistant’s last action";
-    _pinApp=[self button:@"" action:@"pinApp"]; _pinAll=[self button:@"" action:@"pinAll"];
-    _pinApp.image=[NSImage imageWithSystemSymbolName:@"pin" accessibilityDescription:nil];
-    _pinAll.image=[NSImage imageWithSystemSymbolName:@"pin.circle" accessibilityDescription:nil];
-    _pinApp.toolTip=@"Keep chat above ShenzhenPDF windows"; _pinApp.accessibilityLabel=_pinApp.toolTip;
-    _pinAll.toolTip=@"Keep chat above all windows"; _pinAll.accessibilityLabel=_pinAll.toolTip;
-    NSStackView* header=[NSStackView stackViewWithViews:@[[self button:@"New chat" action:@"new"],
-        [self button:@"Chats" action:@"history"],_undo,_pinApp,_pinAll,
-        [self button:@"Settings" action:@"settings"],[self button:@"Close" action:@"close"]]];
-    header.arrangedSubviews.lastObject.toolTip=@"Close chat · Escape";
-    header.spacing=4; header.translatesAutoresizingMaskIntoConstraints=NO; [self addSubview:header];
+    _redo=[self button:@"Redo" action:@"redo"];_redo.enabled=NO;
+    NSArray* buttons=@[[self button:@"New chat" action:@"new"],[self button:@"Past chats" action:@"history"],_undo,_redo,
+        [self button:@"AI settings" action:@"settings"],[self button:@"Hide chat panel" action:@"close"]];
+    NSArray* symbols=@[@"square.and.pencil",@"bubble.left.and.bubble.right",@"arrow.uturn.backward",@"arrow.uturn.forward",@"gearshape",@"sidebar.left"];
+    for(NSUInteger i=0;i<buttons.count;i++){NSButton* button=buttons[i];button.image=[NSImage imageWithSystemSymbolName:symbols[i] accessibilityDescription:nil];button.title=@"";[button.widthAnchor constraintEqualToConstant:28].active=YES;}
+    NSStackView* header=[NSStackView stackViewWithViews:buttons];header.spacing=8;header.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:header];
+    _chatSearch=[NSSearchField new];SPDFConfigurePanelSearchField(_chatSearch);_chatSearch.placeholderString=@"Search previous chats";
+    _chatSearch.accessibilityLabel=_chatSearch.placeholderString;_chatSearch.delegate=self;_chatSearch.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:_chatSearch];
+    [NSLayoutConstraint activateConstraints:@[[_chatSearch.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:12],
+        [_chatSearch.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-12],[_chatSearch.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
+        [_chatSearch.heightAnchor constraintEqualToConstant:30]]];
     _status=SPDFCollectionText(@"Ready for your question",13,NSFontWeightSemibold,NO);
     _status.identifier=@"chatStatus"; _status.translatesAutoresizingMaskIntoConstraints=NO; _status.maximumNumberOfLines=2; [self addSubview:_status];
     _progress=[NSProgressIndicator new]; _progress.style=NSProgressIndicatorStyleSpinning; _progress.controlSize=NSControlSizeSmall;
     _progress.displayedWhenStopped=NO; _progress.translatesAutoresizingMaskIntoConstraints=NO; [self addSubview:_progress];
-    _activityDetail=SPDFCollectionText(@"Answers cite your documents · newest messages first",12,NSFontWeightRegular,YES);
+    _activityDetail=SPDFCollectionText(@"Sources link to highlighted passages",12,NSFontWeightRegular,YES);
     _activityDetail.identifier=@"chatActivityDetail"; _activityDetail.maximumNumberOfLines=2;
     _activityDetail.translatesAutoresizingMaskIntoConstraints=NO; [self addSubview:_activityDetail];
     _prompt=SPDFCollectionText(@"",13,NSFontWeightMedium,NO); _prompt.identifier=@"latestUserPrompt";
@@ -186,13 +192,15 @@
     input.documentView=_composer; [self addSubview:input];
     _send=[self button:@"Send ↵" action:@"send"]; _stop=[self button:@"Stop" action:@"stop"];
     [self addSubview:_send]; [self addSubview:_stop];
-    NSTextField* inputHelp=SPDFCollectionText(@"Return sends · Shift Return adds a line",11,NSFontWeightRegular,YES);
+    NSTextField* inputHelp=SPDFCollectionText(@"↵ Send · ⇧↵ New line",11,NSFontWeightRegular,YES);
     _inputHelp=inputHelp; inputHelp.translatesAutoresizingMaskIntoConstraints=NO; [self addSubview:inputHelp];
     [inputHelp.leadingAnchor constraintEqualToAnchor:input.leadingAnchor].active=YES;
     [inputHelp.centerYAnchor constraintEqualToAnchor:_send.centerYAnchor].active=YES;
     [inputHelp.trailingAnchor constraintLessThanOrEqualToAnchor:_stop.leadingAnchor constant:-12].active=YES;
     __weak __typeof__(self) weakSelf=self;
     _composer.submit=^{ [weakSelf submit]; }; _composer.undoAction=^{ if (weakSelf.action) weakSelf.action(@"undo"); };
+    _composer.redoAction=^{if(weakSelf.action)weakSelf.action(@"redo");};
+    _composer.closeAction=^{if(weakSelf.action)weakSelf.action(@"close");};
     _issueText=SPDFCollectionText(@"",12,NSFontWeightMedium,NO); _issueText.maximumNumberOfLines=3;
     _issueText.identifier=@"chatSubmissionError";
     _recovery=[self button:@"AI settings…" action:@"settings"];
@@ -206,7 +214,7 @@
     _stopHistoryTrailing=[_stop.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16];
     [NSLayoutConstraint activateConstraints:@[
         [header.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:16],
-        [header.topAnchor constraintEqualToAnchor:self.topAnchor constant:12],
+        [header.topAnchor constraintEqualToAnchor:_chatSearch.bottomAnchor constant:6],
         [header.trailingAnchor constraintLessThanOrEqualToAnchor:self.trailingAnchor constant:-16],
         [_status.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
         [_status.trailingAnchor constraintEqualToAnchor:_progress.leadingAnchor constant:-8],
@@ -243,6 +251,7 @@
     ]];
     return self;
 }
+- (void)controlTextDidChange:(NSNotification*)note { (void)note;if(self.searchChats)self.searchChats([_chatSearch.stringValue copy]); }
 - (void)submit {
     NSString* text=[_composer.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!text.length || !_send.enabled) return;
@@ -265,12 +274,12 @@
 - (void)addText:(NSString*)text role:(NSString*)role {
     NSTextField* label=SPDFCollectionText(role,11,NSFontWeightSemibold,YES); [_messages addArrangedSubview:label];
     BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
-    NSMutableAttributedString* safe=[SPDFMacAIChatMarkdown(text,MAX(220,self.bounds.size.width-68),dark) mutableCopy];
+    NSMutableAttributedString* safe=[SPDFMacAIChatMarkdown(text,MAX(100,self.bounds.size.width-68),dark) mutableCopy];
     // The document renderer terminates blocks with newlines. A chat row already
     // owns its inter-message spacing, so a final blank paragraph must not add it again.
     while(safe.length && [NSCharacterSet.newlineCharacterSet characterIsMember:[safe.string characterAtIndex:safe.length-1]])
         [safe deleteCharactersInRange:NSMakeRange(safe.length-1,1)];
-    SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(240,self.bounds.size.width-48),40)];
+    SPDFChatMessageView* view=[[SPDFChatMessageView alloc] initWithFrame:NSMakeRect(0,0,MAX(120,self.bounds.size.width-48),40)];
     view.verticallyResizable=NO; view.horizontallyResizable=NO;
     view.editable=NO; view.selectable=YES; view.drawsBackground=NO; view.delegate=self;
     view.backgroundColor=SPDFCollectionColor([role isEqual:@"You"] ? @"selected" : @"control");
@@ -328,7 +337,7 @@
     _displayedSession=session; _running=session.running;
     BOOL issueVisible=!_history && _submissionError.length>0;
     _issue.hidden=!issueVisible; _issueHeight.constant=issueVisible ? 60 : 0;
-    NSString* fallback=_history ? @"Chats are saved on this Mac" : @"Answers cite your documents · newest messages first";
+    NSString* fallback=_history ? @"Chats are saved on this Mac" : @"Sources link to highlighted passages";
     SPDFMacAIChatActivityState state=session.activityState;
     NSString* title=_history ? @"Your chats" : @"Ready for your question";
     if(state==SPDFMacAIChatActivityThinking) title=@"Thinking…";
@@ -354,8 +363,9 @@
     _input.hidden=_history; _send.hidden=_history; _inputHeight.constant=_history ? 0 : 68;
     _stopTrailing.active=NO; _stopHistoryTrailing.active=NO;
     (_history ? _stopHistoryTrailing : _stopTrailing).active=YES;
-    _inputHelp.stringValue=_history ? @"Select a chat above, or start a new one." : @"Return sends · Shift Return adds a line";
-    _undo.enabled=[session respondsToSelector:@selector(canUndo)] && [[session valueForKey:@"canUndo"] boolValue];
+    _inputHelp.stringValue=_history ? @"Select a chat above, or start a new one." : @"↵ Send · ⇧↵ New line";
+    _redo.enabled=[session respondsToSelector:@selector(canRedo)] && session.canRedo && !session.running;
+    _undo.enabled=!session.running && [session respondsToSelector:@selector(canUndo)] && [[session valueForKey:@"canUndo"] boolValue];
     _status.textColor=NSColor.labelColor;
     NSAccessibilityPostNotification(_status,NSAccessibilityValueChangedNotification);
 }
@@ -374,7 +384,7 @@
     _history=NO; [self refreshActivityFromSession:session]; _chatID=session.chat[@"id"];
     _displayedMessages=[[NSArray alloc] initWithArray:messages ?: @[] copyItems:YES]; [self clearRows];
     if (!messages.count) {
-        [self addText:@"# Your documents, in conversation\nFind an answer across groups, explain a page, or organize your workspace.\n\nTry **“Find the power requirements in my open documents”** or **“Summarize this document and suggest chapters.”**\n\nOnly requested context is sent to your model. You can stop a task or undo its changes." role:@"Shenzhen PDF"];
+        [self addText:@"# Document chat\nAsk about a document, find an answer across groups, or organize your tabs.\n\nTry **“Find the power requirements in my open documents”** or **“Summarize this document and suggest chapters.”**\n\nOnly requested context is sent to your model. Stop cancels a running task. Undo and Redo are available for supported edits." role:@"Shenzhen PDF"];
     } else {
         NSUInteger visible=0; BOOL hasOlder=NO;
         for (NSDictionary* message in messages.reverseObjectEnumerator) {

@@ -19,6 +19,7 @@ static NSEvent* pendingUp;
 @property(nonatomic) NSString* status;
 @property(nonatomic) BOOL running;
 @property(nonatomic) BOOL canUndo;
+@property(nonatomic) BOOL canRedo;
 @property(nonatomic) SPDFMacAIChatActivityState activityState;
 @property(nonatomic) NSString* activityDetail;
 @end
@@ -47,6 +48,7 @@ static NSUInteger ImageCount(NSView* view) {
     for(NSView* child in view.subviews) count+=ImageCount(child); return count;
 }
 static void Capture(NSView* view,NSString* name) {
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.03]];
     [view layoutSubtreeIfNeeded];
     NSBitmapImageRep* rep=[view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
     Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[@"/tmp/sz-ai-chat-" stringByAppendingFormat:@"%@.png",name] atomically:YES],@"native state evidence saved");
@@ -64,6 +66,7 @@ static void Click(NSWindow* window,NSButton* button,NSPoint local) {
     Method injected=class_getInstanceMethod(NSWindow.class,@selector(chatProbeEvent:));
     method_exchangeImplementations(original,injected); [hit mouseDown:down]; method_exchangeImplementations(original,injected);
 }
+#import "SPDFMacAIChatDockChecks.h"
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     NSAttributedString* safe=SPDFMacAIChatMarkdown(@"**Evidence** [page](spdf-ai://document?path=test&page=2) [site](https://example.com) [unsafe](file:///tmp/private) ![hidden](file:///tmp/private.png) ![remote](https://example.com/tracker.png)",500,YES);
@@ -132,28 +135,37 @@ int main(void) { @autoreleasepool {
         Check(!view.composer.string.length,@"accepted native click clears submitted text");
     }
     Check(accepted==2,@"each full-bounds click submits exactly once");
-    __block NSInteger pinMode=0; __block NSUInteger pinActions=0;
-    __weak SPDFMacAIChatView* weakView=view;
-    view.action=^(NSString* action){
-        if([action isEqual:@"pinApp"] || [action isEqual:@"pinAll"]) {
-            NSInteger next=[action isEqual:@"pinApp"] ? 1 : 2; pinMode=pinMode==next ? 0 : next;
-            [weakView setPinMode:pinMode]; pinActions++;
-        }
-    };
-    NSButton* pinApp=(id)Find(view,@"pinApp"); NSButton* pinAll=(id)Find(view,@"pinAll");
-    Check(pinApp.image && pinAll.image && pinApp.toolTip.length && pinAll.toolTip.length,@"both pin modes have native symbols and hover explanations");
-    for(NSButton* pin in @[pinApp,pinAll]) {
-        NSRect icon=[pin rectForSymbol:pin.image];
-        Check(NSContainsRect(NSInsetRect(pin.bounds,6,6),icon) &&
-            fabs(NSWidth(icon)/NSHeight(icon)-pin.image.size.width/pin.image.size.height)<.0001,@"pin symbol fits its target without changing aspect ratio");
+    [window makeFirstResponder:view.composer];
+    [view.composer setMarkedText:@"中文" selectedRange:NSMakeRange(2,0) replacementRange:NSMakeRange(NSNotFound,0)];
+    [view.composer keyDown:[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:window.windowNumber context:nil characters:@"\r" charactersIgnoringModifiers:@"\r" isARepeat:NO keyCode:36]];
+    Check(accepted==2,@"IME Return confirms composition without sending unfinished text");
+    [view.composer unmarkText];view.composer.string=@"";
+
+    __block NSMutableArray* actions=[NSMutableArray array];
+    view.action=^(NSString* action){[actions addObject:action];};
+    fixture.canUndo=YES;fixture.canRedo=YES;[view refreshActivityFromSession:(id)fixture];
+    [window setContentSize:NSMakeSize(360,600)];[view layoutSubtreeIfNeeded];
+    for(NSString* key in @[@"new",@"history",@"undo",@"redo",@"settings",@"close"]) {
+        NSButton* button=(id)Find(view,key);
+        Check(button.image && button.toolTip.length,@"panel actions have vector symbols and hover help");
+        NSRect icon=[button rectForSymbol:button.image];
+        Check(NSContainsRect(NSInsetRect(button.bounds,6,6),icon) &&
+            fabs(NSWidth(icon)/NSHeight(icon)-button.image.size.width/button.image.size.height)<.0001,@"symbols keep fixed aspect ratio");
+        Click(window,button,NSMakePoint(2,2));
+        Click(window,button,NSMakePoint(NSWidth(button.bounds)-2,NSHeight(button.bounds)-2));
     }
-    Click(window,pinApp,NSMakePoint(2,2));
-    Check(pinMode==1 && pinApp.state==NSControlStateValueOn && pinAll.state==NSControlStateValueOff,@"app pin selects only its own mode");
-    Capture(view,@"pin-app");
-    Click(window,pinAll,NSMakePoint(NSWidth(pinAll.bounds)-2,NSHeight(pinAll.bounds)-2));
-    Check(pinMode==2 && pinApp.state==NSControlStateValueOff && pinAll.state==NSControlStateValueOn,@"all-windows pin replaces app pin");
-    Capture(view,@"pin-all"); [pinAll performClick:nil];
-    Check(pinMode==0 && pinActions==3 && pinAll.state==NSControlStateValueOff,@"selected pin toggles back to normal");
+    Check(actions.count==12,@"each header action responds at both corners at narrow width");
+    NSEvent* redoKey=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift timestamp:0 windowNumber:window.windowNumber context:nil characters:@"Z" charactersIgnoringModifiers:@"Z" isARepeat:NO keyCode:6];
+    [window makeFirstResponder:nil];[view.composer performKeyEquivalent:redoKey];
+    Check(actions.count==12,@"composer cannot steal Undo or Redo from another focused control");
+    [window makeFirstResponder:view.composer];
+    Check([view.composer performKeyEquivalent:redoKey] && [actions.lastObject isEqual:@"redo"] && actions.count==13,@"uppercase Cmd Shift Z reaches agent Redo from empty composer");
+    NSSearchField* chatSearch=[view valueForKey:@"chatSearch"];chatSearch.stringValue=@"needle";
+    __weak SPDFMacAIChatView* queryView=view;
+    view.searchChats=^(NSString* query){[queryView setHistorySearchQuery:@"different"];Check([query isEqual:@"needle"],@"search handoff preserves the typed query while sidebar opens");};
+    [(id<NSSearchFieldDelegate>)view controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:chatSearch]];
+    view.searchChats=nil;[view setHistorySearchQuery:@""];
+    Capture(view,@"docked-compact");
     fixture.running=YES; fixture.activityState=SPDFMacAIChatActivityWorking;
     fixture.status=@"Reading · Schematic, page 2"; fixture.activityDetail=fixture.status; [view displaySession:(id)fixture];
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Working"] &&
@@ -248,5 +260,6 @@ int main(void) { @autoreleasepool {
     [view displaySession:(id)fixture]; Capture(view,@"empty");
     [NSFileManager.defaultManager removeItemAtPath:scratch error:nil];
         Check(!window.visible,@"probe never shows an app window");
+    CheckChatDock();
     fprintf(stderr,"AI chat view: %d failures\n",failures); return failures?1:0;
 } }

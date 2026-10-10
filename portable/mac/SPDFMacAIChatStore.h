@@ -6,6 +6,7 @@
 - (instancetype)initWithDirectory:(NSURL*)directory;
 + (NSURL*)defaultDirectory;
 - (NSArray<NSDictionary*>*)chats;
+- (NSArray<NSDictionary*>*)chatsMatchingQuery:(NSString*)query;
 - (NSDictionary*)chatWithID:(NSString*)identifier;
 - (BOOL)saveChat:(NSDictionary*)chat error:(NSError**)error;
 - (BOOL)deleteChatWithID:(NSString*)identifier error:(NSError**)error;

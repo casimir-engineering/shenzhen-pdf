@@ -262,3 +262,9 @@ code-signature verification, whitespace checks and the file-size ratchet
 (1,333 maintained source files, 34 exact caps). The resulting development app is
 `dist/ShenzhenPDF.app`. No user app was restarted and no public release was
 performed for this follow-up.
+
+## 10 October: docked chat and native app access
+
+The confirmed history-sidebar + chat-panel layout replaces the earlier floating
+window design. Implementation decisions, critic findings, native fixture images,
+and verification are recorded in [Docked chat and app access](docked-chat-and-app-access.md).
