@@ -19,6 +19,7 @@
 #include <assert.h>
 #undef main
 static void Check(BOOL value, const char* message) { if (!value) { fprintf(stderr,"FAIL: %s\n",message); abort(); } }
+#import "SPDFMacAIComposerAcceptanceChecks.h"
 @interface ShenzhenMacDelegate (AIContextCacheProbe)
 - (NSDictionary*)aiDocumentCandidateForTab:(SPDFDocumentTab*)tab;
 - (void)aiInstallAnalysis:(NSDictionary*)analysis error:(NSError*)error candidate:(NSDictionary*)candidate settings:(SPDFMacAISettings*)settings;
@@ -131,6 +132,7 @@ int main(void) { @autoreleasepool {
     NSString* root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
     setenv("SPDF_STATE_DIR",[[root stringByAppendingPathComponent:@"state"] fileSystemRepresentation],1);
+    CheckComposerAcceptance();
     NSString* path=FixturePDF(root); NSProgress* progress=[NSProgress progressWithTotalUnitCount:1]; NSError* error=nil;
     NSDictionary* context=SPDFAIDocumentContext(path,NO,1,5,progress,&error);
     Check(context && !error && [context[@"pageCount"] integerValue]==1,"PDF extraction");
