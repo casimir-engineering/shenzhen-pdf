@@ -32,3 +32,25 @@ Saved native render evidence is regenerated under `/tmp/sz-ai-chat-` with names
 window stays offscreen; this verification makes no network request and launches
 no user app. Session persistence and actual window-level behavior belong to the
 parallel session and standalone-window acceptance work.
+
+## Compact message follow-up
+
+Independent review initially scored visual craft 8.8/10 because a short answer
+left about 60 points before the next role label. Native measurement found the
+renderer-added final newline created a blank paragraph, on top of chat's own
+bottom padding and row spacing. The view now removes terminal renderer newlines,
+measures the actual last text line and uses a 16-point row gap. Internal paragraph
+formatting remains unchanged. Tests check short-row height, 16–20 point measured
+separation and the intact final glyph of long wrapped prose.
+
+The minimum-size authorization fixture now uses the production blocked-Keychain
+message and proves that the preserved draft and recovery button remain reachable.
+The session-error heading says “Error · Review the details”, avoiding a misleading
+retry promise when recovery requires reopening a chat.
+
+The standalone-window agent independently reviewed refreshed light/dark and
+520×400 question, error and authorization renders: visual 9.0/10, usability
+9.1/10, no major or medium findings. Remaining low-priority observations were
+the extra toolbar Close control and repeated authorization explanation near the
+composer. These scores cover saved native renders and the checked user paths;
+they do not claim a live network conversation was exercised.
