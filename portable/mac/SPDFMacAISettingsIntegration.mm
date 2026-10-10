@@ -55,7 +55,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         @"collectionDynamicPercent":collection[@"storageDynamicPercent"] ?: @80,
         @"collectionStorageGiB":@([collection[@"storageLimitBytes"] doubleValue]/(1024.0*1024*1024)),
         @"collectionBudgetText":budgetText,@"collectionLocation":SPDFMacCollectionStore.defaultStore.rootURL.path ?: @"",
-        @"models":objc_getAssociatedObject(self,&catalogModelsKey) ?: @[],@"connected":@(connected),@"model":ai.model,@"aiEnabled":@(ai.enabled),
+        @"models":objc_getAssociatedObject(self,&catalogModelsKey) ?: @[],@"connected":@(connected),@"model":ai.model,@"aiLanguage":ai.language,@"aiEnabled":@(ai.enabled),
         @"autoAnalyze":@(ai.automaticAnalysis),@"showSettingsOnLaunch":@(ai.showSettingsOnLaunch),
         @"collectionEnabled":@(![collection[@"choice"] isEqual:@"disabled"]),
         @"collectionChoiceMade":@([@[@"enabled",@"disabled"] containsObject:collection[@"choice"] ?: @""]),
@@ -117,6 +117,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
     if(changes[@"wizardStep"])ai.onboardingStep=MIN(3,MAX(0,[changes[@"wizardStep"] integerValue]));
     if(changes[@"connectionConfigured"])ai.connectionConfigured=[changes[@"connectionConfigured"] boolValue];
     if (changes[@"model"]) ai.model=changes[@"model"];
+    if (changes[@"aiLanguage"]) ai.language=changes[@"aiLanguage"];
     if (changes[@"aiEnabled"]) ai.enabled=[changes[@"aiEnabled"] boolValue];
     if (changes[@"autoAnalyze"]) ai.automaticAnalysis=[changes[@"autoAnalyze"] boolValue];
     if (changes[@"showSettingsOnLaunch"]) ai.showSettingsOnLaunch=[changes[@"showSettingsOnLaunch"] boolValue];

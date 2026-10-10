@@ -144,7 +144,7 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
 - (void)configureAIAnalysis:(id)value {
     SPDFMacAISettings* settings=value;
     NSArray* previous=objc_getAssociatedObject(self,&analysisConfigurationKey);
-    NSArray* configuration=@[@(settings.enabled),@(settings.automaticAnalysis),settings.model ?: @""];
+    NSArray* configuration=@[@(settings.enabled),@(settings.automaticAnalysis),settings.model ?: @"",settings.language ?: @"en"];
     if ([previous isEqual:configuration]) return;
     objc_setAssociatedObject(self,&analysisConfigurationKey,configuration,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self,&analysisSettingsKey,settings,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -201,6 +201,7 @@ static BOOL SameCandidate(NSDictionary* before,NSDictionary* after) {
             if(CollectionCopyCandidate(candidate))[self aiObserveCollectionAnalysisRevisions:candidate];
             if (!owner || !CurrentCollectionGeneration(owner,candidate) || objc_getAssociatedObject(owner,&analysisSettingsKey)!=settings ||
                 !settings.enabled || !settings.automaticAnalysis || ![settings.model isEqual:analysis[@"model"] ?: settings.model] ||
+                ![settings.language isEqual:analysis[@"language"] ?: settings.language] ||
                 !SameCandidate(candidate,Candidate(owner,path))) return;
             NSMutableDictionary* results=objc_getAssociatedObject(owner,&analysisResultsKey);
             if (!results) { results=[NSMutableDictionary dictionary]; objc_setAssociatedObject(owner,&analysisResultsKey,results,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }

@@ -1,4 +1,5 @@
 #import "SPDFMacUnifiedSettings.h"
+#import "SPDFMacAILanguagePicker.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacGroupActionButton.h"
 #import "SPDFMacSearchablePicker.h"
@@ -222,13 +223,16 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     [model.heightAnchor constraintEqualToConstant:28].active=YES; self.controls[@"model"]=model;
     NSStackView* modelRow=[self row:@"Model" detail:self.state[@"modelStatus"] ?: @"Search available OpenRouter models." control:model];
     self.modelDetail=[(NSStackView*)modelRow.arrangedSubviews.firstObject arrangedSubviews].lastObject;
+    SPDFMacSearchablePicker* language=SPDFMacAILanguagePicker(self.state[@"aiLanguage"],^(NSString* value){ [weakSelf emit:@{@"aiLanguage":value}]; });
+    self.controls[@"aiLanguage"]=language;
+    [self row:@"AI language" detail:@"Replies and generated metadata. Request another language in chat to override replies." control:language];
     if(self.setupWizard) {
-        [self text:@"After setup, opened documents are sent to OpenRouter for summaries and missing chapters. This uses account credits. Change this in AI settings." size:12 bold:NO secondary:YES];
+        [self text:@"After setup, opened documents are sent to OpenRouter for summaries, tags and missing chapters. This uses account credits. Change this in AI settings." size:12 bold:NO secondary:YES];
         self.content.arrangedSubviews.lastObject.identifier=@"aiUploadDisclosure";
         return;
     }
     [self add:[self toggle:@"aiEnabled" label:@"Enable document chat"]];
-    [self add:[self toggle:@"autoAnalyze" label:@"Prepare summaries, keywords and missing chapters automatically"]];
+    [self add:[self toggle:@"autoAnalyze" label:@"Prepare summaries, tags and missing chapters automatically"]];
     [self text:@"Automatic preparation sends document text to OpenRouter and its provider after opening, in the background. It uses paid tokens. Existing chapters stay intact; generated information is cached for unchanged documents." size:12 bold:NO secondary:YES];
     [self text:@"Requests require providers that do not train on your content and retain no request data. If no eligible provider is available, the request stops. You can stop a task at any time." size:12 bold:NO secondary:YES];
 }
@@ -418,12 +422,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSMutableDictionary* state=[self.state mutableCopy]; [state addEntriesFromDictionary:change]; self.state=state;
     if (self.settingsChanged) self.settingsChanged(change);
 }
-- (void)modelChanged:(NSTextField*)sender {
-    NSString* model=[sender.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!model.length) return;
-    NSMutableDictionary* state=[self.state mutableCopy]; state[@"model"]=model; self.state=state;
-    if (self.settingsChanged) self.settingsChanged(@{@"model":model});
-}
+
 - (void)controlTextDidEndEditing:(NSNotification*)note {
     if ([[(NSControl*)note.object identifier] hasPrefix:@"collection"]) [self storageAmountChanged:note.object];
 }
@@ -462,6 +461,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         if(state[@"modelsLoading"]) [model refreshChoices];
         if(state[@"models"]) { model.choices=merged[@"models"]; [model refreshChoices]; }
         if(state[@"model"]) model.selectedID=merged[@"model"];
+        if(state[@"aiLanguage"]) [(SPDFMacSearchablePicker*)self.controls[@"aiLanguage"] setSelectedID:merged[@"aiLanguage"]];
         button.hidden=self.usesAPIKey && !connected;
     }
     if([self.section isEqual:@"defaults"] && state[@"defaultFormats"]) [self refreshDefaultRows];

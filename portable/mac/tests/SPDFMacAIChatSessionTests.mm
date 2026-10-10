@@ -49,11 +49,14 @@ int main(void) { @autoreleasepool {
     SPDFMacAIChatSession* session=[[SPDFMacAIChatSession alloc] initWithTransport:transport tools:tools definitions:@[] store:store];
     CHECK(![NSFileManager.defaultManager fileExistsAtPath:root.path],"construction is disk-inert");
     CHECK(!transport.sends,"construction is network-inert");
+    session.defaultLanguage=@"fr";
     [session send:@"Explain this document" model:@"fake/model" apiKey:@"TEST-SECRET-NOT-PERSISTED"];
     CHECK(transport.sends==1 && session.running,"explicit send starts request");
     NSString* system=transport.messages.firstObject[@"content"];
     CHECK([system containsString:@"Be as brief as possible"] && [system containsString:@"follow the user's specifications closely"] &&
         [system containsString:@"Perform requested actions with tools"],"system prompt requires brief, faithful, action-oriented responses");
+    CHECK([system containsString:@"Default response language: French"] &&
+        [system containsString:@"Explicit user language instructions take precedence"],"chat respects selected language with explicit user override");
     void (^late)(NSDictionary*,NSError*)=transport.reply;
     [session cancel]; CHECK(session.activityState==SPDFMacAIChatActivityStopped,"cancel reports stopped"); late(@{@"role":@"assistant",@"content":@"late"},nil);
     CHECK([session.chat[@"messages"] count]==1,"cancel discards late assistant response");

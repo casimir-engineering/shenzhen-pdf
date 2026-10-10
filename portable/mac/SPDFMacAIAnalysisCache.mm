@@ -22,6 +22,17 @@ NSDictionary* SPDFAIValidateAnalysis(id value, NSUInteger pageCount, BOOL author
         return Invalid(error,@"Analysis exceeds its summary, keyword or chapter budget.");
     for (id word in keywords) if (![word isKindOfClass:NSString.class] || ![word length] || [word length]>100)
         return Invalid(error,@"Invalid keyword.");
+    NSArray* tags=value[@"tags"] ?: @[];
+    if(![tags isKindOfClass:NSArray.class] || tags.count>6) return Invalid(error,@"Analysis accepts at most six tags.");
+    NSMutableArray* cleanTags=[NSMutableArray array]; NSMutableSet* seenTags=[NSMutableSet set];
+    for(id tag in tags) {
+        if(![tag isKindOfClass:NSString.class]) return Invalid(error,@"Invalid tag.");
+        NSString* clean=[tag stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if(!clean.length || clean.length>64 || [clean rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location!=NSNotFound)
+            return Invalid(error,@"Tags must be short, single-line text.");
+        NSString* identity=[clean stringByFoldingWithOptions:NSCaseInsensitiveSearch locale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
+        if(![seenTags containsObject:identity]) { [cleanTags addObject:clean]; [seenTags addObject:identity]; }
+    }
     NSMutableArray* valid=[NSMutableArray array]; NSUInteger previous=0;
     if (!authoredOutline) for (id chapter in chapters) {
         if (![chapter isKindOfClass:NSDictionary.class]) return Invalid(error,@"Invalid chapter.");
@@ -35,7 +46,7 @@ NSDictionary* SPDFAIValidateAnalysis(id value, NSUInteger pageCount, BOOL author
         previous=[page unsignedIntegerValue];
         [valid addObject:@{@"title":title,@"page":page,@"level":level,@"generated":@YES}];
     }
-    NSMutableDictionary* result=[@{@"schema":@1,@"summary":summary,@"keywords":keywords,@"chapters":valid,
+    NSMutableDictionary* result=[@{@"schema":@1,@"summary":summary,@"keywords":keywords,@"tags":cleanTags,@"chapters":valid,
         @"pageCount":@(pageCount),@"generated":@YES} mutableCopy];
     id analyzed=value[@"analyzedPages"];
     if (analyzed) {
@@ -57,7 +68,7 @@ NSDictionary* SPDFAIValidateAnalysis(id value, NSUInteger pageCount, BOOL author
             return Invalid(error,@"Partial coverage must be a Boolean.");
         result[@"partial"]=value[@"partial"];
     }
-    for (NSString* key in @[@"model",@"completedAt",@"layoutIdentity",@"promptVersion",@"contentHash",@"cacheKey"]) if (value[key]) {
+    for (NSString* key in @[@"model",@"language",@"completedAt",@"layoutIdentity",@"promptVersion",@"contentHash",@"cacheKey"]) if (value[key]) {
         if (![value[key] isKindOfClass:NSString.class] || [value[key] length]>512)
             return Invalid(error,@"Invalid analysis metadata.");
         result[key]=value[key];

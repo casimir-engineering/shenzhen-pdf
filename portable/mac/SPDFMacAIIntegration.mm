@@ -120,6 +120,7 @@ static char stateKey;
     }
     state.submissionIssue=nil; [state.view showSubmissionError:nil]; state.history=NO;
     NSUInteger before=[state.session.chat[@"messages"] count];
+    state.session.defaultLanguage=settings.language;
     [state.session send:text model:settings.model apiKey:key]; return [state.session.chat[@"messages"] count]>before;
 }
 - (void)aiChatAction:(NSString*)action {

@@ -1,4 +1,5 @@
 #import "SPDFMacAISettings.h"
+#import "SPDFMacAILanguage.h"
 #import "SPDFMacAITransport.h"
 #import <sys/stat.h>
 #import <sys/file.h>
@@ -11,13 +12,13 @@
     return [NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"ai-settings.yaml"]];
 }
 - (instancetype)initWithURL:(NSURL*)URL {
-    if((self=[super init])) { _URL=URL; _model=SPDFMacAIDefaultModel; _enabled=YES; _automaticAnalysis=YES; _baseline=[self values]; } return self;
+    if((self=[super init])) { _URL=URL; _model=SPDFMacAIDefaultModel; _language=@"en"; _enabled=YES; _automaticAnalysis=YES; _baseline=[self values]; } return self;
 }
 - (BOOL)allowsRequestsForSetupRevision:(NSInteger)revision {
     return self.enabled && self.connectionConfigured && self.onboardingRevision>=revision;
 }
 - (NSDictionary*)values {
-    return @{@"model":self.model ?: SPDFMacAIDefaultModel,@"enabled":@(self.enabled),
+    return @{@"model":self.model ?: SPDFMacAIDefaultModel,@"enabled":@(self.enabled),@"language":self.language ?: @"en",
         @"connection_configured":@(self.connectionConfigured),@"automatic_analysis":@(self.automaticAnalysis),@"show_settings_on_launch":@(self.showSettingsOnLaunch),
         @"onboarding_revision":@(self.onboardingRevision),@"onboarding_step":@(self.onboardingStep)};
 }
@@ -38,6 +39,7 @@
         if([key isEqual:@"model"] && value.length>0 && value.length<=160 &&
             [value rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.:~"].invertedSet].location==NSNotFound)
             self.model=value;
+        else if([key isEqual:@"language"] && SPDFMacAILanguageNames()[value])self.language=value;
         else if([key isEqual:@"connection_configured"])self.connectionConfigured=[value isEqual:@"true"];
         else if([key isEqual:@"enabled"])self.enabled=[value isEqual:@"true"];
         else if([key isEqual:@"automatic_analysis"])self.automaticAnalysis=[value isEqual:@"true"];
@@ -49,6 +51,9 @@
 }
 - (BOOL)save:(NSError**)error {
     if(error)*error=nil;
+    if(!self.language || !SPDFMacAILanguageNames()[self.language]) {
+        if(error)*error=SPDFMacAIError(31,@"Choose an AI language from the list."); return NO;
+    }
     if(!self.model.length || self.model.length>160 || [self.model rangeOfCharacterFromSet:
         [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.:~"].invertedSet].location!=NSNotFound) {
         if(error)*error=SPDFMacAIError(31,@"Enter a valid OpenRouter model identifier."); return NO;
@@ -66,14 +71,14 @@
     NSMutableDictionary* merged=[[current values] mutableCopy]; NSDictionary* requested=[self values];
     // Independent windows update only their changed fields, preserving other windows' settings.
     for(NSString* key in requested)if(![requested[key] isEqual:_baseline[key]])merged[key]=requested[key];
-    NSString* YAML=[NSString stringWithFormat:@"schema_version: 1\nmodel: %@\nenabled: %@\nconnection_configured: %@\nautomatic_analysis: %@\nshow_settings_on_launch: %@\nonboarding_revision: %ld\nonboarding_step: %ld\n",
-        merged[@"model"],[merged[@"enabled"] boolValue] ? @"true" : @"false",
+    NSString* YAML=[NSString stringWithFormat:@"schema_version: 1\nmodel: %@\nlanguage: %@\nenabled: %@\nconnection_configured: %@\nautomatic_analysis: %@\nshow_settings_on_launch: %@\nonboarding_revision: %ld\nonboarding_step: %ld\n",
+        merged[@"model"],merged[@"language"],[merged[@"enabled"] boolValue] ? @"true" : @"false",
         [merged[@"connection_configured"] boolValue] ? @"true" : @"false",
         [merged[@"automatic_analysis"] boolValue] ? @"true" : @"false",
         [merged[@"show_settings_on_launch"] boolValue] ? @"true" : @"false",[merged[@"onboarding_revision"] longValue],[merged[@"onboarding_step"] longValue]];
     BOOL saved=[[YAML dataUsingEncoding:NSUTF8StringEncoding] writeToURL:_URL options:NSDataWritingAtomic error:error];
     if(saved) {
-        chmod(_URL.fileSystemRepresentation,0600); self.model=merged[@"model"]; self.enabled=[merged[@"enabled"] boolValue];
+        chmod(_URL.fileSystemRepresentation,0600); self.model=merged[@"model"]; self.language=merged[@"language"]; self.enabled=[merged[@"enabled"] boolValue];
         self.connectionConfigured=[merged[@"connection_configured"] boolValue];
         self.automaticAnalysis=[merged[@"automatic_analysis"] boolValue];
         self.showSettingsOnLaunch=[merged[@"show_settings_on_launch"] boolValue];
