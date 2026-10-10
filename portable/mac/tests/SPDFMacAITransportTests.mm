@@ -65,12 +65,13 @@ static NSDictionary* RequestJSON(NSURLRequest* request) {
 }
 static NSString* Callback(NSURL* URL,NSString* code,NSString* state) {
     NSURLComponents* target=[NSURLComponents componentsWithURL:URL resolvingAgainstBaseURL:NO];
-    target.queryItems=@[[NSURLQueryItem queryItemWithName:@"code" value:code],[NSURLQueryItem queryItemWithName:@"state" value:state]];
+    target.queryItems=code || state ? @[[NSURLQueryItem queryItemWithName:@"code" value:code],[NSURLQueryItem queryItemWithName:@"state" value:state]] : nil;
     int fd=socket(AF_INET,SOCK_STREAM,0); struct sockaddr_in address={}; address.sin_family=AF_INET;
     address.sin_port=htons(target.port.unsignedShortValue);address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     if(connect(fd,(struct sockaddr*)&address,sizeof(address))!=0){close(fd);return nil;}
     struct timeval timeout={2,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
-    NSString* request=[NSString stringWithFormat:@"GET %@?%@ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",target.percentEncodedPath,target.percentEncodedQuery];
+    NSString* suffix=target.percentEncodedQuery.length ? [@"?" stringByAppendingString:target.percentEncodedQuery] : @"";
+    NSString* request=[NSString stringWithFormat:@"GET %@%@ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",target.percentEncodedPath,suffix];
     NSData* data=[request dataUsingEncoding:NSUTF8StringEncoding];send(fd,data.bytes,data.length,0);
     char response[2048];ssize_t n=recv(fd,response,sizeof(response),0);close(fd);
     return n>0 ? [[NSString alloc] initWithBytes:response length:(NSUInteger)n encoding:NSUTF8StringEncoding] : nil;
@@ -136,6 +137,16 @@ int main(void) { @autoreleasepool {
     SPDFMacAIOpenRouterAuth* cancelled=[[SPDFMacAIOpenRouterAuth alloc] initWithConfiguration:config credentials:credentials];
     done=NO;[cancelled startWithCompletion:^(BOOL success,NSError* e){connected=success;failure=e;done=YES;} error:&error];
     [cancelled cancel];Check(Wait(^BOOL{return done;}) && !connected && failure.code==NSURLErrorCancelled,"OAuth cancellable");
+    SPDFMacAIOpenRouterAuth* denied=[[SPDFMacAIOpenRouterAuth alloc] initWithConfiguration:config credentials:credentials];
+    done=NO; keyCalls=keychain.calls; NSInteger beforeRequests=requests;
+    authorization=[denied startWithCompletion:^(BOOL success,NSError* e){connected=success;failure=e;done=YES;} error:&error];
+    for(NSURLQueryItem* item in [NSURLComponents componentsWithURL:authorization resolvingAgainstBaseURL:NO].queryItems)query[item.name]=item.value;
+    callback=[NSURL URLWithString:query[@"callback_url"]];
+    NSURL* unrelated=[NSURL URLWithString:@"/favicon.ico" relativeToURL:callback].absoluteURL;
+    Check([Callback(unrelated,nil,nil) containsString:@"400 Bad Request"] && !done,"unrelated empty browser probe cannot cancel sign-in");
+    Check([Callback(callback,nil,nil) containsString:@"Connection cancelled"],"real provider denial returns a friendly browser response");
+    Check(Wait(^BOOL{return done;}) && !connected && failure.code==NSURLErrorCancelled,"provider denial immediately completes cancellation");
+    Check(keychain.calls==keyCalls && requests==beforeRequests,"denial neither exchanges a code nor touches credentials");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     fprintf(stderr,"AI transport checks: %s (%d failures)\n",failures ? "FAIL" : "PASS",failures);return failures ? 1 : 0;
 } }

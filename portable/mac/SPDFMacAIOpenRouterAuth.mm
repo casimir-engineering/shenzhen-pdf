@@ -88,13 +88,19 @@ static NSString* RandomToken(void) {
         [NSURLComponents componentsWithString:[@"http://localhost" stringByAppendingString:words[1]]] : nil;
     NSMutableDictionary* query=[NSMutableDictionary dictionary]; BOOL duplicate=NO;
     for(NSURLQueryItem* item in URL.queryItems) { if(query[item.name])duplicate=YES; query[item.name]=item.value ?: @""; }
-    BOOL valid=!self.finished && !self.exchanging && !duplicate && [URL.path isEqual:self.callbackPath] &&
-        [query[@"state"] isEqual:self.state] && [query[@"code"] length]>0 && [query[@"code"] length]<=4096;
-    NSString* body=valid ? @"Sign-in received. Return to Shenzhen PDF to finish connecting." :
+    BOOL pendingCallback=!self.finished && !self.exchanging && !duplicate && [URL.path isEqual:self.callbackPath];
+    BOOL valid=pendingCallback && [query[@"state"] isEqual:self.state] &&
+        [query[@"code"] length]>0 && [query[@"code"] length]<=4096;
+    // OpenRouter's Deny returns to the exact random callback path with no
+    // query. It can cancel this attempt, but never exchange or save a key.
+    BOOL denied=pendingCallback && !URL.query.length;
+    NSString* body=denied ? @"Connection cancelled. Return to Shenzhen PDF; you can connect again any time." :
+        valid ? @"Sign-in received. Return to Shenzhen PDF to finish connecting." :
         @"This sign-in response is invalid or expired. Return to Shenzhen PDF and try again.";
     NSString* reply=[NSString stringWithFormat:@"HTTP/1.1 %@\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\nContent-Length: %lu\r\n\r\n%@",
-        valid ? @"200 OK" : @"400 Bad Request",(unsigned long)[body lengthOfBytesUsingEncoding:NSUTF8StringEncoding],body];
+        (valid || denied) ? @"200 OK" : @"400 Bad Request",(unsigned long)[body lengthOfBytesUsingEncoding:NSUTF8StringEncoding],body];
     NSData* replyData=[reply dataUsingEncoding:NSUTF8StringEncoding]; send(client,replyData.bytes,replyData.length,0); close(client);
+    if(denied) { [self finish:NO error:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]]; return; }
     if(!valid)return;
     self.exchanging=YES; dispatch_source_cancel(self.listener); self.listener=nil;
     NSMutableURLRequest* exchange=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://openrouter.ai/api/v1/auth/keys"]];
