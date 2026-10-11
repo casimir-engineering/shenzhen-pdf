@@ -46,5 +46,7 @@ It read the text of pages 1–4, then rendered page 3, without inspecting the dr
 on page 1. No card was produced. There was no second paid retry after this failure.
 
 The rollback is complete; it did not make the earlier successful answer repeat
-in this fresh test. No further prompt tuning was added and publication remains
-held. The user’s chats and source documents were not rewritten.
+in this fresh test. No further prompt tuning was added and publication was held
+at that point. The user’s chats and source documents were not rewritten. The
+[subsequent benchmark and release decision](model-benchmark-2026-10-11.md#release-decision--2026-10-11)
+record the later user authorization to release with this limitation disclosed.

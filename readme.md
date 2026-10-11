@@ -1,5 +1,5 @@
 <h1 align="center">Shenzhen PDF Reader</h1>
-<p align="center"><b>A fast native Mac reader for PDFs, Markdown, code and images, with document groups, local history, OCR and offline translation.</b></p>
+<p align="center"><b>A fast native Mac reader for PDFs, Markdown, code and images, with document groups, local history, optional AI chat, OCR and offline translation.</b></p>
 
 <div align="center">
 
@@ -15,7 +15,7 @@
 
 <p align="center">Type anywhere to search. Jump anywhere with the map. Launches instantly. Relaunches exactly as you left it.</p>
 
-**Shenzhen PDF Reader (ShenzhenPDF)** opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)**, [document assistant guide](portable/docs/document-assistant.md), and [AI control guide](portable/docs/agent-interface.md).
+**Shenzhen PDF Reader (ShenzhenPDF)** opens documents instantly and keeps them in groups with local version history. OCR and translation run on your device. Optional document chat connects to OpenRouter for cited answers, summaries, tags and missing chapters. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)**, [document assistant guide](portable/docs/document-assistant.md), and [AI control guide](portable/docs/agent-interface.md).
 
 <sub><a href="#reading">Reading</a> · <a href="#collection">Collection</a> · <a href="#assistant">Document chat</a> · <a href="#markdown">Markdown &amp; code</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
 
@@ -51,7 +51,7 @@
 
 <table align="center"><tr>
 <td width="50%" valign="top"><img src="docs/images/portable/macos-history.webp" alt="Current reader with the History sidebar and latest-version marker" width="100%"><br><sub>Versions stay in the reader's History panel.</sub></td>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-collection-settings.webp" alt="Collection settings with local storage location and an optional fixed storage limit" width="100%"><br><sub>Local storage, with an optional cap.</sub></td>
+<td width="50%" valign="top"><img src="docs/images/portable/macos-setup.png" alt="Current setup wizard showing Collection storage with an adjustable 80 percent dynamic budget and Move location" width="100%"><br><sub>First-run Collection setup: choose a storage budget and location.</sub></td>
 </tr></table>
 
 ## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
@@ -71,11 +71,17 @@
 
 ## <a id="assistant"></a>Document chat <sub>macOS · optional OpenRouter connection</sub>
 
+<p align="center"><img src="docs/images/portable/macos-ai-chat.png" alt="Native reader with chat folders, a pastel answer card and View evidence beside a sample specification" width="880"><br><sub>Native UI with a scripted example conversation and fictional document; shown to demonstrate the interface, not model accuracy.</sub></p>
+
 - **Ask beside the document** — <kbd>Cmd+K</kbd>, then Return from an empty search opens a resizable chat panel. Answers link to retrieved passages or page images; compact answer cards put a brief result beside **View evidence**. Image-capable models can inspect pages, crops and your current document view on request.
 - **Saved conversations** — search titles and message text, resume chats, rename them inline, and organize them into folders by dragging or asking the assistant. Search within a chat jumps to highlighted passages.
 - **Summaries, tags and chapters** — one background request generates metadata in your chosen language for eligible latest documents. Existing headings stay authoritative; unchanged analysis is cached.
 - **Reversible actions** — organize groups and chats, change supported reader controls, edit PDF comments or generated metadata, and request separate OCR, translation or PDF outputs. Stop, Undo and Redo apply within the documented action limits.
 - **Setup and privacy** — a four-step wizard covers file access, Collection, OpenRouter and default file types. Credentials stay in Keychain. Chat and background analysis use account credits and send retrieved document content to the connected provider; both can be disabled. Models can make mistakes, so inspect the cited evidence.
+
+<p align="center"><img src="docs/images/portable/macos-ai-settings.png" alt="Native AI settings with OpenRouter connection, searchable model and language choices, and separate chat and metadata options" width="760"><br><sub>Connect your account and choose a model, language and automatic metadata preferences.</sub></p>
+
+Our [six-model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md) reports answer quality, evidence use, latency and actual cost across 60 attempts. It found no clear upgrade over DeepSeek in that small sample, and every model failed the reported drawing question twice. The [reusable benchmark runner](tools/ai-model-benchmark/README.md) lets contributors repeat the comparison with their own documents; running it makes paid requests. Source links help you check an answer, not certify it.
 
 The [document assistant guide](portable/docs/document-assistant.md) covers setup, privacy and exact limits. For external AI agents, the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md) documents CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
 

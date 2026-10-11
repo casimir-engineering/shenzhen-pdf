@@ -146,3 +146,42 @@ span and falsely claimed there was no dimensional drawing. Per the parent’s
 instruction, a second fresh repeat was conditional on a correct first answer
 and was not run. Screenshot: `/tmp/sz-card-live-qa/baseline-switch-answer.png`.
 Saved chat: `C721CF8A-687E-4DED-B21D-F8F7BED0ECD1.json` in the isolated Chats store.
+
+## Public README images — 11 October
+
+Rendered the current production AppKit reader, chat/history/card components,
+settings controller, and Collection wizard into PNGs using an offscreen probe.
+All windows remained hidden under the probe's order guard. No user app was
+launched, quit, or captured; no provider or credential request was made.
+The PDF, conversation, folders, and configuration are scripted fictional data.
+These images demonstrate the interface, not model answer quality.
+
+Approved assets, inspected individually by the QA agent and release owner:
+
+- `docs/images/portable/macos-ai-chat.png`: actual three-panel native reader,
+  organized chat history, user question, and pastel “3 pages” answer card beside
+  the fictional Interface specification PDF.
+- `docs/images/portable/macos-ai-settings.png`: connection, searchable model and
+  language controls, enabled analysis options, and usage/privacy explanation.
+- `docs/images/portable/macos-setup.png`: Collection wizard with dynamic storage
+  at the 80% default and Move location control.
+
+The initial chat fixture contained an orphan tool result. The production store
+correctly refused to load that malformed transcript. The fixture was corrected
+to contain the matching assistant tool call and tool-call identifier, with an
+explicit successful reload assertion. The evidence callback was installed
+before constructing the card, which captures its callback at initialization.
+The final probe passed the saved-chat reload, visible card, and exact evidence
+URL forwarding assertions: **exit 0, zero failures**. This offscreen check tests
+button forwarding; it does not replace the earlier real computer-use navigation
+and highlighted-passage checks above.
+
+Targeted checks against current sources also passed by process exit code:
+`SPDFMacAIChatViewTests` (**0 failures**, card accessibility/clicks, appearance,
+reopening and layout) and `mac-unified-settings-tests` (**0 failures**).
+Logs: `/tmp/sz-readme-ai-probe-run.log`, `/tmp/sz-readme-chat-tests.log`, and
+`/tmp/sz-readme-settings-tests.log`. The temporary probe is
+`/tmp/sz-readme-ai-probe.mm`; it links the production workspace objects and uses
+`SPDFMacReadmeFixtures.h`. An optional Properties capture was not selected for
+the README because its synthetic missing-source state distracted from the
+metadata demonstration. No production code was changed for these images.
