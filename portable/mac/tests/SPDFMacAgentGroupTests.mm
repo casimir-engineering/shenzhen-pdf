@@ -6,15 +6,18 @@
 #import "spdf_yaml.h"
 
 NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"; }
+static NSUInteger liveCollectionHooks;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wincomplete-implementation"
 #pragma clang diagnostic ignored "-Wprotocol"
 @implementation ShenzhenMacDelegate
+- (void)collectionRememberGroups { liveCollectionHooks++; }
 @end
 #pragma clang diagnostic pop
 @interface AgentGroupProbe : ShenzhenMacDelegate
 @property(nonatomic) NSUInteger saves;
 @property(nonatomic) NSUInteger selections;
+@property(nonatomic) NSUInteger collectionGroupUpdates;
 @property(nonatomic) NSMutableDictionary* workspace;
 @property(nonatomic) NSArray* savedTabs;
 - (void)seed:(NSArray*)tabs;
@@ -26,6 +29,9 @@ NSString* spdf_mac_support_directory(void) { return @"/unused-agent-group-tests"
 - (void)updateTabStrip {}
 - (void)refreshSidebarWorkspacePanel {}
 - (void)rememberActiveTabState {}
+// This isolated command/codec target omits Collection storage integration.
+// Record the persistence hook without opening the user's Collection store.
+- (void)collectionRememberGroups { self.collectionGroupUpdates++; }
 - (NSMutableDictionary*)sidebarWorkspaceState { if (!self.workspace) self.workspace=[NSMutableDictionary dictionary]; return self.workspace; }
 - (void)savePersistentState {
     self.saves++; NSMutableArray* encoded=[NSMutableArray array];
@@ -73,6 +79,7 @@ int main(void) {
         Check(host.saves==0);
         state=Run(host,@{@"action":@"create-group",@"paths":@[@"/c.pdf",@"/a.pdf"],@"name":@" Research ",@"color":@"Blue"});
         NSString* research=state[@"groupID"]; Check(research.length && !state[@"error"]);
+        Check(host.collectionGroupUpdates>0);
         Check([Group(state,research)[@"paths"] isEqual:@[@"/c.pdf",@"/a.pdf"]]);
         Check([Group(state,research)[@"name"] isEqual:@"Research"]);
         Check([state[@"groups"][0][@"id"] isEqual:@"general"]);
@@ -141,7 +148,7 @@ int main(void) {
         [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
         NSString* session=[dir stringByAppendingPathComponent:@"session.yaml"];
         NSDictionary* untouched=@{@"id":@"other",@"focusedAt":@1,@"tabs":@[]};
-        NSDictionary* original=@{@"custom":@"preserved",@"windows":@[untouched,@{@"id":@"offline",@"focusedAt":@2,@"selectedTab":@0,@"tabs":@[@{@"path":@"/not-readable/a.pdf",@"page":@7,@"custom":@42},@{@"path":@"/not-readable/b.md"}]}]};
+        NSDictionary* original=@{@"custom":@"preserved",@"windows":@[untouched,@{@"id":@"offline",@"focusedAt":@2,@"selectedTab":@0,@"tabs":@[@{@"path":@"/not-readable/a.pdf",@"page":@7,@"custom":@42,@"collectionHistoryID":@"existing-collection-document"},@{@"path":@"/not-readable/b.md"}]}]};
         NSData* seed=[NSJSONSerialization dataWithJSONObject:original options:0 error:nil];
         char* encoded=spdf_yaml_from_json([[NSString alloc] initWithData:seed encoding:NSUTF8StringEncoding].UTF8String,"test");
         [[NSString stringWithUTF8String:encoded] writeToFile:session atomically:YES encoding:NSUTF8StringEncoding error:nil]; free(encoded);
@@ -151,12 +158,14 @@ int main(void) {
         Check([before isEqual:[NSData dataWithContentsOfFile:session]]);
         offline=SPDFMacAgentSavedSession(@{@"action":@"create-group",@"paths":@[@"/not-readable/b.md",@"/not-readable/a.pdf"],@"name":@"Offline",@"color":@"Blue"},dir,&offlineError);
         Check(!offlineError && !offline[@"error"] && !NSApp);
+        Check(liveCollectionHooks==0); // Offline grouping must not enter live Collection I/O.
         NSDictionary* reopenedOffline=SPDFMacAgentSavedSession(@{@"action":@"list-groups"},dir,&offlineError);
         Check([offline[@"groups"] isEqual:reopenedOffline[@"groups"]]);
         char* decoded=spdf_json_from_yaml([NSString stringWithContentsOfFile:session encoding:NSUTF8StringEncoding error:nil].UTF8String);
         NSDictionary* saved=[NSJSONSerialization JSONObjectWithData:[[NSString stringWithUTF8String:decoded] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil]; free(decoded);
         Check([saved[@"custom"] isEqual:@"preserved"] && [saved[@"windows"][0] isEqual:untouched]);
         Check([saved[@"windows"][1][@"tabs"][1][@"page"] intValue]==7 && [saved[@"windows"][1][@"tabs"][1][@"custom"] intValue]==42);
+        Check([saved[@"windows"][1][@"tabs"][1][@"collectionHistoryID"] isEqual:@"existing-collection-document"]);
         before=[NSData dataWithContentsOfFile:session];
         offline=SPDFMacAgentSavedSession(@{@"action":@"move-tab",@"path":@"/missing",@"groupID":@"bad"},dir,&offlineError);
         Check(offline[@"error"] && [before isEqual:[NSData dataWithContentsOfFile:session]]);

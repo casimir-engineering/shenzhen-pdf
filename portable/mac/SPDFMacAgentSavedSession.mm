@@ -26,6 +26,11 @@
 }
 - (NSMutableDictionary*)sidebarWorkspaceState { return self.savedWorkspace; }
 - (void)rememberActiveTabState {}
+- (void)collectionRememberGroups {
+    // Offline edits commit only the locked session YAML. The live reader
+    // reconciles these saved groups with Collection on document consultation;
+    // starting its asynchronous store writes here would escape the transaction.
+}
 - (void)updateTabStrip {}
 - (void)refreshSidebarWorkspacePanel {}
 - (void)savePersistentState {}
