@@ -207,8 +207,17 @@ int main(void) {
         spdf_sidebar_mode_control_configure_navigation(workspaceModes, NO, NO);
         spdf_sidebar_mode_control_set_document_availability(workspaceModes, YES, NO);
         Expect("Markdown restores Chapters without exposing Comments",
-            workspaceModes.segmentCount == 3 && [workspaceModes isEnabledForSegment:0] &&
+            workspaceModes.segmentCount == 4 && [workspaceModes isEnabledForSegment:0] &&
             workspaceModes.spdf_selectedSidebarMode == SPDFSidebarModeGroups);
+        NSMutableArray* workspaceLabels=[NSMutableArray array];
+        for (NSInteger i=0;i<workspaceModes.segmentCount;i++)
+            [workspaceLabels addObject:[workspaceModes labelForSegment:i]];
+        Expect("Markdown keeps Chapters, Search, Groups and Chats, without Comments",
+            [workspaceLabels isEqual:@[@"Chapters",@"Search",@"Groups",@"Chats"]]);
+        workspaceModes.spdf_selectedSidebarMode=SPDFSidebarModeChats;
+        spdf_sidebar_mode_control_configure_navigation(workspaceModes,YES,YES);
+        Expect("Chats stays selected when returning to a PDF with history",
+            workspaceModes.spdf_selectedSidebarMode==SPDFSidebarModeChats);
 
         NSString* coordinator = [NSString stringWithContentsOfFile:@"mac/ShenzhenPDFMac.mm"
             encoding:NSUTF8StringEncoding error:nil];

@@ -41,8 +41,14 @@ static void CheckPanelLayout(NSWindow* window) {
     spdf_sidebar_mode_control_configure_navigation(navigation,YES,YES);
     [navigation setCollapseTarget:navigation action:@selector(description)];
     [window.contentView addSubview:navigation];
+    // The Chats button raised the reader's minimum sidebar to 208 points;
+    // the navigation strip has an 8-point inset on each side.
+    NSString* coordinator=[NSString stringWithContentsOfFile:@"mac/ShenzhenPDFMac.mm"
+        encoding:NSUTF8StringEncoding error:nil];
+    Check([coordinator containsString:@"kMinSidebarWidth = 208.0"],
+          "resize coverage matches the reader's minimum sidebar width");
     for (NSUInteger step=0;step<48;step++) {
-        navigation.frame=NSMakeRect(.25*(step%4),0,160+.25*step,64);
+        navigation.frame=NSMakeRect(.25*(step%4),0,192+.25*step,64);
         navigation.needsLayout=YES; [navigation layoutSubtreeIfNeeded]; Flush(window);
         for (NSButton* row in navigation.accessibilityChildren) {
             if ([row.accessibilityLabel isEqual:@"Hide side panel"]) continue;
@@ -51,6 +57,12 @@ static void CheckPanelLayout(NSWindow* window) {
                   fabs(NSMaxX(pixels)-round(NSMaxX(pixels)))<.001,
                   "narrow and fractional panel widths keep icon targets on device pixels");
             Check(NSWidth(row.frame)>=22,"minimum panel preserves usable button targets");
+            Check(NSContainsRect(navigation.bounds,row.frame),"every button stays inside the strip");
+            NSPoint center=NSMakePoint(NSMidX(row.frame),NSMidY(row.frame));
+            Check([navigation hitTest:[navigation convertPoint:center toView:navigation.superview]]==row,
+                  "each visible button owns its center hit target");
+            for (NSButton* other in navigation.accessibilityChildren)
+                if (other!=row) Check(!NSIntersectsRect(row.frame,other.frame),"button targets do not overlap");
             Check(row.layerContentsPlacement==NSViewLayerContentsPlacementCenter,
                   "intermediate resize never stretches an old icon layer");
         }
