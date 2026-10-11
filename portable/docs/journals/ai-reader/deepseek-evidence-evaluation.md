@@ -1,5 +1,9 @@
 # DeepSeek evidence replay — 2026-10-10
 
+Historical evaluation record. The subsequent [pre-card baseline restoration](pre-card-baseline-restoration.md)
+removed the added metadata field, automatic sparse-page previews and extra prompt
+guidance; the retained-changes section below describes the earlier evaluated state.
+
 ## Retained changes
 
 Keep the user's `deepseek/deepseek-v4.1-flash` choice. The base prompt retains

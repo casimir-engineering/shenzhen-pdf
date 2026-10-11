@@ -35,8 +35,7 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
     for (SPDFDocumentTab* tab in _tabs) if ([tab.path isEqual:path]) {
         NSDictionary* analysis=[self aiAnalysisForPath:path];
         return @{@"path":path,@"title":tab.title ?: path.lastPathComponent,
-            @"analysisAvailable":@(analysis!=nil),@"analysis":analysis ?: @{},
-            @"evidenceBasis":@"AI-generated navigation hints, not source evidence. Analyzed page counts describe text coverage, not inspection of all visual content. Verify claims in source pages."};
+            @"analysisAvailable":@(analysis!=nil),@"analysis":analysis ?: @{}};
     }
     return @{@"error":@"Document is no longer open."};
 }

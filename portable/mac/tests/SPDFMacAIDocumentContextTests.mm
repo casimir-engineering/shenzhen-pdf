@@ -125,7 +125,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
     SPDFDocumentTab* tab=[SPDFDocumentTab new]; tab.path=path; tab.title=path.lastPathComponent; tab.group=group; return tab;
 }
 #import "SPDFMacAIPageToolChecks.h"
-#import "SPDFMacAISparsePageChecks.h"
+#import "SPDFMacAITextReadChecks.h"
 #import "SPDFMacAIChatFolderToolChecks.h"
 #import "SPDFMacAICitationNavigationChecks.h"
 #import "SPDFMacAICurrentViewChecks.h"
@@ -179,9 +179,7 @@ int main(void) { @autoreleasepool {
     PageRegionChecks(root);
     CheckPageImageTool(path);
     CheckCurrentView(path,root);
-    CheckSparsePageRead(path,root); CheckSparsePageBudgets(path);
-    NSString* replay=NSProcessInfo.processInfo.environment[@"SPDF_SPARSE_READ_REPLAY"];
-    if (replay.length) CheckSparsePageRead(replay,root);
+    CheckTextOnlyPageRead(path);
     NSDictionary* preview=SPDFAIPagePreview(path,NO,1,progress,&error);
     Check(preview && [NSData dataWithContentsOfFile:preview[@"path"]].length>0,"trusted preview generated");
     [NSFileManager.defaultManager removeItemAtPath:[preview[@"path"] stringByDeletingLastPathComponent] error:nil];
