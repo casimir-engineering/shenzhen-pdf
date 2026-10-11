@@ -103,11 +103,10 @@ including its zoom, scroll position, selection and highlights. This is captured
 only when the tool is called; it does not move the document or capture other
 applications. The response includes visible page regions and source links.
 
-When a requested fixed-layout page has very little extractable text, its read
-also supplies one bounded page image. Text extraction can miss drawings, outlined
-letters and spatial relationships; the assistant sees that limitation explicitly.
-Other sparse pages are identified for inspection when relevant. Ordinary text
-reads do not generate images.
+Page text reads return extracted text only; they do not automatically generate
+or attach images. The assistant can explicitly request `render_page` for visual
+evidence or `current_view` for the document viewport. Text extraction alone can
+miss drawings, outlined letters and spatial relationships.
 
 Brief results can appear as pastel answer cards: a small descriptive label, a
 large number, range or short phrase, and **View evidence**. The button opens the
@@ -309,7 +308,6 @@ and answer the user's actual question and purpose. It checks definitions, scope
 and conditions, distinguishes source facts from calculations and assumptions,
 and reuses readable evidence instead of repeatedly requesting it. Replies default
 to 1–3 short cited sentences; a supported brief answer can use an answer card.
-Generated summaries and chapters are navigation hints, not source evidence.
 
 These instructions do not guarantee a correct interpretation. Models can still
 misread an image or apply a related fact incorrectly. Citation validation checks

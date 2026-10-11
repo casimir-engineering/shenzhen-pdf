@@ -232,15 +232,15 @@ are identified explicitly. Text-only models are not silently replaced.
 - Reopened chats omit empty intermediate tool messages instead of showing blank
   Assistant bubbles. Saved answers and source previews remain available.
 
-- Sparse PDF/image page reads now include a bounded visual preview, preventing
-  title-block text from being presented as the complete page. The tool labels
-  text-only coverage and other sparse pages requiring inspection. This runs
-  only during an explicit assistant read, with no launch or document-open work.
+- Page reads return extracted text only. Full-page and crop images are requested
+  explicitly through `render_page`; `current_view` is a separate optional tool.
+  No automatic sparse-page preview is attached to text reads.
 - Ask the assistant to look at your current document view. It can inspect the
   visible page area, selection and highlights without changing your position.
 - AI: `current_view` returns on-demand viewport pixels, reading controls,
   visible page regions and exact source citations, including live Markdown
   layout identity. It captures document content only, not other applications.
-- Chat keeps the concise general evidence prompt, with explicit retrieval-tool
-  and answer-card guidance. Generated metadata is labeled as navigation hints;
-  model interpretation can still be wrong and source links remain essential.
+- Chat restores the earlier general evidence prompt with only its brief
+  answer-card hint added. `current_view` remains available through tool discovery,
+  without extra system-prompt guidance. Model interpretation can still be wrong;
+  source links remain essential.

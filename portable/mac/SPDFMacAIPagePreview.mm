@@ -1,5 +1,4 @@
 #import "SPDFMacAIPagePreview.h"
-#import "SPDFMacAICitations.h"
 #import "SPDFMacSearchFileCache.h"
 #import "SPDFMacMarkdownPrinting.h"
 #import "markdown/SPDFTextDocumentFormats.h"
@@ -7,49 +6,6 @@
 #import <ImageIO/ImageIO.h>
 #include "shenzhen_pdf_core.h"
 #include <sys/stat.h>
-
-void SPDFAISupplementSparsePageRead(NSMutableDictionary* result, NSDictionary* candidate, NSProgress* progress) {
-    if (!result || progress.cancelled || SPDFIsRenderedTextDocumentPath(candidate[@"readPath"])) return;
-    result[@"textCoverage"]=@"Extracted text only; graphics, outlined text and spatial relationships may be absent. "
-        "Reading every page's text does not establish that information is absent from the document.";
-    NSMutableArray* sparse=[NSMutableArray array];
-    for (NSDictionary* page in result[@"pages"]) {
-        NSString* text=page[@"text"] ?: @"";
-        NSUInteger characters=0;
-        NSCharacterSet* spaces=NSCharacterSet.whitespaceAndNewlineCharacterSet;
-        for (NSUInteger i=0;i<text.length && characters<200;i++)
-            if (![spaces characterIsMember:[text characterAtIndex:i]]) characters++;
-        if (characters<200) [sparse addObject:page[@"page"]];
-    }
-    if (!sparse.count || progress.cancelled) return;
-    result[@"sparseTextPages"]=sparse;
-    // Title blocks can be extractable even when the rest of a page is paths or
-    // pixels. Deliver those pixels with the requested text, not another model round.
-    NSUInteger page=[sparse.firstObject unsignedIntegerValue]; NSError* error=nil;
-    NSDictionary* preview=SPDFAIPagePreviewForCandidateWithOptions(candidate,page,@{},progress,&error);
-    if (!preview) {
-        result[@"image_error"]=error.localizedDescription ?: @"Sparse page preview unavailable. Use render_page to inspect it.";
-        return;
-    }
-    if (![preview[@"revision"] isEqual:result[@"revision"]]) {
-        [NSFileManager.defaultManager removeItemAtPath:[preview[@"path"] stringByDeletingLastPathComponent] error:nil];
-        result[@"image_error"]=@"Document changed after text extraction. Read it again before answering."; return;
-    }
-    result[@"visualPreviewPage"]=@(page);
-    result[@"visualCoverage"]=@"One sparse-text page image is attached. Inspect it alongside the extracted text. "
-        "Other sparse pages remain visually uninspected; use render_page if relevant. Sparse text is not proof of a blank page.";
-    NSDictionary* citation=nil;
-    for (NSDictionary* item in result[@"pages"]) if ([item[@"page"] unsignedIntegerValue]==page)
-        citation=SPDFMacAICitationArguments([NSURL URLWithString:item[@"citation"]]);
-    if (!citation) {
-        [NSFileManager.defaultManager removeItemAtPath:[preview[@"path"] stringByDeletingLastPathComponent] error:nil];
-        result[@"image_error"]=@"Page image has no valid source citation."; return;
-    }
-    result[@"_localPreview"]=@{@"path":preview[@"path"],@"citation":citation,
-        @"caption":[NSString stringWithFormat:@"%@ · page %lu",candidate[@"title"] ?: @"Document",(unsigned long)page],
-        @"region":preview[@"region"],@"pixelWidth":preview[@"pixelWidth"],@"pixelHeight":preview[@"pixelHeight"]};
-}
-
 static id PreviewError(NSError** error, NSString* message) {
     if (error) *error=[NSError errorWithDomain:@"ShenzhenPDF.AI.Preview" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
     return nil;

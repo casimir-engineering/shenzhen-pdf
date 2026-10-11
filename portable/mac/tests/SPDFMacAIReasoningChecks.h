@@ -17,8 +17,14 @@ static void CheckReasoning(NSURL* root) {
           ![prompt containsString:@"total travel"] && ![prompt containsString:@"dimension arrows"] &&
           ![prompt containsString:@"before relying on a table"],
           "general evidence rules do not privilege the engineering test case");
-    CHECK([prompt containsString:@"Use read_pages for source text"] && [prompt containsString:@"actual question and purpose"] && [prompt containsString:@"Use current_view"],
-          "source tools, purpose and on-demand viewport access remain explicit");
+    NSString* baseline=[NSString stringWithContentsOfFile:@"mac/tests/fixtures/ai-system-prompt-pre-card.txt"
+        encoding:NSUTF8StringEncoding error:nil];
+    baseline=[baseline stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSString* cardHint=@"Use present_answer to finish with an evidence-linked card when the answer fits in a number, range or a few words. Use prose when essential nuance needs more space. ";
+    NSRange language=[prompt rangeOfString:@" Default response language:"];
+    NSString* core=language.location==NSNotFound ? @"" : [prompt substringToIndex:language.location];
+    CHECK([core containsString:cardHint] && [[core stringByReplacingOccurrencesOfString:cardHint withString:@""] isEqual:baseline],
+          "system prompt equals the pre-card baseline with only the card instruction added");
     NSArray* details=@[@{@"type":@"reasoning.encrypted",@"data":@"opaque-fixture-state",@"format":@"fixture"}];
     transport.reply(@{@"content":@"",@"reasoning_details":details,@"tool_calls":@[
         @{@"id":@"drawing",@"function":@{@"name":@"render_page",@"arguments":@"{}"}}]},nil);

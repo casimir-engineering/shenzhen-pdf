@@ -1,5 +1,6 @@
 #pragma once
 #import "SPDFMacAICurrentView.h"
+#import "SPDFMacAIChatVision.h"
 @interface AIViewportCanvas : SPDFDocumentView
 @property NSUInteger draws;
 @end
