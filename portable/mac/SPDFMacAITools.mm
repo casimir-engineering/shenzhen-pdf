@@ -348,7 +348,9 @@ static NSDictionary* Definition(NSString* name, NSString* description, NSDiction
         }
         completion(visible); return;
     }
-    if (arguments[@"revision"] && ![arguments[@"revision"] isEqual:selected[@"revision"]]) {
+    // Read/navigation revisions are optional; providers sometimes send "" for
+    // omission. Required write revisions retain their stricter guards above.
+    if ([arguments[@"revision"] length] && ![arguments[@"revision"] isEqual:selected[@"revision"]]) {
         completion(ToolError(@"Document revision changed. Read the workspace again.")); return;
     }
     if ([name isEqual:@"show_document"] && SPDFIsRenderedTextDocumentPath(selected[@"readPath"]) && !selected[@"paginationPlan"]) {
