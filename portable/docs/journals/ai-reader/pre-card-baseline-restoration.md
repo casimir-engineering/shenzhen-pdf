@@ -21,8 +21,7 @@ release behavior. The public assistant guide, release notes and preview notes
 now describe explicit image requests and the restored baseline.
 
 This is a baseline restoration, not evidence of improved model correctness or
-speed. Live validation is still required; no new successful-answer claim is
-made here. Card layout and evidence navigation have their own validation record
+speed. Card layout and evidence navigation have their own validation record
 in [release QA](card-release-qa.md).
 
 ## Deterministic verification
@@ -37,3 +36,15 @@ snapshot test fails against the preceding session source and passes after the
 restoration. A sparse-page regression verifies that text reads return text and
 citations without generating an image. The signed app builds successfully and
 passes strict signature verification. Live model results are recorded separately.
+
+## Fresh live check
+
+The signed restored candidate was tested in a new isolated chat with the original
+question, without answer hints or previous conversation context. DeepSeek replied
+in 12.6 seconds with 1.8 mm and falsely said there was no dimensional drawing.
+It read the text of pages 1–4, then rendered page 3, without inspecting the drawing
+on page 1. No card was produced. There was no second paid retry after this failure.
+
+The rollback is complete; it did not make the earlier successful answer repeat
+in this fresh test. No further prompt tuning was added and publication remains
+held. The user’s chats and source documents were not rewritten.
