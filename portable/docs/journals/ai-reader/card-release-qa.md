@@ -120,3 +120,29 @@ screenshots remain in `/tmp/sz-card-live-qa` for audit. A disposable QA document
 tab opened in the user's original reader during early setup was closed using its
 specific **Close Tab** action. The user's switch document was selected again.
 No user chat, source file, Collection entry, or reader process was deleted.
+
+## Restored pre-card baseline retest — 11 October, 17:32 CST
+
+Parent restored the exact pre-card system prompt plus the original card hint,
+text-only `read_pages`, and removed the newly added metadata field. A separately
+signed candidate from `/tmp/sz-ai-baseline-build.log` was launched in the isolated
+QA state (owned PID 48477). This was a **fresh chat**, not a continuation of any
+previous incorrect answer.
+
+The unchanged original switch question was sent at `2026-10-11T09:32:07.396Z`.
+Completion was persisted at `2026-10-11T09:32:19.971Z` (**12.6 seconds**).
+
+Tool sequence: `read_pages(page=1,count=4)` then `render_page(page=3)`. The model
+did not request an image of page 1. No card was emitted. Literal final answer:
+
+
+> The only actuator-movement figure given is **travel to closure: 1.6 mm ± 0.2 mm**, so the maximum is **1.8 mm** [MSK13C02-SZ - toggle switch - datasheet · p. 3](spdf-ai://document?path=doc:f8538877d07ab4a986a54389ced19f6c9335ec3a68ffe9567a0ab890f755d244&page=3&revision=16777231:39442337:787494:1791534936:95873130:1791614963:858501215).
+>
+> Caveat: that is the handle's travel per position step, not the actuator's protruding length. This datasheet contains no dimensional/mounting drawing (actuator height, width or panel cutout), so a hole size cannot be derived from it — you'd need the mechanical drawing or a physical measurement.
+
+
+Result: **accuracy failed**. It again confused per-step travel with the full
+span and falsely claimed there was no dimensional drawing. Per the parent’s
+instruction, a second fresh repeat was conditional on a correct first answer
+and was not run. Screenshot: `/tmp/sz-card-live-qa/baseline-switch-answer.png`.
+Saved chat: `C721CF8A-687E-4DED-B21D-F8F7BED0ECD1.json` in the isolated Chats store.
