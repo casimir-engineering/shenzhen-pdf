@@ -17,7 +17,7 @@
 
 **Shenzhen PDF Reader (ShenzhenPDF)** opens PDFs (and more) instantly, keeps documents in tidy tabs, and does the heavy work — OCR and translation — entirely on-device. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)**, [document assistant guide](portable/docs/document-assistant.md), and [AI control guide](portable/docs/agent-interface.md).
 
-<sub><a href="#reading">Reading</a> · <a href="#collection">Collection</a> · <a href="#markdown">Markdown &amp; code</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
+<sub><a href="#reading">Reading</a> · <a href="#collection">Collection</a> · <a href="#assistant">Document chat</a> · <a href="#markdown">Markdown &amp; code</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
 
 ---
 
@@ -42,7 +42,8 @@
 - **Keep local copies and history** — choose at first use, then continue opening the originals. Collection documents can be edited and renamed, while earlier history snapshots remain intact; automatic copies and history can be turned off in Settings.
 - **Permission-aware import** — initial Collection setup waits for file-access decisions and skips inaccessible entries without saved history. Successfully read protected documents use their verified reader copy; saved-copy buttons and previews refresh as history becomes available.
 - **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. An empty palette lists open documents by last viewed. Search words can appear in any order across names and folders, with exact names first. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
-- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open original reads the source; Open collection copy opens an editable document in its original group. Missing originals stay readable from Collection, with a red status pill and a Locate button. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and optional storage limits; storage is unlimited by default.
+- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open original reads the source; Open collection copy opens an editable document in its original group. Missing originals stay readable from Collection, with a red status pill and a Locate button. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and dynamic, fixed or unlimited storage budgets.
+- **Storage budget** — new setup defaults to 80% of free space plus existing Collection storage, adjustable from 50–80%; choose a fixed limit or Unlimited instead. Existing choices are preserved. **Move location** transfers stored files to a verified new location.
 - **Storage** — identical documents and local assets share stored objects by content hash. Changed versions are full copies; there is no extra compression or delta storage. An optional cap removes old versions from the least-opened documents first; **Keep forever** protects that document’s history from cleanup while a version is marked.
 - **Compare revisions** — right-click an older History version to compare with Latest. PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
 - **Manage backups** — right-click a saved History version to delete it, or choose **Delete all previous backups…** on the linked original to retain only the latest saved copy. The source file remains untouched.
@@ -50,7 +51,7 @@
 
 <table align="center"><tr>
 <td width="50%" valign="top"><img src="docs/images/portable/macos-history.webp" alt="Current reader with the History sidebar and latest-version marker" width="100%"><br><sub>Versions stay in the reader's History panel.</sub></td>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-collection-settings.webp" alt="Collection settings with local storage location, Unlimited by default and Apply directly below the storage limit" width="100%"><br><sub>Local storage, with an optional cap.</sub></td>
+<td width="50%" valign="top"><img src="docs/images/portable/macos-collection-settings.webp" alt="Collection settings with local storage location and an optional fixed storage limit" width="100%"><br><sub>Local storage, with an optional cap.</sub></td>
 </tr></table>
 
 ## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
@@ -68,7 +69,15 @@
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
 - **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine or executable JavaScript. Remote HTTPS images load lazily when their document is active.
 
-The optional macOS document assistant uses a connected OpenRouter model for cited answers and reversible workspace actions; its setup, privacy choices and exact limits are in the [document assistant guide](portable/docs/document-assistant.md). For external AI agents, see the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md): CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
+## <a id="assistant"></a>Document chat <sub>macOS · optional OpenRouter connection</sub>
+
+- **Ask beside the document** — <kbd>Cmd+K</kbd>, then Return from an empty search opens a resizable chat panel. Answers link to retrieved passages or page images; compact answer cards put a brief result beside **View evidence**. Image-capable models can inspect pages, crops and your current document view on request.
+- **Saved conversations** — search titles and message text, resume chats, rename them inline, and organize them into folders by dragging or asking the assistant. Search within a chat jumps to highlighted passages.
+- **Summaries, tags and chapters** — one background request generates metadata in your chosen language for eligible latest documents. Existing headings stay authoritative; unchanged analysis is cached.
+- **Reversible actions** — organize groups and chats, change supported reader controls, edit PDF comments or generated metadata, and request separate OCR, translation or PDF outputs. Stop, Undo and Redo apply within the documented action limits.
+- **Setup and privacy** — a four-step wizard covers file access, Collection, OpenRouter and default file types. Credentials stay in Keychain. Chat and background analysis use account credits and send retrieved document content to the connected provider; both can be disabled. Models can make mistakes, so inspect the cited evidence.
+
+The [document assistant guide](portable/docs/document-assistant.md) covers setup, privacy and exact limits. For external AI agents, the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md) documents CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
 
 ## <a id="search"></a>Search-oriented architecture
 
