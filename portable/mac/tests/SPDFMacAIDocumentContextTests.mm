@@ -128,6 +128,7 @@ static SPDFDocumentTab* Tab(NSString* path, SPDFTabGroup* group) {
 #import "SPDFMacAITextReadChecks.h"
 #import "SPDFMacAIChatFolderToolChecks.h"
 #import "SPDFMacAICitationNavigationChecks.h"
+#import "SPDFMacAIOptionalRevisionChecks.h"
 #import "SPDFMacAICurrentViewChecks.h"
 #import "SPDFMacAICollectionRenameChecks.h"
 #import "SPDFMacAIMetadataHistoryChecks.h"
@@ -178,6 +179,7 @@ int main(void) { @autoreleasepool {
     progress=[NSProgress progressWithTotalUnitCount:1];
     PageRegionChecks(root);
     CheckPageImageTool(path);
+    CheckOptionalRevisions(path);
     CheckCurrentView(path,root);
     CheckTextOnlyPageRead(path);
     NSDictionary* preview=SPDFAIPagePreview(path,NO,1,progress,&error);
