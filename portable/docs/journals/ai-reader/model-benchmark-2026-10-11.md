@@ -3,9 +3,13 @@
 **No clear upgrade over DeepSeek in this sample.** Six models were tested on the same
 five tests twice, with independent grading after model names, timings and prices
 were removed. DeepSeek, Haiku, Luna and GLM passed 8/10; MiMo passed 6/10 and
-Gemini Flash Lite passed 0/10 under the full answer-and-evidence criteria.
+Gemini Flash Lite passed 0/10 under supported-answer grading. Applying the literal
+whole-page retrieval requirement lowers Haiku and Luna to 6/10; see the
+[grading interpretation](#disclosed-grading-interpretation).
 **Every model failed the original switch question both times.** The default and
-production prompt remain unchanged, and this benchmark does not clear the release.
+production prompt remain unchanged. At the end of this evaluation, publication
+was held; the later release authorization is recorded below and does not change
+these findings.
 
 Recorded provider cost was **$0.08927**, excluding unreported charges from two
 malformed provider responses. This is recorded usage, not a reconciled account
@@ -287,3 +291,13 @@ was applied to each requested model.
 The scope is deliberately five small tests. It does not establish long-document,
 multilingual, mutation-tool or live-viewport quality, and it does not justify a
 claim that any model will always read technical drawings correctly.
+
+## Release decision — 2026-10-11
+
+After reviewing the known benchmark limitation, the user explicitly authorized
+release and requested README pictures and a link to these results. The
+[26.10.11-1 release notes](../../releases/26.10.11-1.md) retain the limitation and
+separate user features from AI integration details. This authorization changes
+the publication decision, not the benchmark scores, model default or production
+prompt. The independent [card UI and evidence-button QA](card-release-qa.md)
+remains a functional check, not a claim of semantic answer accuracy.
