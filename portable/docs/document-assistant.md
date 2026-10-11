@@ -300,16 +300,23 @@ User messages have a muted blue background; assistant messages use a neutral
 shade in both themes. Replies are brief by default and follow your requested
 names, wording, scope and constraints.
 
-## Focused drawing questions
+## Evidence and concise answers
 
 An explicit chat send supplies the active document's ID, title and page without
 reading its file or scanning other documents. The assistant is instructed to
-start there for a question about the current document, trace dimension arrows
-and alternate positions, and distinguish component width, per-step travel and
-end-to-end displacement. A readable drawing should be interpreted before another
-crop or unrelated workspace search is requested. Opaque provider reasoning
-blocks are retained within a tool-call turn and discarded afterwards; they are
-not displayed or saved in chat history.
+start there, choose text or rendered pages according to where the evidence lives,
+and answer the user's actual question and purpose. It checks definitions, scope
+and conditions, distinguishes source facts from calculations and assumptions,
+and reuses readable evidence instead of repeatedly requesting it. Replies default
+to 1–3 short cited sentences; a supported brief answer can use an answer card.
+Generated summaries and chapters are navigation hints, not source evidence.
+
+These instructions do not guarantee a correct interpretation. Models can still
+misread an image or apply a related fact incorrectly. Citation validation checks
+retrieved provenance and source revision, not whether the model's conclusion is
+correct. See the [DeepSeek evaluation record](journals/ai-reader/deepseek-evidence-evaluation.md)
+for observed limitations. Opaque provider reasoning blocks survive tool
+continuations within a turn but are not displayed or saved in chat history.
 
 The assistant's chat tools are `list_chats` (paged titles, folders and optional
 message-search context) and `organize_chats` (up to 200 atomic operations).

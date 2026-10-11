@@ -196,17 +196,18 @@ are identified explicitly. Text-only models are not silently replaced.
   workspace groups. Visual evidence retains a full-page overview alongside a
   detail crop. Provider reasoning state survives tool continuations without
   appearing in the transcript or being saved to disk.
-- Technical-drawing guidance distinguishes alternate component positions and
-  dimension endpoints from table values such as travel to closure.
+- General evidence guidance checks the question’s purpose, source definitions,
+  scope and conditions, distinguishing stated facts from calculations and assumptions.
+  Model interpretation can still be wrong; no drawing-specific prompt rule is used.
 
 ### Citation navigation and evidence quality
 
 - Document citations reach their page on the first click, including tabs whose
   saved viewport would otherwise be restored during opening.
 - Page links wait for a loading document without overriding a later user action.
-- The chat prompt requires answers to address the requested quantity, inspect
-  readable diagram evidence before requesting more crops, and check general
-  notes and tolerances instead of substituting a nearby table specification.
+- The chat prompt asks for the evidence relevant to the user’s question, choosing
+  text or page images as needed and reusing readable evidence. Citations validate
+  retrieved provenance and revision, not the correctness of the model’s conclusion.
 
 ### Chat reliability and search
 
