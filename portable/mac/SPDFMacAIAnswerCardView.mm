@@ -6,6 +6,9 @@ static NSColor* AnswerColor(CGFloat r,CGFloat g,CGFloat b) { return [NSColor col
 @implementation SPDFAnswerEvidenceButton {
     NSTrackingArea* _hoverArea; BOOL _hovered;
 }
+- (BOOL)accessibilityPerformPress {
+    return self.enabled && [self sendAction:self.action to:self.target];
+}
 - (void)updateTrackingAreas {
     [super updateTrackingAreas]; if (_hoverArea) [self removeTrackingArea:_hoverArea];
     _hoverArea=[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited|NSTrackingActiveAlways|NSTrackingInVisibleRect owner:self userInfo:nil];
@@ -59,6 +62,14 @@ static NSColor* AnswerColor(CGFloat r,CGFloat g,CGFloat b) { return [NSColor col
     [self measure]; return self;
 }
 - (void)openEvidence:(id)sender { (void)sender; if (_openLink && _citation) _openLink(_citation); }
+- (NSArray*)accessibilityChildren {
+    // NSTextView normally exposes its text as a leaf, hiding embedded native
+    // controls from VoiceOver and accessibility clients. Keep the answer text
+    // selectable while exposing its evidence action explicitly.
+    NSMutableArray* children=[[super accessibilityChildren] mutableCopy] ?: [NSMutableArray array];
+    if (_evidence && ![children containsObject:_evidence]) [children addObject:_evidence];
+    return children;
+}
 - (void)drawRect:(NSRect)dirty {
     BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
     [(dark ? AnswerColor(216,205,233) : AnswerColor(238,232,247)) setFill];
