@@ -16,6 +16,8 @@ static void RunAnswerCardViewChecks(void) {
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.03]];[view layoutSubtreeIfNeeded];
         NSTextView* answer=(id)Find(view,@"answerCard");NSButton* evidence=(id)Find(view,@"answerEvidence");
         Check(answer && evidence && answer.selectable,@"native card has selectable answer and evidence button");
+        Check([answer.accessibilityChildren containsObject:evidence],@"selectable card exposes its evidence button to accessibility clients");
+        Check([evidence accessibilityPerformPress],@"evidence button supports an accessibility press");
         Check(NSContainsRect(answer.bounds,evidence.frame),@"evidence button remains inside the card");
         NSRect text=[answer.layoutManager usedRectForTextContainer:answer.textContainer];
         NSRange valueRange=[answer.string rangeOfString:@"3.1 mm"];
@@ -33,7 +35,7 @@ static void RunAnswerCardViewChecks(void) {
         }
         Capture(view,[appearance isEqual:NSAppearanceNameAqua] ? @"answer-card-light" : @"answer-card-dark");
     }
-    Check(opened==4,@"evidence clicks work at all visible corners in both appearances");
+    Check(opened==6,@"evidence clicks and accessibility presses forward the citation in both appearances");
     [view setChatSearchQuery:@"3.1"];[view layoutSubtreeIfNeeded];
     [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.03]];
     NSTextView* answer=(id)Find(view,@"answerCard");
