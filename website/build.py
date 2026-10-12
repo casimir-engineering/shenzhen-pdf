@@ -23,8 +23,8 @@ def build(base, output):
     assets = output / "assets"
     assets.mkdir(exist_ok=True)
     shutil.copyfile(ROOT / "website/style.css", assets / "style.css")
-    for name in ("macos-main-window.webp", "macos-groups.webp"):
-        shutil.copyfile(ROOT / "docs/images/portable" / name, assets / name)
+    for name in ("macos-ai-chat.webp", "macos-markdown.webp", "macos-main-window.webp", "macos-groups.webp"):
+        shutil.copyfile(ROOT / "website/assets" / name, assets / name)
     makefile = (ROOT / "portable/Makefile").read_text()
     version = re.search(r"^MAC_VERSION \?= (.+)$", makefile, re.M)[1]
     build_number = re.search(r"^MAC_BUILD \?= (.+)$", makefile, re.M)[1]
@@ -38,7 +38,7 @@ def build(base, output):
             "description": content["description"], "url": canonical,
             "downloadUrl": DOWNLOAD, "softwareVersion": f"{version}-{build_number}",
             "isAccessibleForFree": True, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
-            "screenshot": base + "assets/macos-main-window.webp", "sameAs": [REPO],
+            "screenshot": base + "assets/macos-ai-chat.webp", "sameAs": [REPO],
         }
         values = {**content, "lang": lang, "canonical": canonical, "base": base,
                   "alternate": base + other, "repo": REPO, "download": DOWNLOAD,
