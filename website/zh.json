@@ -7,7 +7,7 @@
   "alternate_lang": "en",
   "language": "English",
   "eyebrow": "macOS 原生应用 · 免费开源",
-  "lede": "免费开源的 Mac 文档阅读器。搜索文件、按组整理文档、保留本地备份。阅读无需账号。AI 功能可选，使用你自己的 OpenRouter 额度。",
+  "lede": "免费开源的 Mac 文档阅读器。阅读 PDF 和 Markdown、搜索文档、按组整理文件、保留本地备份。",
   "download_label": "下载 Mac 版",
   "release_label": "查看更新说明",
   "requirements": "Apple Silicon 芯片 · macOS 12 或更高版本 · 已签名并通过 Apple 公证",

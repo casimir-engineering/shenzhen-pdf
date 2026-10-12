@@ -1,6 +1,6 @@
 # Shenzhen PDF Reader
 
-Free, open-source document reader for macOS. Opens PDF, EPUB, Markdown, text, code and images. Reading works locally without an account; optional AI uses your own OpenRouter credits.
+Free, open-source document reader for macOS. Opens PDF, EPUB, Markdown, text, code and images.
 
 **[Download for Mac](https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg)** · Apple Silicon · macOS 12+ · Signed and notarized
 
