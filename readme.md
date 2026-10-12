@@ -1,6 +1,8 @@
 # Shenzhen PDF Reader
 
-Free, open-source document reader for macOS. Opens PDF, EPUB, Markdown, text, code and images.
+A fast, free, open-source reader for macOS. Organize documents in groups and keep them in Collection, your local document library. Search and AI help you find information, compare documents and check the sources.
+
+Supports PDF, EPUB, Markdown, text, code and images.
 
 **[Download for Mac](https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg)** · Apple Silicon · macOS 12+ · Signed and notarized
 
@@ -36,7 +38,7 @@ Type in the reader to search. Results include chapter context, page highlights a
 
 - Colored tab groups, drag-and-drop organization and multiple windows.
 - Restore tabs, groups, window positions, page, zoom and search state from YAML.
-- Collection stores local copies and version history. Available copies remain editable when originals disappear.
+- Collection is your local document library, with saved copies and version history. Available copies remain editable when originals disappear.
 - Compare revisions, reconnect missing originals, and set dynamic, fixed or unlimited storage.
 - Identical content is deduplicated. Changed versions are full copies, without delta storage.
 
