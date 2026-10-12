@@ -393,16 +393,20 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
   and the job resumes, with a live copyable log.
 - **Delete All Text** — strip a bad OCR layer back out.
 
-## <a id="translation"></a>Translation — on-device **mac · linux**
+## <a id="translation"></a>Translation **mac · linux**
 
 <p align="center"><img src="images/portable/macos-translate.webp" alt="A whole PDF translated offline from English to Chinese, opened beside the original" width="880"></p>
 
+- **macOS: choose Local or AI** from the menu below Translate. Local keeps the existing Argos workflow.
+- **AI translation** uses your OpenRouter connection and model. Review the source text, choose a searchable target language (your AI language by default), then send explicitly. Selection and whole-document text are supported; scanned pages need OCR first.
+- AI results are editable and saved as a **new Markdown copy**, not a layout-preserving PDF. The original is protected from overwrite. Progress and Cancel are available; failed or cancelled requests do not save partial files.
+- AI requests run sequentially in small text chunks. Documents above 500,000 characters are rejected with a request to select a smaller passage, never silently truncated.
 - **Argos Translate**, running locally across ~19 languages including Chinese.
   Text never leaves the machine.
 - **Translate a selection** into a panel, or **a whole document**. On macOS this
   includes Markdown, plain text, source code, EPUB and other readable text documents.
   Non-PDF documents are rendered to a separate PDF before translation; the source stays unchanged.
-- **Whole-document mode writes a real PDF** (`<name>_<lang>.pdf`) with the
+- **Local whole-document mode writes a real PDF** (`<name>_<lang>.pdf`) with the
   translated text overlaid at each source line's position, and opens it when it
   finishes.
 - **Cancellable mid-run**, with the same one-click toolchain install as OCR.

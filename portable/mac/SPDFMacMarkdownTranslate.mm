@@ -1,3 +1,4 @@
+#import "SPDFMacTranslationChoice.h"
 #import "SPDFMacMarkdownTranslate.h"
 
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -52,7 +53,7 @@
     // against real page geometry with nothing about it made Markdown-aware.
     [self openPath:rendition];
     if ([self isMarkdownActive]) return YES;  // the open did not take; do not recurse
-    [self translateDocument:nil];
+    [self translateDocumentLocally:nil];
     return YES;
 }
 
