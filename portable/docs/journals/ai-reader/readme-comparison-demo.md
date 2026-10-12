@@ -70,3 +70,10 @@ state concrete tasks, local storage and account requirements. Free/open-source
 status now leads; AI is explicitly optional and uses the user's OpenRouter
 credits. Updated the Chinese copy and page metadata consistently. Website
 build/check and whitespace checks passed; checked desktop and narrow layouts.
+
+## Product focus — 2026-10-12
+
+Aligned README and both website languages around fast reading, organization and
+information retrieval from Collection as a local document library. The three
+website feature summaries now follow those priorities; AI supports retrieval,
+comparison and source verification. Static website and whitespace checks passed.
