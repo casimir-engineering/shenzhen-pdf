@@ -62,3 +62,11 @@ This documentation update does not rebuild, replace or republish the released ap
 
 Only documentation, documentation fixtures and the static site changed. App code,
 release binaries, launch behavior and updater configuration are unchanged.
+
+## Plain-language presentation — 2026-10-12
+
+Rewrote the website introduction, feature summaries and related README text to
+state concrete tasks, local storage and account requirements. Free/open-source
+status now leads; AI is explicitly optional and uses the user's OpenRouter
+credits. Updated the Chinese copy and page metadata consistently. Website
+build/check and whitespace checks passed; checked desktop and narrow layouts.
