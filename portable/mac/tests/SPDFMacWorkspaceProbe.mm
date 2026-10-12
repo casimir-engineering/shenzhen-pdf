@@ -242,7 +242,7 @@ static NSUInteger failures;
     }
     Check(NSWidth(_pageScrollView.frame)>100 && NSHeight(_pageScrollView.frame)>100,@"document retains a usable viewport");
     if (![self isMarkdownActive])
-        Check(_pageView.pages.count==3 && _minimapView.pages.count==3,@"real PDF canvas and map retain every fixture page");
+        Check(_pageView.pages.count==self.fixturePDF.pageCount && _minimapView.pages.count==self.fixturePDF.pageCount,@"real PDF canvas and map retain every fixture page");
     else Check(self.activeMarkdownSession.pageCount>0,@"Markdown pages survive workspace resizing");
     Check(_sidebarVisible==sidebar && (sidebar || NSWidth(_sidebarContainer.frame)<=1),@"requested sidebar visibility is applied");
     if (!_presentationMode) {
@@ -392,6 +392,8 @@ static NSURL* Fixture(NSString* root) {
 #import "SPDFMacGroupButtonChecks.h"
 #import "SPDFMacFindLifecycleChecks.h"
 #import "SPDFMacCollectionFailedReadChecks.h"
+// Documentation probes reuse the native reader fixture without its test entry point.
+#ifndef SPDF_WORKSPACE_PROBE_REUSE
 int main(int argc,const char* argv[]) {
     setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
@@ -458,3 +460,5 @@ int main(int argc,const char* argv[]) {
     }
     return failures ? 1 : 0;
 }
+
+#endif

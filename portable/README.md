@@ -201,6 +201,17 @@ make -C portable -f Makefile -f mac/tests/workspace-probe.mk \
 python3 portable/mac/tests/refresh-readme-images.py /tmp/sz-readme-evidence
 ```
 
+The cross-document AI comparison image uses an additional scripted, offline
+fixture with fictional plans and the production chat/card components:
+
+```sh
+make -C portable -j8 -f Makefile -f mac/tests/workspace-probe.mk \
+  mac-ai-readme-probe WORKSPACE_EVIDENCE_DIR=/tmp/sz-ai-readme
+```
+
+This writes `macos-ai-chat.png`; review it before copying it into
+`docs/images/portable/`. It does not contact a model or demonstrate model accuracy.
+
 Check both commands' exit status and review the images before committing. Screenshot
 fixtures and crop recipes live under `portable/mac/tests/`; changing them does not
 change the reader's runtime behavior.
