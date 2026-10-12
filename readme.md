@@ -1,5 +1,5 @@
 <h1 align="center">Shenzhen PDF Reader</h1>
-<p align="center"><b>A fast native Mac reader for PDFs, Markdown, code and images, with document groups, local history, optional AI chat, OCR and offline translation.</b></p>
+<p align="center"><b>Ask across documents. Follow the evidence. Read Markdown, diagrams and code on real pages.</b></p>
 
 <div align="center">
 
@@ -11,50 +11,34 @@
 
 </div>
 
-<p align="center"><img src="docs/images/portable/macos-main-window.webp" alt="ShenzhenPDF: a PDF open with a live search — every match highlighted in the page, listed in the side panel, and marked in the document map on the right" width="880"></p>
+<p align="center"><img src="docs/images/portable/macos-ai-chat.png" alt="Two support plans compared in chat: 24 versus 18 months, the repair exclusion cited, and a pastel evidence card beside the source document" width="880"><br><sub>Compare coverage across two documents, catch the exclusion, and open the evidence. Scripted example in the real app with fictional plans.</sub></p>
 
-<p align="center">Type anywhere to search. Jump anywhere with the map. Launches instantly. Relaunches exactly as you left it.</p>
+**Shenzhen PDF Reader** is a fast native Mac reader for PDFs, Markdown, code and images. Compare documents with optional AI chat, jump to the source, and keep your research organized with groups and local version history. OCR and translation run on your device.
 
-**Shenzhen PDF Reader (ShenzhenPDF)** opens documents instantly and keeps them in groups with local version history. OCR and translation run on your device. Optional document chat connects to OpenRouter for cited answers, summaries, tags and missing chapters. **Inspired by SumatraPDF, a separate project, not affiliated with it.** See the **[full feature list](docs/features.md)**, [document assistant guide](portable/docs/document-assistant.md), and [AI control guide](portable/docs/agent-interface.md).
-
-<sub><a href="#reading">Reading</a> · <a href="#collection">Collection</a> · <a href="#assistant">Document chat</a> · <a href="#markdown">Markdown &amp; code</a> · <a href="#search">Search &amp; map</a> · <a href="#dark">Dark theme</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#fast">Speed</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
+<sub><a href="#assistant">Document AI</a> · <a href="#markdown">Markdown &amp; diagrams</a> · <a href="#search">Search &amp; map</a> · <a href="#collection">Collection</a> · <a href="#reading">Groups &amp; tabs</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#setup">Setup</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
 
 ---
 
-## <a id="reading"></a>Reading
+## <a id="assistant"></a>Compare documents. See the evidence. <sub>macOS · optional AI</sub>
 
-<p align="center"><img src="docs/images/portable/macos-groups.webp" alt="Current native reader with colored Research, General and Design groups, compact tabs and direct sidebar tools" width="880"></p>
+- **Compare and investigate** — ask across your open documents, inspect page images or detailed crops, and follow citations back to their sources.
+- **Ask beside the document** — <kbd>Cmd+K</kbd>, then Return from an empty search opens a resizable chat panel. Answers link to retrieved passages or page images; compact answer cards put a brief result beside **View evidence**. Image-capable models can inspect pages, crops and your current document view on request.
+- **Saved conversations** — search titles and message text, resume chats, rename them inline, and organize them into folders by dragging or asking the assistant. Search within a chat jumps to highlighted passages.
+- **Summaries, tags and chapters** — one background request generates metadata in your chosen language for eligible latest documents. Existing headings stay authoritative; unchanged analysis is cached.
+- **Reversible actions** — organize groups and chats, change supported reader controls, edit PDF comments or generated metadata, and request separate OCR, translation or PDF outputs. Stop, Undo and Redo apply within the documented action limits.
 
-- **Tabs and windows** — compact tabs with colored groups, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
-- **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. The **+** menu offers **New Tab** and **New Group…**: create an empty group without leaving your current document, then open files into it. Drop a tab onto the middle of another and pause to create a group; drag near either edge to reorder. New groups immediately ask for a name, with the color name selected for quick replacement or Enter to keep it. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Scroll a crowded group with the mouse wheel or two fingers; edge `+N` tabs list hidden documents. Other collapsed groups stay visible when space permits. Hover the hide eye, or right-click to rename with the anchored popup. Membership, order, colors, names, visibility, and scroll position survive relaunch.
-- **Group management** <sub>macOS</sub> — search group and document names, collapse or expand every group, and jump to the current document with its group expanded and its row in view. Close a group from either its context menu or the tab bar, with confirmation before its documents close.
-- **Rotate images** <sub>macOS</sub> — <kbd>Cmd+R</kbd> / <kbd>Shift+Cmd+R</kbd> saves a writable image’s orientation, including lossless JPEG orientation updates.
-- **Paste pictures** <sub>macOS</sub> — paste an image or copied image file into the reader. A red dot marks an unsaved clipboard picture; Save As offers image or PDF and opens the saved file.
-- **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
-- **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
-- **Rename documents** <sub>macOS</sub> — right-click a tab to rename its file while keeping its reading position and Collection history. For read-only files, Save As creates a writable replacement and carries the history to it.
-- **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).
+AI chat uses your OpenRouter account and sends retrieved content to the provider. Models can misread evidence; check the sources. [Setup, privacy and limits](portable/docs/document-assistant.md) · [Model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md)
 
-## <a id="collection"></a>Collection and history <sub>macOS</sub>
+<details>
+<summary>Model comparison and reproducible benchmark</summary>
 
-<p align="center"><img src="docs/images/portable/macos-collection.webp" alt="Collection showing one latest saved copy per document and direct History actions" width="880"></p>
+Our [six-model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md) reports answer quality, evidence use, latency and actual cost across 60 attempts. It found no clear upgrade over DeepSeek in that small sample, and every model failed the reported drawing question twice. The [reusable benchmark runner](tools/ai-model-benchmark/README.md) lets contributors repeat the comparison with their own documents; running it makes paid requests. Source links help you check an answer, not certify it.
 
-- **Keep local copies and history** — choose at first use, then continue opening the originals. Collection documents can be edited and renamed, while earlier history snapshots remain intact; automatic copies and history can be turned off in Settings.
-- **Permission-aware import** — initial Collection setup waits for file-access decisions and skips inaccessible entries without saved history. Successfully read protected documents use their verified reader copy; saved-copy buttons and previews refresh as history becomes available.
-- **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. An empty palette lists open documents by last viewed. Search words can appear in any order across names and folders, with exact names first. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
-- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open original reads the source; Open collection copy opens an editable document in its original group. Missing originals stay readable from Collection, with a red status pill and a Locate button. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and dynamic, fixed or unlimited storage budgets.
-- **Storage budget** — new setup defaults to 80% of free space plus existing Collection storage, adjustable from 50–80%; choose a fixed limit or Unlimited instead. Existing choices are preserved. **Move location** transfers stored files to a verified new location.
-- **Storage** — identical documents and local assets share stored objects by content hash. Changed versions are full copies; there is no extra compression or delta storage. An optional cap removes old versions from the least-opened documents first; **Keep forever** protects that document’s history from cleanup while a version is marked.
-- **Compare revisions** — right-click an older History version to compare with Latest. PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
-- **Manage backups** — right-click a saved History version to delete it, or choose **Delete all previous backups…** on the linked original to retain only the latest saved copy. The source file remains untouched.
-- **Return to the previous tab** — <kbd>Cmd+D</kbd> toggles between the last two documents, reopening a closed tab with its reading position.
+</details>
 
-<table align="center"><tr>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-history.webp" alt="Current reader with the History sidebar and latest-version marker" width="100%"><br><sub>Versions stay in the reader's History panel.</sub></td>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-setup.png" alt="Current setup wizard showing Collection storage with an adjustable 80 percent dynamic budget and Move location" width="100%"><br><sub>First-run Collection setup: choose a storage budget and location.</sub></td>
-</tr></table>
+For external AI agents, the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md) documents CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
 
-## <a id="markdown"></a>Markdown, read like a document <sub>macOS</sub>
+## <a id="markdown"></a>Markdown with native diagrams, math and code <sub>macOS</sub>
 
 <p align="center"><img src="docs/images/portable/macos-markdown.webp" alt="A Markdown document rendered as an A4 sheet: heading, flowchart drawn natively, a table with header band and grid, nested chapters in the side panel, page thumbnails in the map" width="880"></p>
 
@@ -69,23 +53,7 @@
 - **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
 - **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine or executable JavaScript. Remote HTTPS images load lazily when their document is active.
 
-## <a id="assistant"></a>Document chat <sub>macOS · optional OpenRouter connection</sub>
-
-<p align="center"><img src="docs/images/portable/macos-ai-chat.png" alt="Native reader with chat folders, a pastel answer card and View evidence beside a sample specification" width="880"><br><sub>Native UI with a scripted example conversation and fictional document; shown to demonstrate the interface, not model accuracy.</sub></p>
-
-- **Ask beside the document** — <kbd>Cmd+K</kbd>, then Return from an empty search opens a resizable chat panel. Answers link to retrieved passages or page images; compact answer cards put a brief result beside **View evidence**. Image-capable models can inspect pages, crops and your current document view on request.
-- **Saved conversations** — search titles and message text, resume chats, rename them inline, and organize them into folders by dragging or asking the assistant. Search within a chat jumps to highlighted passages.
-- **Summaries, tags and chapters** — one background request generates metadata in your chosen language for eligible latest documents. Existing headings stay authoritative; unchanged analysis is cached.
-- **Reversible actions** — organize groups and chats, change supported reader controls, edit PDF comments or generated metadata, and request separate OCR, translation or PDF outputs. Stop, Undo and Redo apply within the documented action limits.
-- **Setup and privacy** — a four-step wizard covers file access, Collection, OpenRouter and default file types. Credentials stay in Keychain. Chat and background analysis use account credits and send retrieved document content to the connected provider; both can be disabled. Models can make mistakes, so inspect the cited evidence.
-
-<p align="center"><img src="docs/images/portable/macos-ai-settings.png" alt="Native AI settings with OpenRouter connection, searchable model and language choices, and separate chat and metadata options" width="760"><br><sub>Connect your account and choose a model, language and automatic metadata preferences.</sub></p>
-
-Our [six-model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md) reports answer quality, evidence use, latency and actual cost across 60 attempts. It found no clear upgrade over DeepSeek in that small sample, and every model failed the reported drawing question twice. The [reusable benchmark runner](tools/ai-model-benchmark/README.md) lets contributors repeat the comparison with their own documents; running it makes paid requests. Source links help you check an answer, not certify it.
-
-The [document assistant guide](portable/docs/document-assistant.md) covers setup, privacy and exact limits. For external AI agents, the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md) documents CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
-
-## <a id="search"></a>Search-oriented architecture
+## <a id="search"></a>Find a phrase. See it on the page.
 
 <p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="PDF search with highlighted passages, chapter-grouped context, a match counter and document-map markers" width="880"></p>
 
@@ -100,6 +68,62 @@ The [document assistant guide](portable/docs/document-assistant.md) covers setup
 
 </td></tr></table>
 
+## <a id="collection"></a>Keep your documents — even when originals disappear <sub>macOS</sub>
+
+<p align="center"><img src="docs/images/portable/macos-collection.webp" alt="Collection showing one latest saved copy per document and direct History actions" width="880"></p>
+
+- **Keep reading after a source disappears** — open an editable Collection copy in its original group, then reconnect the original when available.
+- **See what changed** — saved versions, side-by-side comparison and red/green change markers.
+- **Find across your library** — <kbd>Cmd+K</kbd> searches names, groups, open text and Collection content with matching context.
+
+<details>
+<summary>History, recovery and storage details</summary>
+
+- **Keep local copies and history** — choose at first use, then continue opening the originals. Collection documents can be edited and renamed, while earlier history snapshots remain intact; automatic copies and history can be turned off in Settings.
+- **Permission-aware import** — initial Collection setup waits for file-access decisions and skips inaccessible entries without saved history. Successfully read protected documents use their verified reader copy; saved-copy buttons and previews refresh as history becomes available.
+- **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. An empty palette lists open documents by last viewed. Search words can appear in any order across names and folders, with exact names first. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
+- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open original reads the source; Open collection copy opens an editable document in its original group. Missing originals stay readable from Collection, with a red status pill and a Locate button. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and dynamic, fixed or unlimited storage budgets.
+- **Storage budget** — new setup defaults to 80% of free space plus existing Collection storage, adjustable from 50–80%; choose a fixed limit or Unlimited instead. Existing choices are preserved. **Move location** transfers stored files to a verified new location.
+- **Storage** — identical documents and local assets share stored objects by content hash. Changed versions are full copies; there is no extra compression or delta storage. An optional cap removes old versions from the least-opened documents first; **Keep forever** protects that document’s history from cleanup while a version is marked.
+- **Compare revisions** — right-click an older History version to compare with Latest. PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
+- **Manage backups** — right-click a saved History version to delete it, or choose **Delete all previous backups…** on the linked original to retain only the latest saved copy. The source file remains untouched.
+- **Return to the previous tab** — <kbd>Cmd+D</kbd> toggles between the last two documents, reopening a closed tab with its reading position.
+
+</details>
+
+<p align="center"><img src="docs/images/portable/macos-history.webp" alt="Document history with saved revisions and a latest-version marker" width="660"></p>
+
+
+## <a id="reading"></a>Keep a whole project within reach
+
+<p align="center"><img src="docs/images/portable/macos-groups.webp" alt="Current native reader with colored Research, General and Design groups, compact tabs and direct sidebar tools" width="880"></p>
+
+- **A workspace for your research** — colored groups, compact tabs, drag to organize, and separate windows when you need them.
+- **Pick up exactly where you stopped** — restore windows, documents, page positions, zoom and searches.
+- **Find the right tab fast** — search groups and document names; jump to the current document or your previous one with <kbd>Cmd+D</kbd>.
+
+<details>
+<summary>Tab, group and document controls</summary>
+
+- **Tabs and windows** — compact tabs with colored groups, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
+- **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. The **+** menu offers **New Tab** and **New Group…**: create an empty group without leaving your current document, then open files into it. Drop a tab onto the middle of another and pause to create a group; drag near either edge to reorder. New groups immediately ask for a name, with the color name selected for quick replacement or Enter to keep it. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Scroll a crowded group with the mouse wheel or two fingers; edge `+N` tabs list hidden documents. Other collapsed groups stay visible when space permits. Hover the hide eye, or right-click to rename with the anchored popup. Membership, order, colors, names, visibility, and scroll position survive relaunch.
+- **Group management** <sub>macOS</sub> — search group and document names, collapse or expand every group, and jump to the current document with its group expanded and its row in view. Close a group from either its context menu or the tab bar, with confirmation before its documents close.
+- **Rotate images** <sub>macOS</sub> — <kbd>Cmd+R</kbd> / <kbd>Shift+Cmd+R</kbd> saves a writable image’s orientation, including lossless JPEG orientation updates.
+- **Paste pictures** <sub>macOS</sub> — paste an image or copied image file into the reader. A red dot marks an unsaved clipboard picture; Save As offers image or PDF and opens the saved file.
+- **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
+- **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
+- **Rename documents** <sub>macOS</sub> — right-click a tab to rename its file while keeping its reading position and Collection history. For read-only files, Save As creates a writable replacement and carries the history to it.
+- **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).
+
+</details>
+
+
+## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
+
+- **Offline translation (Argos Translate)** — a selection into a panel, or a whole document into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. Works on PDFs, Markdown and supported text/source formats. ~19 languages incl. Chinese; text never leaves your machine.
+- **Local OCR for scanned PDFs and images** — images become searchable PDFs; OCRmyPDF + Tesseract on your own machine; Simplified/Traditional Chinese, English and ~20 more, language data fetched on demand.
+- **One-click toolchain install** — a missing tool or language pack is installed for you (Homebrew; apt/dnf/pacman/zypper) and the job resumes.
+
 ## <a id="dark"></a>Dark reading theme, for every document
 
 <p align="center"><img src="docs/images/portable/macos-dark-theme.webp" alt="The same native Markdown code and Gantt chart in light and dark reading themes" width="880"></p>
@@ -108,11 +132,22 @@ The [document assistant guide](portable/docs/document-assistant.md) covers setup
 - **A remap, not an inversion** — rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue link stays blue. *Keep Image Colors* leaves photographs untouched, per document, on by default.
 - **Exports stay light** — Print, Save as PDF and Copy Page always use the document's own colors.
 
-## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
+## <a id="setup"></a>Set up once. Keep control.
 
-- **Offline translation (Argos Translate)** — a selection into a panel, or a whole document into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. Works on PDFs, Markdown and supported text/source formats. ~19 languages incl. Chinese; text never leaves your machine.
-- **Local OCR for scanned PDFs and images** — images become searchable PDFs; OCRmyPDF + Tesseract on your own machine; Simplified/Traditional Chinese, English and ~20 more, language data fetched on demand.
-- **One-click toolchain install** — a missing tool or language pack is installed for you (Homebrew; apt/dnf/pacman/zypper) and the job resumes.
+The first-run wizard walks through file access, Collection storage, OpenRouter and default reader formats. AI is optional; the reader, OCR and translation do not need an OpenRouter account. Reopen **Settings & AI…** later to change your choices.
+
+<p align="center"><img src="docs/images/portable/macos-ai-settings.png" alt="Native AI settings with OpenRouter connection, searchable model and language choices, and separate chat and metadata options" width="760"><br><sub>Connect your account and choose a model, language and automatic metadata preferences.</sub></p>
+
+- **Your account, model and language** — connect in your browser or use an API key, choose from searchable lists, and store credentials in macOS Keychain.
+- **Choose what runs** — chat and automatic summaries, tags and chapters can be disabled separately. Cloud requests spend your account credits.
+- **Local history on your terms** — dynamic, fixed or unlimited storage; move the Collection to another location.
+
+<details>
+<summary>Collection storage setup</summary>
+
+<p align="center"><img src="docs/images/portable/macos-setup.png" alt="Collection setup with an adjustable 80 percent dynamic budget and Move location" width="760"></p>
+
+</details>
 
 ## <a id="fast"></a>Fast by design
 
