@@ -1,3 +1,4 @@
+#import "SPDFMacTranslationChoice.h"
 #import "SPDFMacDocumentToolInputIntegration.h"
 #import <objc/runtime.h>
 #import "SPDFMacCollectionPathPolicy.h"
@@ -64,7 +65,7 @@
 - (BOOL)beginNativeDocumentTranslation {
     if (!_doc || [_path.pathExtension.lowercaseString isEqualToString:@"pdf"]) return NO;
     __weak ShenzhenMacDelegate* weakSelf = self;
-    [self prepareDocumentToolPDFWithSuffix:@"translation-source" completion:^{ [weakSelf translateDocument:nil]; }];
+    [self prepareDocumentToolPDFWithSuffix:@"translation-source" completion:^{ [weakSelf translateDocumentLocally:nil]; }];
     return YES;
 }
 @end

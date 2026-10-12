@@ -53,6 +53,7 @@
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacTranslationEnablement.h"
+#import "SPDFMacTranslationChoice.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacPaletteResults.h"
 #import "SPDFMacPassword.h"
@@ -13503,8 +13504,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                            }
                          }];
 }
-
-- (void)translateDocument:(id)sender {
+- (void)translateDocumentLocally:(id)sender {
     if (![self beginTranslateCommandForSender:sender]) return;
     if ([self beginWholeDocumentTranslationForMarkdown] || [self beginNativeDocumentTranslation]) return;
     if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;

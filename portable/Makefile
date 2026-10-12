@@ -845,3 +845,5 @@ include mac/tests/ai-document-job-tests.mk
 .PHONY: mac-ai-reader-tests mac-ai-document-job-tests
 mac-ai-reader-tests: mac-ai-reader-acceptance
 mac-ai-document-job-tests: mac-ai-document-job-acceptance
+
+include mac/tests/translation-tests.mk

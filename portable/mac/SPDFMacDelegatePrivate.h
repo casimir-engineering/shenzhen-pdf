@@ -408,7 +408,7 @@
 - (void)saveDocumentAs:(id)sender;
 - (BOOL)saveActiveDocumentAsWithPanelTitle:(NSString*)panelTitle statusMessage:(NSString*)statusMessage;
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName;
-- (void)translateDocument:(id)sender;
+- (void)translateDocumentLocally:(id)sender;
 - (void)rotateClockwise:(id)sender;
 - (void)rotateAnticlockwise:(id)sender;
 - (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index;
