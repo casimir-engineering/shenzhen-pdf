@@ -2,6 +2,7 @@
 #import "SPDFMacCollectionWindowPrivate.h"
 #import "SPDFMacPaletteAppearance.h"
 #import "SPDFMacReadmeFixtures.h"
+#import "SPDFMacReadmeWindowCapture.h"
 #undef main
 static void Settle(NSTimeInterval seconds) {
     NSDate* end=[NSDate dateWithTimeIntervalSinceNow:seconds];
@@ -11,9 +12,7 @@ static void Settle(NSTimeInterval seconds) {
 static void Capture(NSWindow* window,NSString* path) {
     if(window.visible) abort();
     [window.contentView layoutSubtreeIfNeeded];
-    NSView* view=window.contentView;
-    NSBitmapImageRep* bitmap=[view bitmapImageRepForCachingDisplayInRect:view.bounds];
-    [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
+    NSBitmapImageRep* bitmap=SPDFReadmeWindowBitmap(window);
     if(![[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES]) abort();
 }
 int main(int argc,const char* argv[]) {

@@ -27,6 +27,13 @@ descriptions, Open Graph metadata and SoftwareApplication structured data.
 No ratings or reviews are invented. Images have descriptive alt text and
 intrinsic dimensions. The two pages and their assets total less than 500 KB.
 
+The four screenshots in `website/assets/` are resized WebP copies of the native
+README fixtures, including the window controls. Refresh both sets with
+`portable/mac/tests/refresh-readme-images.py`; see
+`portable/docs/journals/ai-reader/readme-comparison-demo.md` for fixture details.
+The chat example is explicitly scripted. Optional AI sends retrieved content to
+OpenRouter/providers; the site must not describe all app features as offline.
+
 ## Submission and remaining account steps
 
 Crawlability, submission, indexing, and ranking are different things. Deployment

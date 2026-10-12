@@ -1,5 +1,6 @@
 #import "SPDFMacSidebarHitProbe.h"
 #import "SPDFMacReadmeFixtures.h"
+#import "SPDFMacReadmeWindowCapture.h"
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacTabGroups.h"
@@ -316,8 +317,9 @@ static NSUInteger failures;
         Check(isfinite(rect.origin.x)&&isfinite(rect.origin.y)&&isfinite(rect.size.width)&&isfinite(rect.size.height),@"chrome has finite geometry");
     }
     if (path.length) {
-        NSBitmapImageRep* bitmap=[view bitmapImageRepForCachingDisplayInRect:view.bounds];
-        [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
+        view=_window.contentView.superview; // Include native titlebar and traffic lights.
+        [view layoutSubtreeIfNeeded];
+        NSBitmapImageRep* bitmap=SPDFReadmeWindowBitmap(_window);
         // cacheDisplay omits the window backing. Composite it explicitly so
         // clear NSView regions do not appear black in PNG viewers.
         NSBitmapImageRep* opaque=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL

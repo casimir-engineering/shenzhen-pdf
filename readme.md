@@ -1,344 +1,66 @@
-<h1 align="center">Shenzhen PDF Reader</h1>
-<p align="center"><b>Ask across documents. Follow the evidence. Read Markdown, diagrams and code on real pages.</b></p>
+# Shenzhen PDF Reader
 
-<div align="center">
+Native macOS reader for PDF, EPUB, Markdown, text, code and images. Free and open source.
 
-<a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download%20for%20macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS (Apple Silicon)" height="46"></a>
+**[Download for Mac](https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg)** · Apple Silicon · macOS 12+ · Signed and notarized
 
-<sub>Latest <b>26.10.11-1</b> · Apple Silicon</sub>
+<sub>Latest <b>26.10.11-1</b></sub> · [Release notes](https://github.com/casimir-engineering/shenzhen-pdf/releases/latest) · [Website](https://casimir-engineering.github.io/shenzhen-pdf/) · [中文](https://casimir-engineering.github.io/shenzhen-pdf/zh/)
 
-<a href="https://casimir-engineering.github.io/shenzhen-pdf/">Website</a> · <a href="https://casimir-engineering.github.io/shenzhen-pdf/zh/">中文介绍</a> · <a href="https://github.com/casimir-engineering/shenzhen-pdf/releases/latest">All releases</a> · <a href="https://github.com/casimir-engineering/shenzhen-pdf">Source</a>
+## Document AI
 
-</div>
+- Compare open documents; cite and open source passages with highlights.
+- Display brief answers in cards with a **View evidence** button.
+- Inspect page images, crops and the current document view with image-capable models.
+- Generate summaries, up to six tags and missing chapters in your selected language.
+- Save chats in folders; search, resume and rename them. Supported agent edits have Undo/Redo.
 
-<p align="center"><img src="docs/images/portable/macos-ai-chat.png" alt="Two support plans compared in chat: 24 versus 18 months, the repair exclusion cited, and a pastel evidence card beside the source document" width="880"><br><sub>Compare coverage across two documents, catch the exclusion, and open the evidence. Scripted example in the real app with fictional plans.</sub></p>
+![Document comparison with citations, an answer card and source evidence](docs/images/portable/macos-ai-chat.png)
 
-**Shenzhen PDF Reader** is a fast native Mac reader for PDFs, Markdown, code and images. Compare documents with optional AI chat, jump to the source, and keep your research organized with groups and local version history. OCR and translation run on your device.
+*Scripted UI example using fictional plans.*
 
-<sub><a href="#assistant">Document AI</a> · <a href="#markdown">Markdown &amp; diagrams</a> · <a href="#search">Search &amp; map</a> · <a href="#collection">Collection</a> · <a href="#reading">Groups &amp; tabs</a> · <a href="#powertools">OCR &amp; translation</a> · <a href="#setup">Setup</a> · <b><a href="docs/features.md">Full feature list</a></b></sub>
+Requires an OpenRouter account and credits. Retrieved content is sent to the provider. Chat and automatic analysis can be disabled separately. Models can misinterpret documents: verify the cited evidence. [AI guide](portable/docs/document-assistant.md) · [Six-model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md)
 
----
+## Markdown and code
 
-## <a id="assistant"></a>Compare documents. See the evidence. <sub>macOS · optional AI</sub>
+Paginated Markdown with native vector diagrams, math, tables and syntax highlighting. Configurable paper size, margins and page breaks. External edits reload automatically. Text and code support font-size adjustment; HTML opens as source.
 
-- **Compare and investigate** — ask across your open documents, inspect page images or detailed crops, and follow citations back to their sources.
-- **Ask beside the document** — <kbd>Cmd+K</kbd>, then Return from an empty search opens a resizable chat panel. Answers link to retrieved passages or page images; compact answer cards put a brief result beside **View evidence**. Image-capable models can inspect pages, crops and your current document view on request.
-- **Saved conversations** — search titles and message text, resume chats, rename them inline, and organize them into folders by dragging or asking the assistant. Search within a chat jumps to highlighted passages.
-- **Summaries, tags and chapters** — one background request generates metadata in your chosen language for eligible latest documents. Existing headings stay authoritative; unchanged analysis is cached.
-- **Reversible actions** — organize groups and chats, change supported reader controls, edit PDF comments or generated metadata, and request separate OCR, translation or PDF outputs. Stop, Undo and Redo apply within the documented action limits.
+![Native Markdown rendering with diagrams and tables](docs/images/portable/macos-markdown.webp)
 
-AI chat uses your OpenRouter account and sends retrieved content to the provider. Models can misread evidence; check the sources. [Setup, privacy and limits](portable/docs/document-assistant.md) · [Model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md)
+## Search and navigation
 
-<details>
-<summary>Model comparison and reproducible benchmark</summary>
+Type in the reader to search. Results include chapter context, page highlights and map markers. **⌘K** searches open documents and Collection; an empty palette lists recently viewed documents. The document map supports direct page navigation.
 
-Our [six-model benchmark](portable/docs/journals/ai-reader/model-benchmark-2026-10-11.md) reports answer quality, evidence use, latency and actual cost across 60 attempts. It found no clear upgrade over DeepSeek in that small sample, and every model failed the reported drawing question twice. The [reusable benchmark runner](tools/ai-model-benchmark/README.md) lets contributors repeat the comparison with their own documents; running it makes paid requests. Source links help you check an answer, not certify it.
+![Document search with context and highlights](docs/images/portable/macos-search-highlights.webp)
 
-</details>
+## Groups and Collection
 
-For external AI agents, the separate [AI control and Markdown authoring guide](portable/docs/agent-interface.md) documents CLI/MCP setup, persistent tab-group organization, document navigation and highlighting, Markdown paper sizes, margins and page breaks, and a render–inspect–revise workflow with page images and layout diagnostics.
+- Colored tab groups, drag-and-drop organization and multiple windows.
+- Restore tabs, groups, window positions, page, zoom and search state from YAML.
+- Collection stores local copies and version history. Available copies remain editable when originals disappear.
+- Compare revisions, reconnect missing originals, and set dynamic, fixed or unlimited storage.
+- Identical content is deduplicated. Changed versions are full copies, without delta storage.
 
-## <a id="markdown"></a>Markdown with native diagrams, math and code <sub>macOS</sub>
+![Document groups and reader controls](docs/images/portable/macos-groups.webp)
 
-<p align="center"><img src="docs/images/portable/macos-markdown.webp" alt="A Markdown document rendered as an A4 sheet: heading, flowchart drawn natively, a table with header band and grid, nested chapters in the side panel, page thumbnails in the map" width="880"></p>
+## Local tools
 
-<table align="center"><tr>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-markdown-code.webp" alt="Native math and a highlighted Python code block with Copy and language controls" width="100%"></td>
-<td width="50%" valign="top"><img src="docs/images/portable/macos-markdown-gantt.webp" alt="A mermaid gantt chart drawn as vector art, taking the width of the page" width="100%"></td>
-</tr></table>
+- **OCR:** searchable PDFs from scans and images using OCRmyPDF and Tesseract.
+- **Translation:** selected text or documents using Argos Translate.
+- **Images:** paste, rotate, save as image/PDF and copy as PDF.
+- **Reading:** dark theme with per-document image-color settings, printing and PDF export.
 
-- **Paper and editing** — choose A3, A4, A5, Letter, or Legal, margins, and explicit page breaks in Markdown front matter. Open the source in your remembered editor from its tab or page menu.
-- **Real sheets, same reader** — GitHub-flavored typography, paginated onto numbered A4 sheets ("Page 2 of 10" in every footer); same tabs, chapters, map, search, zoom and export as a PDF. Rotate turns the paper landscape, and each file reopens on the sheet you last read it on.
-- **Text and source files** — open plain text and the languages supported by the code highlighter, including HTML as source. A− / A+ beside zoom reflows text, with the same search, export and Collection history.
-- **Live update** — edit the file elsewhere and the page re-renders in the background and swaps in whole. Nothing blanks.
-- **Diagrams, math, code** — mermaid, js-sequence and flowchart.js fences as native vector figures; `$…$` and `$$…$$` typeset natively; 31 highlighted languages with a picker and a Copy button on every block. Sanitized README HTML renders natively — bold, italic, underline, strikethrough, highlight, `<kbd>`, `<sub>`/`<sup>`, badges, `<details>`, tables — in body text and inside diagram labels. No web engine or executable JavaScript. Remote HTTPS images load lazily when their document is active.
+OCR and translation run locally after their tools and language packs are downloaded. [Full feature list](docs/features.md)
 
-## <a id="search"></a>Find a phrase. See it on the page.
+## Automation and platforms
 
-<p align="center"><img src="docs/images/portable/macos-search-highlights.webp" alt="PDF search with highlighted passages, chapter-grouped context, a match counter and document-map markers" width="880"></p>
+[CLI/MCP and Markdown authoring guide](portable/docs/agent-interface.md): open and inspect documents, organize saved groups while the app is closed, navigate/highlight content, and control Markdown layout.
 
-<table align="center"><tr>
-<td width="36%" valign="top"><img src="docs/images/portable/macos-chapters.webp" alt="Current Chapters sidebar with direct tool icons, full filename, nested headings and filtering" width="100%"></td>
-<td width="64%" valign="top">
+- **macOS:** native AppKit app; signed Apple Silicon download above.
+- **Linux:** GTK4 frontend; feature availability differs.
+- **Windows:** native Win32 frontend; build from source, no published binary.
 
-- **Type anywhere to search** — a live "current / total" counter, every hit highlighted in the page and marked in the map and on the scrollbar. <sub>macOS · Linux</sub>
-- **Results grouped by chapter**, click to jump; regex, including patterns across line breaks. <sub>macOS · Linux</sub>
-- **Nested chapters** <sub>macOS</sub> — a PDF's outline and a Markdown document's headings fold, with one expand / collapse all button beside the filter; each document remembers what you left collapsed.
-- **Document map** — drag to scroll, click to jump, <kbd>Cmd</kbd>+scroll to zoom. <sub>macOS · Linux</sub>
+[Build instructions and architecture](portable/README.md) · [Benchmark runner](tools/ai-model-benchmark/README.md) · [Report an issue](https://github.com/casimir-engineering/shenzhen-pdf/issues)
 
-</td></tr></table>
+## License
 
-## <a id="collection"></a>Keep your documents — even when originals disappear <sub>macOS</sub>
-
-<p align="center"><img src="docs/images/portable/macos-collection.webp" alt="Collection showing one latest saved copy per document and direct History actions" width="880"></p>
-
-- **Keep reading after a source disappears** — open an editable Collection copy in its original group, then reconnect the original when available.
-- **See what changed** — saved versions, side-by-side comparison and red/green change markers.
-- **Find across your library** — <kbd>Cmd+K</kbd> searches names, groups, open text and Collection content with matching context.
-
-<details>
-<summary>History, recovery and storage details</summary>
-
-- **Keep local copies and history** — choose at first use, then continue opening the originals. Collection documents can be edited and renamed, while earlier history snapshots remain intact; automatic copies and history can be turned off in Settings.
-- **Permission-aware import** — initial Collection setup waits for file-access decisions and skips inaccessible entries without saved history. Successfully read protected documents use their verified reader copy; saved-copy buttons and previews refresh as history becomes available.
-- **Find and recover documents** — <kbd>Cmd+K</kbd> searches open names, groups, open text, and Collection. An empty palette lists open documents by last viewed. Search words can appear in any order across names and folders, with exact names first. Use `col:` for Collection alone. A missing original can be recovered from its protected copy or located by an exact content match.
-- **Browse saved history** — Collection uses one document list with small page previews, search and highlighted context. Each document appears once, using its latest saved copy. Open original reads the source; Open collection copy opens an editable document in its original group. Missing originals stay readable from Collection, with a red status pill and a Locate button. Open History to browse earlier PDF or Markdown versions; the Latest pill appears only there. Settings includes location and dynamic, fixed or unlimited storage budgets.
-- **Storage budget** — new setup defaults to 80% of free space plus existing Collection storage, adjustable from 50–80%; choose a fixed limit or Unlimited instead. Existing choices are preserved. **Move location** transfers stored files to a verified new location.
-- **Storage** — identical documents and local assets share stored objects by content hash. Changed versions are full copies; there is no extra compression or delta storage. An optional cap removes old versions from the least-opened documents first; **Keep forever** protects that document’s history from cleanup while a version is marked.
-- **Compare revisions** — right-click an older History version to compare with Latest. PDF and Markdown versions open side by side, with removed content in red and added content in green. Change markers and paired navigation help inspect revisions.
-- **Manage backups** — right-click a saved History version to delete it, or choose **Delete all previous backups…** on the linked original to retain only the latest saved copy. The source file remains untouched.
-- **Return to the previous tab** — <kbd>Cmd+D</kbd> toggles between the last two documents, reopening a closed tab with its reading position.
-
-</details>
-
-<p align="center"><img src="docs/images/portable/macos-history.webp" alt="Document history with saved revisions and a latest-version marker" width="660"></p>
-
-
-## <a id="reading"></a>Keep a whole project within reach
-
-<p align="center"><img src="docs/images/portable/macos-groups.webp" alt="Current native reader with colored Research, General and Design groups, compact tabs and direct sidebar tools" width="880"></p>
-
-- **A workspace for your research** — colored groups, compact tabs, drag to organize, and separate windows when you need them.
-- **Pick up exactly where you stopped** — restore windows, documents, page positions, zoom and searches.
-- **Find the right tab fast** — search groups and document names; jump to the current document or your previous one with <kbd>Cmd+D</kbd>.
-
-<details>
-<summary>Tab, group and document controls</summary>
-
-- **Tabs and windows** — compact tabs with colored groups, drag to reorder, pull one out into its own window. Quit and relaunch to get every window back: its tabs, size, position, **the display it was on**, and the one you were using in front.
-- **Tab groups** <sub>macOS</sub> — rounded colored groups with clear selected tabs. The **+** menu offers **New Tab** and **New Group…**: create an empty group without leaving your current document, then open files into it. Drop a tab onto the middle of another and pause to create a group; drag near either edge to reorder. New groups immediately ask for a name, with the color name selected for quick replacement or Enter to keep it. Rename, recolor, collapse, or drag an entire group by its left handle into another window. Scroll a crowded group with the mouse wheel or two fingers; edge `+N` tabs list hidden documents. Other collapsed groups stay visible when space permits. Hover the hide eye, or right-click to rename with the anchored popup. Membership, order, colors, names, visibility, and scroll position survive relaunch.
-- **Group management** <sub>macOS</sub> — search group and document names, collapse or expand every group, and jump to the current document with its group expanded and its row in view. Close a group from either its context menu or the tab bar, with confirmation before its documents close.
-- **Rotate images** <sub>macOS</sub> — <kbd>Cmd+R</kbd> / <kbd>Shift+Cmd+R</kbd> saves a writable image’s orientation, including lossless JPEG orientation updates.
-- **Paste pictures** <sub>macOS</sub> — paste an image or copied image file into the reader. A red dot marks an unsaved clipboard picture; Save As offers image or PDF and opens the saved file.
-- **Resume where you left off** — page, zoom, scroll, search, and (for Markdown) page orientation, per document.
-- **Option + scroll turns pages** <sub>macOS</sub> — anywhere in the window, at the speed you spin.
-- **Rename documents** <sub>macOS</sub> — right-click a tab to rename its file while keeping its reading position and Collection history. For read-only files, Save As creates a writable replacement and carries the history to it.
-- **Presentation mode** (<kbd>Shift+Cmd+F</kbd> / <kbd>F5</kbd>), favorites and a command palette (<kbd>Cmd+K</kbd>), reopen-last-closed (<kbd>Cmd+Shift+T</kbd>).
-
-</details>
-
-
-## <a id="powertools"></a>Power tools — 100% on-device <sub>macOS · Linux</sub>
-
-- **Offline translation (Argos Translate)** — a selection into a panel, or a whole document into a real translated file (`<name>_<lang>.pdf`) that opens when it finishes. Works on PDFs, Markdown and supported text/source formats. ~19 languages incl. Chinese; text never leaves your machine.
-- **Local OCR for scanned PDFs and images** — images become searchable PDFs; OCRmyPDF + Tesseract on your own machine; Simplified/Traditional Chinese, English and ~20 more, language data fetched on demand.
-- **One-click toolchain install** — a missing tool or language pack is installed for you (Homebrew; apt/dnf/pacman/zypper) and the job resumes.
-
-## <a id="dark"></a>Dark reading theme, for every document
-
-<p align="center"><img src="docs/images/portable/macos-dark-theme.webp" alt="The same native Markdown code and Gantt chart in light and dark reading themes" width="880"></p>
-
-- **One toggle** (<kbd>Cmd+I</kbd>) darkens PDF, XPS, EPUB and Markdown alike, onto soft #1E1E1E paper rather than pure black.
-- **A remap, not an inversion** — rendered pages are remapped by lightness with their color kept, so a red warning stays red and a blue link stays blue. *Keep Image Colors* leaves photographs untouched, per document, on by default.
-- **Exports stay light** — Print, Save as PDF and Copy Page always use the document's own colors.
-
-## <a id="setup"></a>Set up once. Keep control.
-
-The first-run wizard walks through file access, Collection storage, OpenRouter and default reader formats. AI is optional; the reader, OCR and translation do not need an OpenRouter account. Reopen **Settings & AI…** later to change your choices.
-
-<p align="center"><img src="docs/images/portable/macos-ai-settings.png" alt="Native AI settings with OpenRouter connection, searchable model and language choices, and separate chat and metadata options" width="760"><br><sub>Connect your account and choose a model, language and automatic metadata preferences.</sub></p>
-
-- **Your account, model and language** — connect in your browser or use an API key, choose from searchable lists, and store credentials in macOS Keychain.
-- **Choose what runs** — chat and automatic summaries, tags and chapters can be disabled separately. Cloud requests spend your account credits.
-- **Local history on your terms** — dynamic, fixed or unlimited storage; move the Collection to another location.
-
-<details>
-<summary>Collection storage setup</summary>
-
-<p align="center"><img src="docs/images/portable/macos-setup.png" alt="Collection setup with an adjustable 80 percent dynamic budget and Move location" width="760"></p>
-
-</details>
-
-## <a id="fast"></a>Fast by design
-
-- **Snappy native rendering** — the visible page first at high priority, neighbours and inactive tabs warmed quietly behind it; cached display lists and crop-to-viewport rendering keep repeats cheap. <sub>macOS · Linux</sub>
-- **MuPDF-backed C core** — a compact ~93 KB core wrapping statically-linked MuPDF 1.27.2 behind a small stable ABI shared by both frontends.
-- **Far more than PDF** — open PDF, XPS, comics, e-books and supported images, including drag and drop. Markdown, plain text and supported code use the native paginated renderer; HTML opens as source.
-
-## Files, printing & updates
-
-- **Verified daily auto-updater** — checked once a day off the launch path; every update verified offline against a pinned Developer ID (Team 66LJ4BV7Q3), hardened runtime and stapled notarization before an atomic swap with rollback.
-- **Shenzhen Files as your file manager** <sub>macOS</sub> — install it and *Show in Folder* reveals there; *Settings ▸ File Manager* switches back to Finder. Picking a file always uses the native panel.
-- **File properties** — available from the File menu for every document, with image dimensions, color space and format details where available.
-- **Native printing** with Fit / Actual Size / Custom scaling; **one-click default reader**; **human-readable YAML state** you can read, diff and edit.
-
-## Platform support
-
-- **macOS — the original** — Native AppKit + PDFKit.
-- **Linux — parity on the reading path** — Native GTK4 + libadwaita app on the same portable C core and data formats: tabs (drag, detach, reattach), multi-window session restore, document map, chapter-grouped search sidebar, scrollbar heat-map, command palette, favorites, presentation mode, printing, auto-reload, properties panel, OCR, translation, and a minisign-verified auto-updater (deb + tarball). Instant launches via an optional resident mode. Built from `portable/linux/gtk4/`. Two features tagged above are genuinely absent here rather than merely untested: the **dark reading theme** and the **Markdown reader**, neither of which has any code in `portable/linux/gtk4/`.
-- **Windows — native, not yet published** — A native Win32 + Direct2D app on the same portable C core and data formats, built from `portable/win/`: compact tabs with drag-to-reorder, presentation mode and full screen, session restore, the document map, a chapter-grouped search sidebar with incremental find, the scrollbar heat-map, the command palette with recents and favorites, a password prompt for encrypted PDFs, auto-reload when a file changes on disk, the document properties panel, native printing, on-device OCR and offline translation, and the dark reading theme. Markdown opens as paginated pages too, by a different route: converted to HTML and laid out on A4 by MuPDF's own engine rather than by a re-implementation of the macOS text stack, so it gets the GFM typography and palette, tables, syntax-highlighted code and the LaTeX subset, but not yet the native diagrams, the in-place language picker or the copy button. The auto-updater is ported and verified against Authenticode, but is scaffolding until there is something signed to update to — **there is no published Windows binary or installer yet**, so for now the app is built from source. The binary itself is ready to be one: it is a single statically-linked exe with MuPDF embedded, no DLLs and no VC redistributable, so it is **portable — download, double-click, run** — and **self-installing**: `ShenzhenPDF.exe --install` copies it to `%LOCALAPPDATA%\Programs\ShenzhenPDF`, adds a Start Menu shortcut, the `.pdf` association and an *Apps & features* entry, all under HKCU with no administrator rights, and `--uninstall` removes exactly those and keeps your settings unless you ask for `--purge`. The first launch asks which you want. A `ShenzhenPDF.portable` file beside the exe keeps settings and session in `ShenzhenPDF-data` next to it, for a copy on a USB stick. Annotations and the Comments sidebar are the largest gap that remains.
-
----
-
-<details>
-<summary><b>Build from source</b> (macOS / Linux / Windows)</summary>
-
-<br>
-
-### macOS
-
-```sh
-make -C portable mac-app      # build the app
-make -C portable install      # build and install locally
-make -C portable dmg          # build a DMG
-```
-
-Artifacts:
-
-```text
-dist/ShenzhenPDF.app
-dist/ShenzhenPDF-mac-arm64.dmg
-/Applications/ShenzhenPDF.app
-```
-
-Local development builds are ad-hoc signed. Public GitHub downloads must be Developer ID signed, notarized, stapled, and verified from the mounted DMG payload.
-
-### Linux
-
-Ubuntu/Debian:
-
-```sh
-sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libssl-dev unzip
-make -C portable linux-gtk4
-./portable/build/ShenzhenPDF-gtk4
-```
-
-Fedora:
-
-```sh
-sudo dnf install gcc make pkgconf-pkg-config gtk4-devel libadwaita-devel openssl-devel unzip
-make -C portable linux-gtk4
-./portable/build/ShenzhenPDF-gtk4
-```
-
-Or containerized (no host toolchain needed): `docker build -t shenzhen-build
-portable/linux/dev && docker run --rm -v "$PWD:/work" -w /work shenzhen-build
-make -C portable linux-gtk4`.
-
-Packages: a `.deb` via `portable/linux/pkg/build-deb.sh <version>`, an
-`.rpm` via `portable/linux/pkg/build-rpm.sh <version>` (builds inside a
-Fedora container), and a Flatpak via the manifest in
-`portable/linux/pkg/flatpak/` (see its README; Flathub submission notes
-included).
-
-### Windows
-
-Needs Visual Studio 2022 Build Tools (MSVC toolset 14.44 or newer) and a
-Windows SDK. Run from the Windows machine that owns the checkout, addressing
-each script **by path** — some systems set
-`NoDefaultCurrentDirectoryInExePath=1`, which stops `cmd` finding a script in
-the current directory:
-
-```bat
-portable\win\mupdf-native-build.cmd     :: libmupdf for x64, once (~70 s)
-portable\win\build-native.cmd           :: -> dist\ShenzhenPDF-win-x64.exe
-```
-
-**The built app is `dist\ShenzhenPDF-win-x64.exe`**, copied there by every
-successful build, under the name a release carries and beside where the macOS
-build leaves `ShenzhenPDF.app`. That is the one to run. It is a single
-self-contained executable -- MuPDF, the fonts and the icon are compiled in, it
-links nothing but Windows' own DLLs and needs no redistributable -- so it can be
-copied anywhere and started. `--install` is optional, and only adds a Start Menu
-entry, the `.pdf` association and a row in Apps.
-
-Two environment variables control where things go, and both matter when more
-than one build shares a machine:
-
-```bat
-set SPDF_OUT=C:\spdf-build                :: default; objects, test exes, scratch
-set SPDF_MUPDF_LIBDIR=%SPDF_OUT%\mupdf    :: default; where libmupdf.lib is looked for
-```
-
-Give a parallel build its own `SPDF_OUT` (a running instance holds a lock on
-`ShenzhenPDF.exe`), and point `SPDF_MUPDF_LIBDIR` at an already-built shared
-copy so it does not rebuild MuPDF.
-
-The test suite runs in Git Bash on the same machine:
-
-```sh
-bash portable/win/tests/run-tests-native.sh --list   # the case inventory, no build
-bash portable/win/tests/run-tests-native.sh          # build and run everything
-```
-
-It exits 0 only if every selected case ran and passed, 1 on a failure and 2 if
-anything was *blocked* by a missing prerequisite — which a complete run is,
-since the cross-host pixel comparisons need a macOS host and the password suite
-needs `qpdf`. `portable/win/README.md` is the full guide.
-
-The exe it produces needs no installing — it is one statically-linked file with
-MuPDF inside it, so `%SPDF_OUT%\ShenzhenPDF.exe` can simply be run or copied
-anywhere. **The exe is also its own installer**, which is why there is no
-installer to build:
-
-```bat
-portable\win\package-release.cmd %SPDF_OUT%\ShenzhenPDF.exe
-:: -> dist\ShenzhenPDF-win-x64.exe + .sha256, and prints the ProductVersion
-
-ShenzhenPDF.exe --install      :: optional, per-user, HKCU only, no admin
-ShenzhenPDF.exe --uninstall    :: add --purge to delete settings too
-ShenzhenPDF.exe --portable     :: state in ShenzhenPDF-data beside the exe
-```
-
-If you write a script that launches a real window, pass `--state-dir` or set
-`SPDF_WIN_SETUP_NO_PROMPT=1`: the first-run question is a modal dialog and
-appears before the window.
-
-</details>
-
-<details>
-<summary><b>Data files &amp; locations</b></summary>
-
-<br>
-
-macOS: `~/Library/Application Support/ShenzhenPDF/`
-Linux: `~/.config/shenzhenpdf/`
-Windows: `%APPDATA%\ShenzhenPDF\`
-
-Typical files (human-readable YAML you can read, diff, and edit; recents live
-inside `settings.yaml`):
-
-```text
-settings.yaml
-session.yaml
-documents.yaml
-favorites.yaml
-bookmarks.yaml
-```
-
-`bookmarks.yaml` is macOS-only: it holds security-scoped bookmarks, which have
-no counterpart on the other two platforms. The other four are the same schema
-everywhere, so a `session.yaml` written by one frontend is read by the others.
-
-On first launch after updating, existing `.json` state files are converted to
-`.yaml` and the originals are kept next to them as `<name>.json.migrated-backup`.
-
-</details>
-
-<details>
-<summary><b>Repository layout</b></summary>
-
-<br>
-
-- `portable/core/`: shared document, render, search, OCR-facing, and save core.
-- `portable/mac/`: native macOS AppKit application.
-- `portable/linux/gtk4/`: native Linux GTK4 + libadwaita application.
-- `portable/win/`: native Windows Win32 + Direct2D application, its test harness and its build scripts.
-- `mupdf/`: MuPDF dependency.
-- `ext/`: third-party dependencies.
-- `portable/docs/`: release, updater, and portability notes.
-
-</details>
-
-
-## Legal & Attribution
-
-Shenzhen PDF is free/open-source software. This repository retains source and dependencies that carry their own licenses and notices. Preserve the license files and per-file copyright notices when publishing:
-
-- `COPYING`
-- `COPYING.BSD`
-- `AUTHORS`
-- `mupdf/COPYING`
-- third-party notices under `ext/`, `packages/`, and `mupdf/`
-
-Upstream AGPL/BSD notices are preserved intact. See [NOTICE.md](NOTICE.md) for the publication notice. Shenzhen PDF is a separate project and is not affiliated with the SumatraPDF project. Before claiming that the repository contains no inherited code, perform a source audit and remove or rewrite the retained code first.
+See [COPYING](COPYING), [COPYING.BSD](COPYING.BSD) and [NOTICE.md](NOTICE.md). Dependencies retain their own licenses. ShenzhenPDF is a separate project inspired by SumatraPDF, with no affiliation.

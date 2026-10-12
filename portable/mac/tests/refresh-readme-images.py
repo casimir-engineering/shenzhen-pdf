@@ -1,37 +1,35 @@
 #!/usr/bin/env python3
-"""Crop and encode native offscreen probe output for the public README.
+"""Encode complete native fixture windows for the README and website.
 
-Run the probes with WORKSPACE_EVIDENCE_DIR=/tmp/sz-readme-evidence, then:
+Run mac-workspace-probe and mac-ai-readme-probe into the same evidence directory:
 python3 portable/mac/tests/refresh-readme-images.py /tmp/sz-readme-evidence
-Requires Pillow; never captures the screen or reads user documents.
+Requires cwebp. No screen capture, user documents, or window cropping.
 """
+import shutil
+import subprocess
 import sys
 from pathlib import Path
-from PIL import Image
 
 source = Path(sys.argv[1])
-destination = Path(__file__).resolve().parents[3] / 'docs/images/portable'
+root = Path(__file__).resolve().parents[3]
+destination = root / "docs/images/portable"
+website = root / "website/assets"
+website.mkdir(exist_ok=True)
 
-def read(name):
-    return Image.open(source / name).convert('RGB')
 
-def save(image, name):
-    image.save(destination / name, 'WEBP', quality=90, method=6)
+def encode(source_file, output, width=None):
+    args = ["cwebp", "-quiet", "-q", "85" if width else "90", "-m", "6"]
+    if width:
+        args += ["-resize", str(width), "0"]
+    subprocess.run(args + [str(source_file), "-o", str(output)], check=True)
 
-save(read('reader-dark-find.png'), 'macos-main-window.webp')
-save(read('reader-dark-1280.png').crop((0, 0, 2560, 920)), 'macos-groups.webp')
-save(read('reader-light-markdown-1280.png'), 'macos-markdown.webp')
-save(read('reader-dark-find.png'), 'macos-search-highlights.webp')
-save(read('reader-light-markdown-1280.png').crop((0, 88, 480, 1470)), 'macos-chapters.webp')
-save(read('collection.png'), 'macos-collection.webp')
-save(read('collection-settings.png'), 'macos-collection-settings.webp')
-save(read('reader-dark-history.png').crop((0, 0, 2560, 1050)), 'macos-history.webp')
-code=read('reader-light-code.png')
-save(code.crop((980, 280, 1840, 720)), 'macos-markdown-code.webp')
-save(code.crop((980, 720, 1840, 1130)), 'macos-markdown-gantt.webp')
-light=read('reader-light-code.png').crop((900, 175, 1860, 1500))
-dark=read('reader-dark-code.png').crop((900, 175, 1860, 1500))
-pair=Image.new('RGB', (light.width+dark.width+16, light.height), '#25282c')
-pair.paste(light,(0,0)); pair.paste(dark,(light.width+16,0))
-save(pair, 'macos-dark-theme.webp')
-print('Wrote 11 README images from native offscreen components.')
+
+for fixture, name in (("reader-dark-find.png", "macos-search-highlights.webp"),
+                      ("reader-dark-1280.png", "macos-groups.webp"),
+                      ("reader-light-markdown-1280.png", "macos-markdown.webp")):
+    encode(source / fixture, destination / name)
+    site_name = "macos-main-window.webp" if "search" in name else name
+    encode(source / fixture, website / site_name, 1280)
+shutil.copyfile(source / "macos-ai-chat.png", destination / "macos-ai-chat.png")
+encode(source / "macos-ai-chat.png", website / "macos-ai-chat.webp", 1600)
+print("Wrote four full-window README images and four optimized website images.")

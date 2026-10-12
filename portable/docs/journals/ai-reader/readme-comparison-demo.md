@@ -37,3 +37,28 @@ The benchmark link and AI privacy/accuracy limitations remain accessible.
   `/tmp/sz-readme-comparison-build.log`.
 
 This documentation update does not rebuild, replace or republish the released app.
+
+## Concise README and website — 2026-10-12
+
+- Replaced the long feature tour with a 66-line technical README (previously
+  344 lines): capabilities, requirements, four examples, and links to detailed
+  documentation. Removed metaphors, repeated explanations and expandable lists.
+- Updated both website languages to lead with the comparison/card, followed by
+  Markdown, search and groups. Disclosed OpenRouter requirements and document
+  transmission; retained the benchmark link and scripted-demo caption.
+- All four displayed screenshots include the complete native window frame.
+  Offscreen AppKit omits active compositor-backed traffic-light fills, so the
+  documentation-only capture helper draws those three fills as vectors at the
+  native button coordinates. No app activation or user-window capture occurs.
+- The refresh script preserves full windows and generates separate optimized
+  website WebPs. Total generated site size: 247,069 bytes, including both languages.
+- Native AI/card fixture and Collection fixture exited 0. The broader workspace
+  probe still reports the same 24 baseline contrast/click assertion failures;
+  exact message counts match the previously established unchanged-HEAD baseline.
+- Website build/check, localization-key equality, README local-link validation,
+  diff whitespace check and source-size ratchet passed. Browser review at desktop
+  and 390px mobile widths covered both languages, all four loaded images, no
+  horizontal overflow, and working FAQ expansion.
+
+Only documentation, documentation fixtures and the static site changed. App code,
+release binaries, launch behavior and updater configuration are unchanged.
