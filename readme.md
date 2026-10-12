@@ -1,15 +1,15 @@
 # Shenzhen PDF Reader
 
-Native macOS reader for PDF, EPUB, Markdown, text, code and images. Free and open source.
+Free, open-source document reader for macOS. Opens PDF, EPUB, Markdown, text, code and images. Reading works locally without an account; optional AI uses your own OpenRouter credits.
 
 **[Download for Mac](https://github.com/casimir-engineering/shenzhen-pdf/releases/latest/download/ShenzhenPDF-mac-arm64.dmg)** · Apple Silicon · macOS 12+ · Signed and notarized
 
 <sub>Latest <b>26.10.11-1</b></sub> · [Release notes](https://github.com/casimir-engineering/shenzhen-pdf/releases/latest) · [Website](https://casimir-engineering.github.io/shenzhen-pdf/) · [中文](https://casimir-engineering.github.io/shenzhen-pdf/zh/)
 
-## Document AI
+## Ask about your documents
 
-- Compare open documents; cite and open source passages with highlights.
-- Display brief answers in cards with a **View evidence** button.
+- Ask questions across open documents. Click source links to open and highlight the cited passages.
+- Brief answers can include a card with a **View evidence** button.
 - Inspect page images, crops and the current document view with image-capable models.
 - Generate summaries, up to six tags and missing chapters in your selected language.
 - Save chats in folders; search, resume and rename them. Supported agent edits have Undo/Redo.
