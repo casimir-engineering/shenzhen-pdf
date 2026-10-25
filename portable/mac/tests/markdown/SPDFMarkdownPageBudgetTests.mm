@@ -24,10 +24,19 @@ static void SPDFWritePNG(NSString* path, NSInteger width, NSInteger height) {
     [PNG writeToFile:path atomically:YES];
 }
 
+// The fixture folder, removed by exact path when the process exits, so a failed check (which only counts and
+// carries on) still leaves nothing in the temporary folder.
+static NSString* SPDFBudgetDirectory;
+static void SPDFRemoveBudgetDirectory(void) {
+    if (SPDFBudgetDirectory) [[NSFileManager defaultManager] removeItemAtPath:SPDFBudgetDirectory error:nil];
+}
+
 static NSURL* SPDFCreateBudgetDocument(void) {
     NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES
                                                 attributes:nil error:nil];
+    SPDFBudgetDirectory = directory;
+    atexit(SPDFRemoveBudgetDirectory);
     SPDFWritePNG([directory stringByAppendingPathComponent:@"wide.png"], 1600, 600);
     SPDFWritePNG([directory stringByAppendingPathComponent:@"tall.png"], 600, 1600);
     NSString* source =

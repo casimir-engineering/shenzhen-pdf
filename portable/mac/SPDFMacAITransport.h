@@ -3,6 +3,8 @@
 
 FOUNDATION_EXPORT NSString* const SPDFMacAIDefaultModel;
 FOUNDATION_EXPORT NSError* SPDFMacAIError(NSInteger code, NSString* message);
+// The provider said the request is longer than the model can read at once.
+static const NSInteger SPDFMacAIContextLengthErrorCode=11;
 // Pure construction boundary, also used by offline tests. Never logs request contents.
 FOUNDATION_EXPORT NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,
     NSArray<NSDictionary*>* tools, NSString* model, NSString* apiKey, NSError** error);

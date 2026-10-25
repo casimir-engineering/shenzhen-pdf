@@ -70,7 +70,7 @@ int main(void) {
     @autoreleasepool {
         NSString* source = @"flowchart LR\n"
                             "  USB[\"<b>USB-C VBUS</b> 5 V\"]\n"
-                            "  AON{{\"<b>1.8V_AON</b><br/><b>TPS62743</b> buck 360 nA IQ\"}}\n"
+                            "  AON{{\"<b>1.8V_AON</b><br/><b>BUCK-1</b> buck 360 nA IQ\"}}\n"
                             "  MIX[\"<b>bold <i>and slanted</i></b> tail\"]\n"
                             "  LIT[\"a &lt; b plus <notatag> kept\"]\n"
                             "  USB --> AON --> MIX --> LIT\n";
@@ -95,8 +95,8 @@ int main(void) {
         SPDFMarkdownDiagramLabel* rail = SPDFMarkupLabel(layout, @"1.8V_AON");
         SPDFExpect(rail != nil && SPDFMarkupSpanMatches(rail, @"1.8V_AON", YES, NO),
                    @"a fully bold <br/> line is one bold span");
-        SPDFMarkdownDiagramLabel* part = SPDFMarkupLabel(layout, @"TPS62743 buck 360 nA IQ");
-        SPDFExpect(part != nil && SPDFMarkupSpanMatches(part, @"TPS62743", YES, NO),
+        SPDFMarkdownDiagramLabel* part = SPDFMarkupLabel(layout, @"BUCK-1 buck 360 nA IQ");
+        SPDFExpect(part != nil && SPDFMarkupSpanMatches(part, @"BUCK-1", YES, NO),
                    @"the second <br/> line bolds only its part number");
 
         // 4. Nesting: <b>bold <i>and slanted</i></b> is bold throughout and
@@ -116,9 +116,9 @@ int main(void) {
         //    reflow ladder sizes every node for characters it never draws.
         NSFont* body = [NSFont systemFontOfSize:12];
         NSFont* semibold = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold];
-        CGFloat measured = SPDFMarkdownDiagramMeasureText(@"<b>TPS62743</b>", body, 400).width;
-        CGFloat bold = ceil([@"TPS62743" sizeWithAttributes:@{NSFontAttributeName: semibold}].width);
-        CGFloat literal = ceil([@"<b>TPS62743</b>" sizeWithAttributes:@{NSFontAttributeName: body}].width);
+        CGFloat measured = SPDFMarkdownDiagramMeasureText(@"<b>BUCK-1</b>", body, 400).width;
+        CGFloat bold = ceil([@"BUCK-1" sizeWithAttributes:@{NSFontAttributeName: semibold}].width);
+        CGFloat literal = ceil([@"<b>BUCK-1</b>" sizeWithAttributes:@{NSFontAttributeName: body}].width);
         SPDFExpect(fabs(measured - bold) < 0.51, @"a <b> run measures as the bold text it draws");
         SPDFExpect(measured < literal - 1, @"the tags themselves take no width");
 

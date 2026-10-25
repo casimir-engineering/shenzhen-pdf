@@ -14,8 +14,9 @@ Options:
   --version VERSION  Date version. Preparation defaults to today's unpadded
                      YY.M.DD; publication defaults to committed metadata.
   --build BUILD      Positive build number. Preparation defaults to the highest
-                     matching local or origin tag plus one; publication defaults
-                     to committed metadata.
+                     matching local or origin tag (in the Shenzhen repository
+                     also the release repository's) plus one; publication
+                     defaults to committed metadata.
   --prepare-only     Test, update, and commit release metadata. Never builds,
                      signs, tags, pushes, notarizes, or publishes.
   --dry-run          Validate notes and run release tests without modifying state.
@@ -40,6 +41,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 # shellcheck disable=SC1091
 source "$script_dir/release/release-common.sh"
 cd "$repo_root"
+spdf_release_layout "$repo_root"
 
 requested_version=""
 requested_build=""
@@ -95,6 +97,26 @@ run_release_tests() {
   # the release log stays readable.
   local jobs
   jobs="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+  # In the Shenzhen repository each suite that passes is recorded for the commit (tools/test-stamp.sh), and one that
+  # passed on this commit already is not run again; the first failure stops the sweep, as before.
+  local stamp="$repo_root/../../tools/test-stamp.sh"
+  if [[ -x "$stamp" ]]; then
+    local missing=()
+    for target in "${targets[@]}"; do
+      "$stamp" check "pdf/$target" || missing+=("$target")
+    done
+    if ((${#missing[@]} == 0)); then
+      log "All ${#targets[@]} release suites passed on this commit already"
+      return 0
+    fi
+    log "Building test binaries with -j$jobs"
+    make -C "$script_dir" -j"$jobs" test-binaries
+    log "Running release tests not yet passed on this commit: ${missing[*]}"
+    for target in "${missing[@]}"; do
+      "$stamp" run "pdf/$target" -- make -C "$script_dir" "$target"
+    done
+    return 0
+  fi
   log "Building test binaries with -j$jobs"
   make -C "$script_dir" -j"$jobs" test-binaries
   log "Running release tests: ${targets[*]}"
@@ -119,7 +141,8 @@ require_publish_credentials() {
 
 if [[ "$mode" == publish ]]; then
   branch="$(git symbolic-ref --quiet --short HEAD || true)"
-  [[ "$branch" == master ]] || spdf_release_fail "Publishing must run on master (currently ${branch:-detached})"
+  [[ "$branch" == "$SPDF_RELEASE_BRANCH" ]] || \
+    spdf_release_fail "Publishing must run on $SPDF_RELEASE_BRANCH (currently ${branch:-detached})"
   [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]] || \
     spdf_release_fail "Publishing requires a clean worktree"
 
@@ -127,6 +150,7 @@ if [[ "$mode" == publish ]]; then
   version="$SPDF_RELEASE_VERSION"
   build="$SPDF_RELEASE_BUILD"
   tag="$SPDF_RELEASE_TAG"
+  git_tag="$SPDF_TAG_PREFIX$tag"
   notes_file="$SPDF_RELEASE_NOTES"
   [[ -z "$requested_version" || "$requested_version" == "$version" ]] || \
     spdf_release_fail "Requested version $requested_version != committed version $version"
@@ -134,10 +158,10 @@ if [[ "$mode" == publish ]]; then
     spdf_release_fail "Requested build $requested_build != committed build $build"
 
   head_commit="$(git rev-parse HEAD)"
-  local_tag_commit="$(spdf_commit_for_ref "$repo_root" "refs/tags/$tag" || true)"
-  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$tag")"
-  spdf_require_ref_at_commit "Local tag $tag" "$local_tag_commit" "$head_commit"
-  spdf_require_ref_at_commit "Origin tag $tag" "$remote_tag_commit" "$head_commit"
+  local_tag_commit="$(spdf_commit_for_ref "$repo_root" "refs/tags/$git_tag" || true)"
+  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$git_tag")"
+  spdf_require_ref_at_commit "Local tag $git_tag" "$local_tag_commit" "$head_commit"
+  spdf_require_ref_at_commit "Origin tag $git_tag" "$remote_tag_commit" "$head_commit"
 
   run_release_tests
   require_publish_credentials
@@ -145,19 +169,19 @@ if [[ "$mode" == publish ]]; then
   [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]] || \
     spdf_release_fail "Release build changed the worktree"
 
-  spdf_ensure_local_tag "$repo_root" "$tag" "$head_commit"
-  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$tag")"
-  spdf_require_ref_at_commit "Origin tag $tag" "$remote_tag_commit" "$head_commit"
+  spdf_ensure_local_tag "$repo_root" "$git_tag" "$head_commit"
+  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$git_tag")"
+  spdf_require_ref_at_commit "Origin tag $git_tag" "$remote_tag_commit" "$head_commit"
   if [[ -z "$remote_tag_commit" ]]; then
-    log "Atomically publishing master and $tag"
-    git push --atomic origin "HEAD:refs/heads/master" "refs/tags/$tag:refs/tags/$tag"
+    log "Atomically publishing $SPDF_RELEASE_BRANCH and $git_tag"
+    git push --atomic origin "HEAD:refs/heads/$SPDF_RELEASE_BRANCH" "refs/tags/$git_tag:refs/tags/$git_tag"
   else
-    log "Origin already has the exact $tag; publishing master idempotently"
-    git push origin "HEAD:refs/heads/master"
+    log "Origin already has the exact $git_tag; publishing $SPDF_RELEASE_BRANCH idempotently"
+    git push origin "HEAD:refs/heads/$SPDF_RELEASE_BRANCH"
   fi
-  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$tag")"
+  remote_tag_commit="$(spdf_remote_tag_commit "$repo_root" origin "$git_tag")"
   [[ "$remote_tag_commit" == "$head_commit" ]] || \
-    spdf_release_fail "Origin tag $tag was not published at $head_commit"
+    spdf_release_fail "Origin tag $git_tag was not published at $head_commit"
 
   dmg="$repo_root/dist/$SPDF_RELEASE_ASSET_NAME"
   spdf_publish_github_release "$SPDF_RELEASE_GITHUB_REPOSITORY" "$tag" "$notes_file" "$dmg"
@@ -171,9 +195,14 @@ if [[ -z "$version" ]]; then
 fi
 spdf_validate_release_version "$version"
 
-remote_tags="$(git ls-remote --tags --refs origin "refs/tags/${version}-*" | awk '{sub("refs/tags/", "", $2); print $2}')"
-local_tags="$(git tag --list "${version}-*")"
-all_tags="$(printf '%s\n%s\n' "$local_tags" "$remote_tags" | sed '/^$/d' | sort -u)"
+remote_tags="$(git ls-remote --tags --refs origin "refs/tags/${SPDF_TAG_PREFIX}${version}-*" |
+  awk -v prefix="refs/tags/$SPDF_TAG_PREFIX" '{sub(prefix, "", $2); print $2}')"
+local_tags="$(git tag --list "${SPDF_TAG_PREFIX}${version}-*" | sed "s|^$SPDF_TAG_PREFIX||")"
+release_repo_tags=""
+if [[ -n "$SPDF_TAG_PREFIX" ]]; then
+  release_repo_tags="$(spdf_release_repository_tags "$version")"
+fi
+all_tags="$(printf '%s\n%s\n%s\n' "$local_tags" "$remote_tags" "$release_repo_tags" | sed '/^$/d' | sort -u)"
 build="$requested_build"
 if [[ -z "$build" ]]; then
   build="$(spdf_next_build_for_tags "$version" "$all_tags")"
@@ -183,7 +212,7 @@ fi
 tag="${version}-${build}"
 notes_file="$script_dir/docs/releases/${tag}.md"
 if printf '%s\n' "$all_tags" | grep -qxF "$tag"; then
-  spdf_release_fail "Release tag already exists locally or on origin: $tag"
+  spdf_release_fail "Release tag already exists locally, on origin or on $SPDF_RELEASE_GITHUB_REPOSITORY: $tag"
 fi
 
 branch="$(git symbolic-ref --quiet --short HEAD || true)"
@@ -235,7 +264,7 @@ fi
 
 # Release checklist: README content must be current for this release (the
 # version badge below is automated; the feature sections are not).
-previous_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+previous_tag="$(git describe --tags --abbrev=0 ${SPDF_TAG_PREFIX:+--match "${SPDF_TAG_PREFIX}*"} 2>/dev/null || true)"
 spdf_require_fresh_readme "$repo_root" "$previous_tag"
 
 log "Committing release metadata for $tag"
@@ -243,6 +272,7 @@ sed -i '' -E "s/^MAC_VERSION \?= .*/MAC_VERSION ?= ${version}/" "$script_dir/Mak
 sed -i '' -E "s/^MAC_BUILD \?= .*/MAC_BUILD ?= ${build}/" "$script_dir/Makefile"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version}" "$script_dir/mac/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${build}" "$script_dir/mac/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :SZFReleaseTag ${tag}" "$script_dir/mac/Info.plist"
 sed -i '' -E "s/if \(version\.length == 0\) version = @\"[^\"]*\";/if (version.length == 0) version = @\"${version}\";/" "$script_dir/mac/ShenzhenPDFMac.mm"
 sed -i '' -E "s/if \(build\.length == 0\) build = @\"[^\"]*\";/if (build.length == 0) build = @\"${build}\";/" "$script_dir/mac/ShenzhenPDFMac.mm"
 sed -i '' -E "s|<sub>Latest <b>[^<]*</b>|<sub>Latest <b>${tag}</b>|" "$repo_root/readme.md"

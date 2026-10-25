@@ -21,6 +21,8 @@ int main(int argc,const char* argv[]) {
         NSString* output=[NSString stringWithUTF8String:argv[1]];
         NSString* root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         setenv("SPDF_STATE_DIR",root.UTF8String,1);
+        // Friends is on by default and attaches after first paint; its state must be the probe's, never the real one.
+        setenv("SZFRIENDS_STATE_DIR",root.UTF8String,1);
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         NSFileManager* fm=NSFileManager.defaultManager;
         [fm createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];

@@ -1,6 +1,7 @@
 #import "SPDFMacAIIntegration.h"
 #import "SPDFMacUnifiedSettings.h"
 #import "SPDFMacAISettings.h"
+#import "SPDFMacAICapabilitiesSettingsIntegration.h"
 #import "SPDFMacAICredentials.h"
 #import "SPDFMacAIOpenRouterAuth.h"
 #import "SPDFMacAIModelCatalog.h"
@@ -21,12 +22,31 @@
 
 @end
 static char settingsControllerKey, authKey, authGenerationKey, catalogKey, settingsObserverKey, catalogModelsKey, onboardingLockKey;
+static char authReturnObserverKey;
+static void StopReturnWatch(ShenzhenMacDelegate* reader);
 static NSUInteger InvalidateAuth(ShenzhenMacDelegate* reader) {
     NSUInteger generation=[objc_getAssociatedObject(reader,&authGenerationKey) unsignedIntegerValue]+1;
     objc_setAssociatedObject(reader,&authGenerationKey,@(generation),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [objc_getAssociatedObject(reader,&authKey) cancel];
     objc_setAssociatedObject(reader,&authKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    StopReturnWatch(reader);
     return generation;
+}
+// A sign-up that never returns to the app leaves the button and status pending;
+// coming back with nothing received puts them back to idle. The browser page
+// still works if they finish it afterwards.
+static void WatchForReturnWithoutCallback(ShenzhenMacDelegate* reader,SPDFMacUnifiedSettingsController* controller,
+    SPDFMacAIOpenRouterAuth* auth) {
+    __weak SPDFMacUnifiedSettingsController* weakController=controller;
+    SPDFMacAISignInReturnWatch* watch=[[SPDFMacAISignInReturnWatch alloc] initWithSignIn:auth delay:4 lostWayBack:^{
+        [weakController updateState:@{@"connecting":@NO,
+            @"connectionStatus":@"Not connected yet. If you finished signing up, click Connect OpenRouter again."}];
+    }];
+    objc_setAssociatedObject(reader,&authReturnObserverKey,watch,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static void StopReturnWatch(ShenzhenMacDelegate* reader) {
+    [(SPDFMacAISignInReturnWatch*)objc_getAssociatedObject(reader,&authReturnObserverKey) stop];
+    objc_setAssociatedObject(reader,&authReturnObserverKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 static void ReleaseSetupLock(ShenzhenMacDelegate* reader) {
     NSNumber* lock=objc_getAssociatedObject(reader,&onboardingLockKey);
@@ -35,6 +55,17 @@ static void ReleaseSetupLock(ShenzhenMacDelegate* reader) {
 static SPDFMacAISettings* ReadSettings(void) {
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];
     [settings load:nil]; return settings;
+}
+// How much `model` reads at once according to the loaded model list; 0 when not loaded or not stated.
+static NSUInteger CatalogContextTokens(ShenzhenMacDelegate* reader,NSString* model) {
+    for(NSDictionary* entry in objc_getAssociatedObject(reader,&catalogModelsKey))
+        if([entry[@"id"] isEqual:model]) return [entry[@"contextTokens"] unsignedIntegerValue];
+    return 0;
+}
+static void RememberContextTokens(ShenzhenMacDelegate* reader) {
+    SPDFMacAISettings* settings=ReadSettings(); NSUInteger tokens=CatalogContextTokens(reader,settings.model);
+    if(!tokens || tokens==settings.modelContextTokens) return;
+    settings.modelContextTokens=tokens; [settings save:nil];
 }
 static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
     // Defaults are on; no file work begins until setup and connection are complete.
@@ -50,7 +81,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
     NSDictionary* budget=[SPDFMacCollectionStore.defaultStore storageBudget];
     NSString* budgetText=[budget[@"storageMode"] isEqual:@"unlimited"] ? @"No storage limit" : [budget[@"capacityAvailable"] boolValue] ?
         [NSString stringWithFormat:@"Current limit: %@",[NSByteCountFormatter stringFromByteCount:[budget[@"storageLimitBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]] : @"Disk capacity unavailable";
-    return @{@"wizardStep":@(ai.onboardingStep),@"defaultFormats":SPDFMacDefaultFormatStatus(),
+    NSMutableDictionary* state=[@{@"wizardStep":@(ai.onboardingStep),@"defaultFormats":SPDFMacDefaultFormatStatus(),
         @"collectionStorageMode":collection[@"storageMode"] ?: @"dynamic",
         @"collectionDynamicPercent":collection[@"storageDynamicPercent"] ?: @80,
         @"collectionStorageGiB":@([collection[@"storageLimitBytes"] doubleValue]/(1024.0*1024*1024)),
@@ -59,7 +90,9 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         @"autoAnalyze":@(ai.automaticAnalysis),@"showSettingsOnLaunch":@(ai.showSettingsOnLaunch),
         @"collectionEnabled":@(![collection[@"choice"] isEqual:@"disabled"]),
         @"collectionChoiceMade":@([@[@"enabled",@"disabled"] containsObject:collection[@"choice"] ?: @""]),
-        @"showShortcutsOnLaunch":@(_showShortcutHelpOnLaunch),@"keepImageColors":@(_darkThemePreservesImagesDefault)};
+        @"showShortcutsOnLaunch":@(_showShortcutHelpOnLaunch),@"keepImageColors":@(_darkThemePreservesImagesDefault)}
+        mutableCopy];
+    [state addEntriesFromDictionary:[self aiCapabilitiesSettingsState:ai]]; return state;
 }
 - (void)showUnifiedSettings:(id)sender {
     (void)sender; [self showUnifiedSettingsMode:NO];
@@ -106,21 +139,27 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
     NSURLSessionDataTask* task=SPDFMacAIFetchModels(^(NSArray* models,NSError* error) {
         ShenzhenMacDelegate* reader=weakSelf; if(!reader)return;
         objc_setAssociatedObject(reader,&catalogKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        if(models)objc_setAssociatedObject(reader,&catalogModelsKey,models,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(models) [reader aiModelListDidLoad:models];
         [controller updateState:@{@"models":models ?: @[],@"modelsLoading":@NO,
             @"modelStatus":error ? @"Could not load models. Open the list to retry." : @"Models with Images can inspect page images and diagrams."}];
     });
     objc_setAssociatedObject(self,&catalogKey,task,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
+- (BOOL)aiModelListLoaded { return objc_getAssociatedObject(self,&catalogModelsKey)!=nil; }
+- (void)aiModelListDidLoad:(NSArray<NSDictionary*>*)models {
+    objc_setAssociatedObject(self,&catalogModelsKey,[models copy] ?: @[],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    RememberContextTokens(self);
+}
 - (void)applyUnifiedSettings:(NSDictionary*)changes {
     SPDFMacAISettings* ai=ReadSettings();
     if(changes[@"wizardStep"])ai.onboardingStep=MIN(3,MAX(0,[changes[@"wizardStep"] integerValue]));
     if(changes[@"connectionConfigured"])ai.connectionConfigured=[changes[@"connectionConfigured"] boolValue];
-    if (changes[@"model"]) ai.model=changes[@"model"];
+    if (changes[@"model"]) { ai.model=changes[@"model"]; ai.modelContextTokens=CatalogContextTokens(self,ai.model); }
     if (changes[@"aiLanguage"]) ai.language=changes[@"aiLanguage"];
     if (changes[@"aiEnabled"]) ai.enabled=[changes[@"aiEnabled"] boolValue];
     if (changes[@"autoAnalyze"]) ai.automaticAnalysis=[changes[@"autoAnalyze"] boolValue];
     if (changes[@"showSettingsOnLaunch"]) ai.showSettingsOnLaunch=[changes[@"showSettingsOnLaunch"] boolValue];
+    SPDFMacAICapabilitiesApply(ai,changes);
     NSError* error=nil; [ai save:&error];
     if (!error && changes[@"collectionEnabled"]) {
         [SPDFMacCollectionStore.defaultStore updateSettings:@{@"choice":[changes[@"collectionEnabled"] boolValue] ? @"enabled" : @"disabled"} error:&error];
@@ -176,6 +215,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         }
         return;
     }
+    if([self performAICapabilitiesSettingsAction:action controller:controller]) return;
     if([action isEqual:@"requestModels"]) { [self requestAIModels]; return; }
     if([action isEqual:@"setCollectionLocation"]) {
         NSOpenPanel* panel=[NSOpenPanel openPanel]; panel.canChooseDirectories=YES; panel.canChooseFiles=NO;
@@ -198,7 +238,9 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         if(error)[controller.window presentError:error]; return;
     }
     if ([action isEqual:@"connect"]) {
-        [controller updateState:@{@"connecting":@YES,@"connectionStatus":@"Finish connecting in your browser. Close Settings to cancel."}];
+        [controller updateState:@{@"connecting":@YES,
+            @"connectionStatus":@"Finish connecting in your browser. If that page is gone, click Connect OpenRouter "
+                "again."}];
         NSUInteger generation=InvalidateAuth(self);
         SPDFMacAIOpenRouterAuth* auth=[SPDFMacAIOpenRouterAuth new];
         objc_setAssociatedObject(self,&authKey,auth,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -206,6 +248,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         NSURL* URL=[auth startWithCompletion:^(BOOL connected,NSError* problem) {
             __typeof__(self) reader=weakSelf; if (!reader ||
                 [objc_getAssociatedObject(reader,&authGenerationKey) unsignedIntegerValue]!=generation) return;
+            StopReturnWatch(reader); // finished or cancelled: nothing is pending any more
             if (connected) [reader applyUnifiedSettings:@{@"connectionConfigured":@YES}];
             [controller updateState:[reader unifiedSettingsState]];
             [controller updateState:@{@"connecting":@NO,@"connectionStatus":connected ? @"Connected." :
@@ -213,6 +256,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
             if (problem && problem.code!=NSURLErrorCancelled) [controller.window presentError:problem];
             if (connected) [reader requestAIModels];
         } error:&error];
+        if (URL) WatchForReturnWithoutCallback(self,controller,auth);
         if (URL) [NSWorkspace.sharedWorkspace openURL:URL]; else { [controller updateState:@{@"connecting":@NO,@"connectionStatus":error.localizedDescription ?: @"Could not begin browser sign-in. Try again."}]; if (error) [controller.window presentError:error]; }
     } else if ([action isEqual:@"disconnect"]) {
         InvalidateAuth(self); NSError* error=nil;
@@ -239,6 +283,7 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
 }
 - (void)showUnifiedSettingsAfterFirstPaint {
     [self observeAISettingsChanges];
+    [self friendsAfterFirstPaint];
     SPDFMacAISettings* settings=ReadSettings();
     [self configureAIAnalysis:AnalysisSettings(ReadSettings())];
     if(self.restoreWindowID.length || self.detachedTabLaunch)return;

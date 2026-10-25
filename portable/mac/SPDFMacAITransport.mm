@@ -1,5 +1,8 @@
 #import "SPDFMacAITransport.h"
 NSString* const SPDFMacAIDefaultModel=@"deepseek/deepseek-v4.1-flash";
+// Wire ceilings sit above the session's token budget (at most ~3 MB of text for a
+// 1M-token model); the session compacts long chats well before reaching them.
+static const NSUInteger MaxWireMessages=4096, MaxTextBytes=8*1024*1024;
 NSError* SPDFMacAIError(NSInteger code,NSString* message) {
     return [NSError errorWithDomain:@"SPDFMacAI" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
 }
@@ -26,7 +29,7 @@ static NSUInteger ImageBytes(NSArray* messages,NSUInteger* count) {
 NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDictionary*>* tools,
                                  NSString* model,NSString* apiKey,NSError** error) {
     if (error) *error=nil;
-    if (![messages isKindOfClass:NSArray.class] || !messages.count || messages.count>128 ||
+    if (![messages isKindOfClass:NSArray.class] || !messages.count || messages.count>MaxWireMessages ||
         (tools && (![tools isKindOfClass:NSArray.class] || tools.count>48)) || !ValidModel(model) ||
         ![apiKey isKindOfClass:NSString.class] || apiKey.length<12 || apiKey.length>512 ||
         [apiKey rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location!=NSNotFound) {
@@ -41,7 +44,7 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
     NSData* data=[NSJSONSerialization dataWithJSONObject:body options:NSJSONWritingWithoutEscapingSlashes error:nil];
     NSUInteger imageCount=0,imageBytes=ImageBytes(messages,&imageCount);
     if (!data || imageBytes==NSUIntegerMax || imageCount>4 || imageBytes>12*1024*1024+128 ||
-        data.length>13*1024*1024 || data.length-imageBytes>1024*1024) {
+        data.length>MaxTextBytes+12*1024*1024 || data.length-imageBytes>MaxTextBytes) {
         if(error)*error=SPDFMacAIError(3,@"This conversation is too large. Start a new chat or narrow the document context.");
         return nil;
     }
@@ -53,6 +56,25 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
     [request setValue:[@"Bearer " stringByAppendingString:apiKey] forHTTPHeaderField:@"Authorization"];
     [request setValue:@"Shenzhen PDF" forHTTPHeaderField:@"X-Title"];
     return request;
+}
+// Providers word this differently, but each names the context window or the token limit.
+static BOOL ContextLengthExceeded(NSData* bytes) {
+    id JSON=bytes.length ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
+    id error=[JSON isKindOfClass:NSDictionary.class] ? JSON[@"error"] : nil;
+    if (![error isKindOfClass:NSDictionary.class]) return NO;
+    NSMutableString* text=[NSMutableString string];
+    id metadata=[error[@"metadata"] isKindOfClass:NSDictionary.class] ? error[@"metadata"] : nil;
+    for (id value in @[error[@"message"] ?: @"",error[@"code"] ?: @"",error[@"type"] ?: @"",metadata[@"raw"] ?: @""])
+        if ([value isKindOfClass:NSString.class] && [value length]<=65536) [text appendFormat:@" %@",value];
+    NSString* lower=text.lowercaseString;
+    for (NSString* phrase in @[@"context length",@"context_length",@"context window",@"maximum context",
+        @"too many tokens",@"prompt is too long",@"input is too long",@"exceeds the maximum number of tokens"])
+        if ([lower containsString:phrase]) return YES;
+    return NO;
+}
+static NSError* ContextLengthError(void) {
+    return SPDFMacAIError(SPDFMacAIContextLengthErrorCode,@"This conversation no longer fits the selected model. "
+        "Start a new chat, or choose a model that can read more at once.");
 }
 @interface SPDFMacAIRequestToken ()
 @property(nonatomic) NSURLSessionTask* task;
@@ -106,7 +128,7 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
             @"OpenRouter could not complete the request with the required privacy settings. Try another model.";
         if (self.hasImages && (self.status==400 || self.status==404 || self.status==422))
             text=@"The selected model/provider could not accept page images with the required privacy settings. Choose an image-capable model in AI Settings and retry. Your selected model has not been changed.";
-        failure=SPDFMacAIError(self.status,text);
+        failure=ContextLengthExceeded(self.bytes) ? ContextLengthError() : SPDFMacAIError(self.status,text);
     }
     if(!failure) {
         id JSON=[NSJSONSerialization JSONObjectWithData:self.bytes options:0 error:nil];
@@ -117,12 +139,14 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
         if ([reason isEqual:@"length"]) {
             // Reasoning consumes the same output budget as the visible answer.
             // Never execute even apparently complete actions from a truncated batch.
-            failure=SPDFMacAIError(7,@"The model exhausted its response budget before finishing. Your chat is saved; try a shorter question or another model.");
+            failure=SPDFMacAIError(7,@"The assistant's answer got cut off. Your chat is saved; try again, or ask for less at once.");
         } else if ([reason isEqual:@"content_filter"] ||
                    ([candidate isKindOfClass:NSDictionary.class] && [candidate[@"refusal"] isKindOfClass:NSString.class] && [candidate[@"refusal"] length])) {
             failure=SPDFMacAIError(9,@"The model declined this request. Your chat is saved; rephrase it or choose another model.");
         } else if ([JSON isKindOfClass:NSDictionary.class] && [JSON[@"error"] isKindOfClass:NSDictionary.class]) {
-            failure=SPDFMacAIError(10,@"The model provider failed while generating the answer. Your chat is saved; retry or choose another model.");
+            failure=ContextLengthExceeded(self.bytes) ? ContextLengthError() : SPDFMacAIError(10,
+                @"The model provider failed while generating the answer. "
+                "Your chat is saved; retry or choose another model.");
         } else if ([candidate isKindOfClass:NSDictionary.class]) {
             NSMutableDictionary* normalized=[candidate mutableCopy]; id content=candidate[@"content"];
             if ([content isKindOfClass:NSArray.class]) {
@@ -140,8 +164,8 @@ NSURLRequest* SPDFMacAIChatRequest(NSArray<NSDictionary*>* messages,NSArray<NSDi
             BOOL actions=[calls isKindOfClass:NSArray.class] && [calls count]>0;
             if (calls==NSNull.null) [normalized removeObjectForKey:@"tool_calls"];
             if (text || actions) message=normalized;
-            else failure=SPDFMacAIError(8,@"The model returned no answer or actions. Your chat is saved; retry or choose another model.");
-        } else failure=SPDFMacAIError(6,@"The provider returned an invalid response format. Your chat is saved; retry or choose another model.");
+            else failure=SPDFMacAIError(8,@"The assistant sent back an empty answer. Your chat is saved; try again or choose another model.");
+        } else failure=SPDFMacAIError(6,@"The assistant's answer couldn't be read. Your chat is saved; try again or choose another model.");
     }
     void (^completion)(NSDictionary*,NSError*)=self.completion; self.completion=nil;
     self.token.task=nil; self.bytes=nil;

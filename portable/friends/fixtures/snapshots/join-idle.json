@@ -1,0 +1,20 @@
+{
+  "type": "snapshot",
+  "subscription": "s_9",
+  "view": "join",
+  "rev": 1,
+  "data": {
+    "actions": [],
+    "code_field": null,
+    "error": null,
+    "friends_id": null,
+    "id_field": {
+      "button": "Continue",
+      "placeholder": "Friends ID"
+    },
+    "message": "Type the Friends ID you use on your other computer or phone. You’ll approve this computer there.",
+    "route": null,
+    "state": "idle",
+    "title": "Use your existing profile"
+  }
+}

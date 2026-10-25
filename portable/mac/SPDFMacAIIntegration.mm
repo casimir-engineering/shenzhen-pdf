@@ -1,7 +1,10 @@
 #import "SPDFMacAIChatSearch.h"
 #import "SPDFMacAIIntegration.h"
+#import "SPDFMacCollectionPaletteModel.h"
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacAICitations.h"
+#import "SPDFMacAIDocumentLinks.h"
+#import "SPDFMacDocumentOpening.h"
 #import "SPDFMacAIChatStore.h"
 #import "SPDFMacAIChatView.h"
 #import "SPDFMacAIChatDock.h"
@@ -12,6 +15,10 @@
 #import "SPDFMacAICredentials.h"
 #import "SPDFMacAISettings.h"
 #import "SPDFMacAITools.h"
+#import "SPDFMacAIWebPDF.h"
+#import "SPDFMacAIToolRegistry.h"
+#import "SPDFMacAIOutputs.h"
+#import "SPDFMacCollectionStore.h"
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacUnifiedSettings.h"
 #import <objc/runtime.h>
@@ -19,11 +26,13 @@
 - (void)showUnifiedSettingsMode:(BOOL)wizard;
 - (void)persistActiveState;
 - (void)rebuildSidebar;
+- (void)requestAIModels;
 @end
 @interface SPDFReaderAIState : NSObject
 @property SPDFMacAIChatSession* session;
 @property SPDFMacAIChatStore* store;
 @property SPDFMacAITools* tools;
+@property SPDFMacAIToolRegistry* registry;
 @property SPDFMacAIChatView* view;
 @property SPDFMacAIChatDock* dock;
 @property SPDFMacAIChatHistoryView* historyView;
@@ -33,6 +42,7 @@
 @property BOOL history;
 @property NSString* submissionIssue;
 @property BOOL setupRequired;
+@property NSDictionary* pendingEdit; // An edit waiting for the user to authorize the saved key.
 @end
 @implementation SPDFReaderAIState
 - (void)dealloc { [_session cancel]; }
@@ -56,8 +66,16 @@ static char stateKey;
     SPDFReaderAIState* state=[self readerAIHistoryState];
     if(!state.session) {
         SPDFMacAITools* tools=[[SPDFMacAITools alloc] initWithReader:self]; state.tools=tools;
-        state.session=[[SPDFMacAIChatSession alloc] initWithTransport:[self aiChatTransport]
-            tools:(id<SPDFMacAIChatTools>)tools definitions:SPDFMacAITools.toolDefinitions store:state.store];
+        // The reader's own tools first, then every provider a category registers (SPDFMacAIToolProvider.h § 2),
+        // Friends among them; found now, when the chat is first used, never at launch.
+        SPDFMacAIToolRegistry* registry=[SPDFMacAIToolRegistry new]; state.registry=registry;
+        [registry registerProvider:[[SPDFMacAIChatToolsProvider alloc] initWithIdentifier:@"reader"
+            tools:(id<SPDFMacAIChatTools>)tools definitions:SPDFMacAITools.toolDefinitions
+            readOnlyTools:SPDFMacAIReaderReadOnlyToolNames()] error:nil];
+        for(id<SPDFMacAIToolProvider> provider in SPDFMacAIDiscoverToolProviders(self))
+            [registry registerProvider:provider error:nil];
+        state.session=[[SPDFMacAIChatSession alloc] initWithTransport:[self aiChatTransport] registry:registry
+            store:state.store];
         state.view=[[SPDFMacAIChatView alloc] initWithFrame:NSMakeRect(0,0,650,520)];
         objc_setAssociatedObject(self,&stateKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         __weak ShenzhenMacDelegate* owner=self; __weak SPDFReaderAIState* weakState=state;
@@ -67,8 +85,20 @@ static char stateKey;
             [weakState.view displaySession:weakState.session];
         };
         state.view.sendText=^BOOL(NSString* text) { return [owner aiSendText:text]; };
+        state.view.editMessage=^BOOL(NSUInteger index,NSString* text) {
+            return [owner aiResendMessageAtIndex:index text:text authorizedKey:nil];
+        };
         state.view.action=^(NSString* action) { [owner aiChatAction:action]; };
         state.view.openLink=^(NSURL* URL) { [owner aiOpenCitation:URL]; };
+        // A chart the person saves is a document the assistant made: Downloads and Collection (SPDFMacAIOutputs.h).
+        state.view.saveImage=^(NSString* path,NSString* caption) {
+            SPDFMacAIOutputSaveChatImage(weakState.session.activity,path,caption,SPDFMacCollectionStore.defaultStore,
+                [SPDFMacAIOutputActions actionsOpeningWith:^(NSString* saved){ [owner openPath:saved]; }],
+                ^(NSDictionary* receipt,NSError* error){
+                    if(!receipt && error) [weakState.view.window presentError:error];
+                });
+        };
+        [self friendsAttachChatView:state.view session:state.session];
     }
     return state;
 }
@@ -78,6 +108,8 @@ static char stateKey;
 - (void)preparePaletteForSearch {}
 - (void)showAIChat:(id)sender { (void)sender;[self showAIChatForQuery:nil]; }
 - (void)showAIChatForQuery:(NSString*)query {
+    // What was typed in Cmd+K, without the col: scope or surrounding spaces.
+    query=spdf_collection_palette_query(query ?: @"")[@"query"];
     SPDFReaderAIState* state=[self readerAIState];[self closePalette:nil];
     if(!state.dock && _documentContainer.superview) {
         state.dock=[[SPDFMacAIChatDock alloc] initWithReaderView:_documentContainer chatView:state.view
@@ -153,22 +185,32 @@ static char stateKey;
 }
 - (NSString*)aiAuthorizeAPIKeyForSending:(NSError**)error { return [SPDFMacAICredentials authorizeAPIKeyAccessWithError:error]; }
 - (BOOL)aiSendText:(NSString*)text { return [self aiSendText:text authorizedKey:nil]; }
-- (BOOL)aiSendText:(NSString*)text authorizedKey:(NSString*)authorizedKey {
-    if(![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)return NO;
+// Checks setup and reads the saved key before a request. Returns nil after showing why the request cannot start.
+- (NSString*)aiKeyForRequest:(NSString*)authorizedKey summarizing:(BOOL)summarizing
+                    settings:(SPDFMacAISettings**)result {
     SPDFReaderAIState* state=[self readerAIState];
-    if(state.session.running)return NO;
     state.setupRequired=NO;
     BOOL (^reject)(NSString*)=^BOOL(NSString* reason) {
         state.submissionIssue=reason; [state.view showSubmissionError:reason]; return NO;
     };
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];
     NSError* error=nil;
-    if(![settings load:&error])return reject(@"AI settings could not be read. Your draft is kept; try again.");
+    if(![settings load:&error]) {
+        reject(summarizing ? @"AI settings could not be read. Try again." :
+            @"AI settings could not be read. Your draft is kept; try again.");
+        return nil;
+    }
     if(settings.onboardingRevision<SPDFUnifiedSettingsExperienceVersion) {
         state.setupRequired=YES;
-        return reject(@"Finish setup using Settings above before sending. Your draft is kept.");
+        reject(summarizing ? @"Finish setup using Settings above, then try again." :
+            @"Finish setup using Settings above before sending. Your draft is kept.");
+        return nil;
     }
-    if(!settings.enabled)return reject(@"Document chat is disabled. Enable it in Settings above. Your draft is kept.");
+    if(!settings.enabled) {
+        reject(summarizing ? @"Document chat is disabled. Enable it in Settings above." :
+            @"Document chat is disabled. Enable it in Settings above. Your draft is kept.");
+        return nil;
+    }
     // An explicit send checks the credential itself. A stale status flag must not
     // redirect an already connected user to Settings before trying their saved key.
     NSString* key=authorizedKey ?: [self aiAPIKeyForSending:&error];
@@ -176,23 +218,87 @@ static char stateKey;
         BOOL needsAuthorization=error.code==errSecAuthFailed || error.code==errSecInteractionNotAllowed || error.code==errSecNotAvailable;
         NSString* reason=needsAuthorization ? @"macOS blocked the saved OpenRouter key. Authorize access to send this message." :
             @"Connect OpenRouter in AI settings to send. Your draft is kept.";
+        if(summarizing) reason=needsAuthorization ?
+            @"macOS blocked the saved OpenRouter key. Authorize access in AI settings, then try again." :
+            @"Connect OpenRouter in AI settings, then try again.";
         state.submissionIssue=reason;
-        [state.view showSubmissionError:reason recoveryAction:needsAuthorization ? @"authorize" : @"settings"]; return NO;
+        NSString* recovery=needsAuthorization && !summarizing ? @"authorize" : @"settings";
+        [state.view showSubmissionError:reason recoveryAction:recovery];
+        return nil;
     }
     if(!settings.connectionConfigured) {
         settings.connectionConfigured=YES;
-        if(![settings save:&error])return reject(@"The connection could not be saved. Your draft is kept; try again.");
+        if(![settings save:&error]) {
+            reject(summarizing ? @"The connection could not be saved. Try again." :
+                @"The connection could not be saved. Your draft is kept; try again.");
+            return nil;
+        }
         [NSDistributedNotificationCenter.defaultCenter postNotificationName:@"ShenzhenPDFAISettingsChanged" object:nil userInfo:nil deliverImmediately:YES];
     }
     state.submissionIssue=nil; [state.view showSubmissionError:nil]; state.history=NO;
+    state.session.defaultLanguage=settings.language; state.session.contextTokens=settings.modelContextTokens;
+    // The model list says how much the chosen model reads at once; learn it for later requests.
+    if(!settings.modelContextTokens && ![self aiModelListLoaded]) [self requestAIModels];
+    if(result) *result=settings; return key;
+}
+- (BOOL)aiSendText:(NSString*)text authorizedKey:(NSString*)authorizedKey {
+    if(![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)return NO;
+    SPDFReaderAIState* state=[self readerAIState];
+    if(state.session.running)return NO;
+    state.pendingEdit=nil; // Authorizing now sends this draft, not an earlier edit.
+    SPDFMacAISettings* settings=nil;
+    NSString* key=[self aiKeyForRequest:authorizedKey summarizing:NO settings:&settings];
+    if(!key) return NO;
     NSUInteger before=[state.session.chat[@"messages"] count];
-    state.session.defaultLanguage=settings.language;
-    [state.session send:text model:settings.model apiKey:key]; return [state.session.chat[@"messages"] count]>before;
+    // The request as the person sent it: chips read from the composer, which still holds them until this returns.
+    NSArray* chips=[state.registry requestChipsInComposerText:state.view.composer.textStorage];
+    SPDFMacAIRequestContext* context=[[SPDFMacAIRequestContext alloc] initWithText:text chips:chips
+        origin:SPDFMacAIRequestOriginChat friendConversation:nil settings:settings.snapshot budget:nil
+        activity:state.session.activity];
+    [state.session sendContext:context model:settings.model apiKey:key];
+    return [state.session.chat[@"messages"] count]>before;
+}
+- (BOOL)aiResendMessageAtIndex:(NSUInteger)index text:(NSString*)text authorizedKey:(NSString*)authorizedKey {
+    SPDFReaderAIState* state=[self readerAIState];
+    state.pendingEdit=@{@"index":@(index),@"text":[text copy] ?: @""};
+    SPDFMacAISettings* settings=nil;
+    NSString* key=[self aiKeyForRequest:authorizedKey summarizing:NO settings:&settings];
+    if(!key) return NO;
+    state.pendingEdit=nil;
+    SPDFMacAIRequestContext* context=[[SPDFMacAIRequestContext alloc] initWithText:text chips:nil
+        origin:SPDFMacAIRequestOriginChat friendConversation:nil settings:settings.snapshot budget:nil
+        activity:state.session.activity];
+    return [state.session resendFromMessageAtIndex:index context:context model:settings.model apiKey:key];
+}
+- (void)aiCompactChat {
+    SPDFReaderAIState* state=[self readerAIState];
+    if(state.session.running || !state.session.canCompact) return;
+    SPDFMacAISettings* settings=nil; NSString* key=[self aiKeyForRequest:nil summarizing:YES settings:&settings];
+    if(key) [state.session compactWithModel:settings.model apiKey:key];
 }
 - (void)aiChatAction:(NSString*)action {
     if([self handleAIChatOrganizationAction:action])return;
     SPDFReaderAIState* state=[self readerAIState];
     if ([action isEqual:@"close"]) { [self closeAIChat]; return; }
+    if ([action isEqual:@"compact"]) { [self aiCompactChat]; return; }
+    if ([action isEqual:@"retry"]) { // the latest question again, in place of the answer that couldn't be used
+        SPDFMacAIChatSession* session=state.session; NSUInteger index=session.retryMessageIndex;
+        if (session.canRetry && index!=NSNotFound)
+            [self aiResendMessageAtIndex:index text:session.chat[@"messages"][index][@"content"] authorizedKey:nil];
+        return;
+    }
+    if ([action isEqual:@"authorize"] && state.pendingEdit) {
+        NSError* error=nil; NSString* key=[self aiAuthorizeAPIKeyForSending:&error];
+        NSDictionary* edit=state.pendingEdit;
+        if(key.length)
+            [self aiResendMessageAtIndex:[edit[@"index"] unsignedIntegerValue] text:edit[@"text"] authorizedKey:key];
+        else {
+            state.submissionIssue=@"Access was not authorized. "
+                "Your edit is kept; authorize access or reconnect in Settings.";
+            [state.view showSubmissionError:state.submissionIssue recoveryAction:@"authorize"];
+        }
+        return;
+    }
     if ([action isEqual:@"authorize"]) {
         NSString* draft=state.view.composer.string;
         if(![draft stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length || state.session.running)return;
@@ -201,7 +307,8 @@ static char stateKey;
             [self aiSendText:draft]; return;
         }
         NSError* error=nil; NSString* key=[self aiAuthorizeAPIKeyForSending:&error];
-        if(key.length) { if([self aiSendText:draft authorizedKey:key])state.view.composer.string=@""; }
+        BOOL (^send)(NSString*)=^BOOL(NSString* text) { return [self aiSendText:text authorizedKey:key]; };
+        if(key.length) { if([self friendsSendDraft:draft using:send])state.view.composer.string=@""; }
         else {
             state.submissionIssue=@"Access was not authorized. Your message is kept; authorize access or reconnect in Settings.";
             [state.view showSubmissionError:state.submissionIssue recoveryAction:@"authorize"];
@@ -274,22 +381,31 @@ static char stateKey;
     [state.historyView beginRenamingItem:identifier folder:[command isEqual:@"renameFolder"]];return YES;
 }
 - (void)aiOpenCitation:(NSURL*)URL {
-    if ([URL.scheme.lowercaseString isEqual:@"https"]) { [NSWorkspace.sharedWorkspace openURL:URL]; return; }
-    SPDFReaderAIState* state=[self readerAIState];
-    NSDictionary* args=SPDFMacAIResolveCitation(state.session.chat,SPDFMacAICitationArguments(URL));
-    if (!args) {
-        NSAlert* alert=[NSAlert new]; alert.messageText=@"This link has no retrieved evidence";
-        alert.informativeText=@"Ask the assistant to retrieve the passage again before opening its citation.";
-        [alert addButtonWithTitle:@"OK"]; [alert beginSheetModalForWindow:self->_window completionHandler:nil]; return;
+    NSString* scheme=URL.scheme.lowercaseString;
+    if ([scheme isEqual:@"https"] || [scheme isEqual:@"http"]) { [self aiOpenWebLink:URL]; return; }
+    // A PDF the assistant downloaded: its saved copy opens like any document; gone, its address is offered.
+    if (SPDFMacAIWebIsDocumentLink(URL)) {
+        NSURL* file=SPDFMacAIWebDocumentFileForLink(URL,SPDFMacAIWebDocumentDefaultFolder());
+        if (file) [self showDocumentsAtPaths:@[file.path]];
+        else [self aiShowMissingWebDocument:SPDFMacAIWebDocumentSourceForLink(URL)];
+        return;
     }
+    SPDFReaderAIState* state=[self readerAIState];
+    if ([self friendsOpenCitation:URL chat:state.session.chat]) return;
+    NSDictionary* link=SPDFMacAIDocumentLinkArguments(URL);
+    NSDictionary* args=SPDFMacAIResolveCitation(state.session.chat,SPDFMacAICitationArguments(URL));
+    // A link without retrieved evidence (a document the assistant found in Collection,
+    // or one it named by file name) still opens what it names, without a highlight.
+    if (!args) { if (![self aiOpenDocumentLink:link]) [self aiShowMissingDocumentLink]; return; }
+    // Bring the cited tab forward first, in its own group, so the highlight that
+    // follows is published to the tab the reader is looking at.
+    NSString* open=[self aiOpenTabPathForDocumentLink:link];
+    if (open) [self showDocumentsAtPaths:@[open]];
     [state.tools performTool:@"show_document" arguments:args completion:^(NSDictionary* result) {
-        if (result[@"error"]) {
-            NSAlert* alert=[NSAlert new]; alert.messageText=@"This citation is unavailable";
-            alert.informativeText=[result[@"error"] description]; [alert addButtonWithTitle:@"OK"];
-            [alert beginSheetModalForWindow:self->_window completionHandler:nil];
-        }
         [state.view refreshActivityFromSession:state.session];
-        if (!result[@"error"]) [self->_window makeKeyAndOrderFront:nil];
+        if (!result[@"error"]) { [self->_window makeKeyAndOrderFront:nil]; return; }
+        // The passage may have changed since it was retrieved; the document and page still open.
+        if (![self aiOpenDocumentLink:link]) [self aiShowMissingDocumentLink];
     }];
 }
 @end

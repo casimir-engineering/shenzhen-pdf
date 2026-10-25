@@ -41,14 +41,18 @@
     _palettePanel.releasedWhenClosed=NO;_palettePanel.alphaValue=0;
     _paletteMode=1;_paletteSearchField=[[SPDFPaletteSearchField alloc] initWithFrame:NSMakeRect(10,10,400,30)];
     ((SPDFPaletteSearchField*)_paletteSearchField).reader=self;_paletteSearchField.delegate=self;
-    _paletteTable=[NSTableView new];_paletteResults=[NSMutableArray array];
+    _paletteTable=[NSTableView new];_paletteTable.dataSource=self;_paletteResults=[NSMutableArray array];
     [_palettePanel.contentView addSubview:_paletteSearchField];
 }
 - (NSPanel*)fixturePanel { return _palettePanel; }
 - (BOOL)searchMonitorInstalled { return _paletteEventMonitor!=nil; }
-- (void)refreshPaletteResults {}
+// An empty search, as production fills it: the chat row first and highlighted.
+- (void)refreshPaletteResults {
+    [_paletteResults setArray:@[spdf_collection_palette_chat_row(@"")]];
+    [_paletteTable reloadData];[self selectFirstPaletteResult];
+}
 - (NSArray*)paletteMenuCommandCandidates { return @[]; }
-- (void)showAIChat:(id)sender { self.chatOpens++;[super showAIChat:sender]; }
+- (void)showAIChatForQuery:(NSString*)query { self.chatOpens++;[super showAIChatForQuery:query]; }
 @end
 static void CheckComposerEventDispatch(void) {
     SaveComposerSettings(YES,YES,YES);

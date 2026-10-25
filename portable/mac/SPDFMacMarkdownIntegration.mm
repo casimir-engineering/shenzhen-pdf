@@ -191,7 +191,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
           if (existing == strongSelf->_selectedTabIndex) {
               [strongSelf.markdownState.activeSession navigateToAnchorWhenReady:anchor ?: @""];
           } else
-              [strongSelf selectTabAtIndex:existing];
+              [strongSelf openPath:URL.path]; // Shows the tab even in a hidden or folded group.
           return;
       }
       [strongSelf openPath:URL.path];

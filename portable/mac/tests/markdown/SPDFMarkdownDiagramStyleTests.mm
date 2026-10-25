@@ -118,7 +118,7 @@ int main(void) {
         SPDFExpect(!SPDFStyleHasLabel(real, @"USB-C VBUS 5 V input"),
                    @"a <br/> is NOT flattened back into one line");
         // Its one HTML entity decodes.
-        SPDFExpect(SPDFStyleHasLabel(real, @"C2653756 · FW lockout < 3.4 V"),
+        SPDFExpect(SPDFStyleHasLabel(real, @"R106 · FW lockout < 3.4 V"),
                    @"the fixture's &lt; entity decodes to a real < in the label text");
         // Its author colors reach the geometry.
         NSUInteger authored = 0;
@@ -141,7 +141,7 @@ int main(void) {
             if (block.diagramInfo) fenceBlock = block;
         SPDFExpect(fenceBlock != nil, @"the fixture's fence is recorded as a diagram block, not a code box");
         NSString* canonical = document.renderedDocument.attributedString.string;
-        SPDFExpect([canonical containsString:@"TPS63900 buck-boost"] &&
+        SPDFExpect([canonical containsString:@"BB-5 buck-boost"] &&
                        [canonical containsString:@"FW lockout < 3.4 V"],
                    @"the diagram's label text is real canonical (selectable, searchable) text");
         SPDFExpect(![canonical containsString:@"classDef aon fill:"],

@@ -15,10 +15,16 @@ static NSString* Metadata(NSDictionary* result) {
     NSString* kind = result[@"kind"];
     if ([kind isEqual:@"collectionGroup"]) return [NSString stringWithFormat:@"%@ documents",result[@"count"] ?: @0];
     if ([kind isEqual:@"openDoc"]) {
-        NSDictionary* group = result[@"group"];
-        return group[@"name"] ?: ([group[@"id"] isEqual:@"general"] ? @"General" : group[@"color"]) ?: @"Open document";
+        // Where it lives, then its tab group unless that is the everyday General one.
+        NSDictionary* group = [result[@"group"] isKindOfClass:NSDictionary.class] ? result[@"group"] : nil;
+        NSString* name = [group[@"name"] length] ? group[@"name"]
+                       : [group[@"id"] isEqual:@"general"] ? nil : group[@"color"];
+        NSMutableArray* parts = [NSMutableArray array];
+        for (NSString* part in @[result[@"location"] ?: @"", name ?: @""]) if (part.length) [parts addObject:part];
+        return [parts componentsJoinedByString:@" \u00B7 "];
     }
-    if ([kind isEqual:@"collectionDocument"]) return TextMatch(result) ? @"Text match" : @"Saved document";
+    if ([kind isEqual:@"collectionDocument"])
+        return TextMatch(result) ? @"Text match" : [result[@"location"] length] ? result[@"location"] : @"Collection";
     if ([kind isEqual:@"collectionOpenText"]) return @"Text match";
     return result[@"shortcut"] ?: result[@"subtitle"] ?: @"";
 }
@@ -30,7 +36,10 @@ NSView* SPDFPaletteResultView(NSDictionary* result) {
         header ? 10 : 13,NSFontWeightRegular,header || [result[@"kind"] isEqual:@"status"]);
     title.identifier = @"title"; title.translatesAutoresizingMaskIntoConstraints = NO;
     title.maximumNumberOfLines = 1; title.lineBreakMode = NSLineBreakByTruncatingMiddle; [view addSubview:title];
-    view.toolTip = [@[result[@"title"] ?: @"",result[@"subtitle"] ?: @""] componentsJoinedByString:@"\n"];
+    // The full location is one hover away rather than squeezed into the title.
+    NSString* path = [result[@"path"] isKindOfClass:NSString.class] ? result[@"path"] : @"";
+    NSString* detail = path.length ? path.stringByAbbreviatingWithTildeInPath : result[@"subtitle"];
+    view.toolTip = [@[result[@"title"] ?: @"",detail ?: @""] componentsJoinedByString:@"\n"];
     if (header) {
         [NSLayoutConstraint activateConstraints:@[[title.leadingAnchor constraintEqualToAnchor:view.leadingAnchor constant:8],
             [title.trailingAnchor constraintLessThanOrEqualToAnchor:view.trailingAnchor constant:-8],

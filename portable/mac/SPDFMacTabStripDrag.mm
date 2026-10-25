@@ -1,5 +1,6 @@
 #import "SPDFMacTabStripViewPrivate.h"
 #import "SPDFMacDocumentFormats.h"
+#import "SPDFMacTabDragSignature.h"
 
 static NSString* spdf_tab_strip_json_string_from_object(id object) {
     NSData* data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
@@ -22,8 +23,8 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSString* json = spdf_tab_strip_json_string_from_object(payload);
     if (!json.length) return;
 
-    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
-    [item setString:json forType:SPDFTabDragPasteboardType];
+    // Signed, so Friends can tell this drag from another app writing the same type (SPDFMacTabDragSignature.h).
+    NSPasteboardItem* item = SPDFMacTabDragPasteboardItem(json, SPDFMacTabDragKey(), NSDate.date);
     NSDraggingItem* dragItem = [[NSDraggingItem alloc] initWithPasteboardWriter:item];
     NSRect tabRect = [self rectForTabAtIndex:_draggedTabIndex];
     NSImage* image = [[NSImage alloc] initWithSize:tabRect.size];
@@ -66,8 +67,7 @@ static NSDictionary* spdf_tab_strip_json_dictionary_from_string(NSString* string
     NSDictionary* payload = @{@"groupTabs": tabs, @"sourcePID": @(NSProcessInfo.processInfo.processIdentifier),
                               @"sourceWindow": @(self.window.windowNumber)};
     NSString* json = spdf_tab_strip_json_string_from_object(payload);
-    NSPasteboardItem* item = [[NSPasteboardItem alloc] init];
-    [item setString:json forType:SPDFTabDragPasteboardType];
+    NSPasteboardItem* item = SPDFMacTabDragPasteboardItem(json, SPDFMacTabDragKey(), NSDate.date);
     NSDraggingItem* dragItem = [[NSDraggingItem alloc] initWithPasteboardWriter:item];
     NSString* title = [NSString stringWithFormat:@"%@ · %lu tabs", _pressedGroup.displayName, (unsigned long)tabs.count];
     NSColor* accent = spdf_tab_group_accent(_pressedGroup.colorName);

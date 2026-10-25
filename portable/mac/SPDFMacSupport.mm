@@ -83,7 +83,27 @@ static BOOL spdf_candidates_are_unique(NSArray<NSString*>* candidates) {
     return YES;
 }
 
+static NSArray<NSString*>* spdf_disambiguated_display_names_for_distinct_paths(NSArray<NSString*>* paths);
+
+// The same file open in several tabs is one document: it shares one name, and
+// it never counts as a second document needing a longer one. Counting it made
+// every same-named document fall back to its full path.
 NSArray<NSString*>* spdf_disambiguated_display_names_for_paths(NSArray<NSString*>* paths) {
+    NSMutableArray<NSString*>* distinct = [NSMutableArray arrayWithCapacity:paths.count];
+    NSMutableDictionary<NSString*, NSNumber*>* slots = [NSMutableDictionary dictionaryWithCapacity:paths.count];
+    NSMutableArray<NSNumber*>* slotForPath = [NSMutableArray arrayWithCapacity:paths.count];
+    for (NSString* path in paths) {
+        NSString* key = path.stringByStandardizingPath ?: path ?: @"";
+        if (!slots[key]) { slots[key] = @(distinct.count); [distinct addObject:path ?: @""]; }
+        [slotForPath addObject:slots[key]];
+    }
+    NSArray<NSString*>* names = spdf_disambiguated_display_names_for_distinct_paths(distinct);
+    NSMutableArray<NSString*>* result = [NSMutableArray arrayWithCapacity:paths.count];
+    for (NSNumber* slot in slotForPath) [result addObject:names[slot.unsignedIntegerValue]];
+    return result;
+}
+
+static NSArray<NSString*>* spdf_disambiguated_display_names_for_distinct_paths(NSArray<NSString*>* paths) {
     if (paths.count == 0) return @[];
 
     NSMutableArray<NSArray<NSString*>*>* componentsByIndex = [NSMutableArray arrayWithCapacity:paths.count];

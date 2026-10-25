@@ -402,6 +402,8 @@ int main(int argc,const char* argv[]) {
         NSString* root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
         setenv("SPDF_STATE_DIR",root.UTF8String,1); setenv("SPDF_NO_WINDOW_FIRST","1",1);
+        // Friends is on by default and attaches after first paint; its state must be the probe's, never the real one.
+        setenv("SZFRIENDS_STATE_DIR",root.UTF8String,1);
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         spdf_sidebar_probe_install_order_guard();
         NSString* output=argc>1 ? [NSString stringWithUTF8String:argv[1]] : @"";

@@ -3,6 +3,8 @@
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacAITransport.h"
 #import "SPDFMacUnifiedSettings.h"
+#import "SPDFMacCollectionPaletteModel.h"
+#import "SPDFMacPalettePresentation.h"
 static NSUInteger composerRequests, composerTitleRequests;
 static NSURLRequest* composerRequest;
 @interface ComposerReplyProtocol : NSURLProtocol @end
@@ -49,6 +51,7 @@ static NSURLRequest* composerRequest;
 @property(nonatomic) NSUInteger settingsOpens;
 @property(nonatomic) NSString* authorizedKey;
 @property(nonatomic) NSUInteger authorizationCalls;
+@property(nonatomic) NSUInteger catalogRequests;
 @end
 @implementation ComposerReaderProbe
 - (NSString*)aiAPIKeyForSending:(NSError**)error {
@@ -63,6 +66,8 @@ static NSURLRequest* composerRequest;
     return [[SPDFMacAITransport alloc] initWithConfiguration:configuration];
 }
 - (void)showUnifiedSettingsMode:(BOOL)wizard { (void)wizard;self.settingsOpens++; }
+// The model list is never fetched in tests; it arrives without the chosen model.
+- (void)requestAIModels { self.catalogRequests++; [self aiModelListDidLoad:@[@{@"id":@"fixture/other-model"}]]; }
 - (void)showUnifiedSettings:(id)sender { (void)sender;self.settingsOpens++; }
 - (void)showAIConnectionSettingsWithReason:(NSString*)reason { (void)reason;self.settingsOpens++; }
 @end
@@ -72,10 +77,13 @@ static NSURLRequest* composerRequest;
 @end
 @implementation ComposerPaletteProbe
 - (void)seedEmptySearchPalette {
+    // As an empty search shows it: the chat row first and highlighted.
     _paletteMode=1;_paletteSearchField=[NSSearchField new];_paletteSearchField.stringValue=@"";
-    _paletteTable=[NSTableView new];
+    _paletteTable=[NSTableView new];_paletteTable.dataSource=self;
+    _paletteResults=[NSMutableArray arrayWithObject:spdf_collection_palette_chat_row(@"")];
+    [_paletteTable reloadData];[self selectFirstPaletteResult];
 }
-- (void)showAIChat:(id)sender { (void)sender;self.chatOpens++; }
+- (void)showAIChatForQuery:(NSString*)query { (void)query;self.chatOpens++; }
 @end
 static BOOL ComposerWait(BOOL (^predicate)(void)) {
     NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:5];
@@ -106,6 +114,7 @@ static void SaveComposerSettings(BOOL configured,BOOL enabled,BOOL setupComplete
     Check([settings save:nil],"composer fixture settings save");
 }
 #import "SPDFMacAIComposerEventChecks.h"
+#import "SPDFMacAIComposerEditChecks.h"
 static void CheckComposerAcceptance(void) {
     // The surrounding acceptance binary sets SPDF_STATE_DIR to a fresh temporary directory.
     Check([SPDFMacAISettings.defaultURL.path hasPrefix:NSTemporaryDirectory().stringByResolvingSymlinksInPath] ||
@@ -214,6 +223,7 @@ static void CheckComposerAcceptance(void) {
     Check(reader.authorizationCalls==2 && reader.keyReads==reads && ComposerRequestCount()==before+1 &&
         !view.composer.string.length && issue.hidden && !reader.settingsOpens,
         "authorization success clears inline issue and draft without a second denied Keychain read");
+    CheckComposerEditAndSummary(reader,view,session);
     [session cancel];window.contentView=nil;[window close];
     CheckComposerEventDispatch();
 }

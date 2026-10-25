@@ -179,8 +179,16 @@ int main(void) { @autoreleasepool {
     Check(secret.target==controller && secret.action==NSSelectorFromString(@"saveCredential:"),@"Return in key field routes to Use key, not Start reading");
     [NSApp sendAction:secret.action to:secret.target from:secret];
     Check([credential isEqual:@"keyboard-test-only"] && !secret.stringValue.length,@"key Return action consumes only the credential draft");
-    [controller updateState:@{@"connecting":@YES}];
-    Check(![(NSButton*)Find(controller.window.contentView,@"connect") isEnabled],@"connection cannot be started twice");
+    // A browser sign-up can lose its way back to the app: the button must never strand the reader.
+    [controller updateState:@{@"connecting":@YES,@"connectionStatus":@"Finish connecting in your browser."}];
+    NSButton* pending=(NSButton*)Find(controller.window.contentView,@"connect");
+    Check(pending.isEnabled && [pending.title isEqual:@"Connect OpenRouter"],
+        @"connect stays clickable while the browser sign-in is pending");
+    action=nil; [pending performClick:nil];
+    Check([action isEqual:@"connect"],@"clicking again while pending starts the sign-in over");
+    [controller selectSection:@"ai"];
+    Check([(NSButton*)Find(controller.window.contentView,@"connect") isEnabled],
+        @"a rebuilt AI section keeps connect clickable while pending");
     [controller updateState:@{@"connecting":@NO,@"connected":@YES}];
     Check(Find(controller.window.contentView,@"disconnect")!=nil,@"connected account exposes disconnect");
     Check(Find(controller.window.contentView,@"saveCredential")==nil && [controller valueForKey:@"secret"]==nil,@"completed key connection removes credential entry controls");

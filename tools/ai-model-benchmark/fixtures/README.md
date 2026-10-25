@@ -1,7 +1,7 @@
 # Frozen document-answer cases — 2026-10-11
 
 These four small PDFs are synthetic controls, not private user documents. The
-fifth case is the user's four-page MSK13C02-SZ switch datasheet; it is deliberately
+fifth case is the user's four-page SW-1302 switch datasheet; it is deliberately
 not copied into the repository. Its SHA-256 is recorded in `rubric.json`.
 
 The five questions and source requirements are in that rubric. **Never send the

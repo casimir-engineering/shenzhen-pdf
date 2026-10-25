@@ -146,8 +146,8 @@ static void test_open_docs(void) {
     int picks[3], n;
     CHECK(spdf_win_palette_open_document_matches_query("", "Title", "/a/b.pdf"));
     CHECK(spdf_win_palette_open_document_matches_query(NULL, "Title", "/a/b.pdf"));
-    CHECK(spdf_win_palette_open_document_matches_query("hard", "SG882G Hardware Design", "/a/b.pdf"));
-    CHECK(spdf_win_palette_open_document_matches_query("quectel", "Datasheet (2)", "/docs/Quectel_SG882G.pdf"));
+    CHECK(spdf_win_palette_open_document_matches_query("hard", "M100 Hardware Design", "/a/b.pdf"));
+    CHECK(spdf_win_palette_open_document_matches_query("acme", "Datasheet (2)", "/docs/Acme_M100.pdf"));
     CHECK(!spdf_win_palette_open_document_matches_query("missing", "Title", "/a/b.pdf"));
     CHECK(!spdf_win_palette_open_document_matches_query("docs", "Title", "/docs/b.pdf"));
     n = spdf_win_palette_filter_open_documents(k_open_docs, 3, "", picks, 3);

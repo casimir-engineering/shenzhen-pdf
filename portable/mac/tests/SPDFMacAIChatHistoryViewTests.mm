@@ -15,7 +15,7 @@ int main(void){@autoreleasepool{
     NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,300,600) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     SPDFMacAIChatHistoryView* view=[[SPDFMacAIChatHistoryView alloc] initWithFrame:window.contentView.bounds];window.contentView=view;view.wantsLayer=YES;
     __block NSString* action=nil;view.action=^(NSString* value){action=value;};
-    [view displayFolders:@[@{@"id":@"folder-a",@"name":@"Carrier board",@"collapsed":@NO},@{@"id":@"folder-b",@"name":@"Reference",@"collapsed":@YES}]];
+    [view displayFolders:@[@{@"id":@"folder-a",@"name":@"Main board",@"collapsed":@NO},@{@"id":@"folder-b",@"name":@"Reference",@"collapsed":@YES}]];
     NSTimeInterval now=NSDate.date.timeIntervalSince1970;
     NSArray* chats=@[@{@"id":@"first",@"title":@"Power supply requirements",@"folder":@"folder-a",@"updated":@(now)},@{@"id":@"second",@"title":@"Compare revision changes",@"folder":@"folder-b",@"updated":@(now-86400)},@{@"id":@"third",@"title":@"English chapter titles",@"updated":@(now-172800)}];
     [view displayChats:chats selectedID:@"first"];[view layoutSubtreeIfNeeded];
@@ -72,7 +72,7 @@ int main(void){@autoreleasepool{
         [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-chat-history-%@.png",appearance] atomically:YES];
     }
     [view setFrameSize:NSMakeSize(240,600)];[view layoutSubtreeIfNeeded];Check(view.search.frame.size.width>=155,@"search remains usable at sidebar minimum width");
-    [view displayChats:@[@{@"id":@"long",@"title":@"Compare the carrier board power supply changes across every hardware revision and summarize their design implications",@"folder":@"folder-a",@"updated":@(now),@"snippet":@"The voltage requirements changed across multiple revisions; compare the input rating and output limits before choosing a regulator."}] selectedID:@"long"];
+    [view displayChats:@[@{@"id":@"long",@"title":@"Compare the main board power supply changes across every hardware revision and summarize their design implications",@"folder":@"folder-a",@"updated":@(now),@"snippet":@"The voltage requirements changed across multiple revisions; compare the input rating and output limits before choosing a regulator."}] selectedID:@"long"];
     [view layoutSubtreeIfNeeded];[table layoutSubtreeIfNeeded];
     NSView* narrowCell=[table viewAtColumn:0 row:2 makeIfNecessary:YES];[narrowCell layoutSubtreeIfNeeded];
     NSArray<NSTextField*>* narrowLabels=Labels(narrowCell);

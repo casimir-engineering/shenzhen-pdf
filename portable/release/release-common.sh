@@ -15,6 +15,20 @@ SPDF_RELEASE_OPTFLAGS="-O2 -DNDEBUG"
 SPDF_RELEASE_GITHUB_REPOSITORY="casimir-engineering/shenzhen-pdf"
 SPDF_RELEASE_ASSET_NAME="ShenzhenPDF-mac-arm64.dmg"
 
+# Sets SPDF_TAG_PREFIX and SPDF_RELEASE_BRANCH for the checkout at $1. In the standalone repository they are empty
+# and master. In the Shenzhen repository, where this app is apps/pdf beside the other apps, its git tags read
+# pdf/<version>-<build> and its branch is main. The GitHub release on SPDF_RELEASE_GITHUB_REPOSITORY keeps the plain
+# <version>-<build> either way: that is the name installed apps compare.
+spdf_release_layout() {
+  local prefix
+  prefix="$(git -C "$1" rev-parse --show-prefix)"
+  if [[ -z "$prefix" ]]; then
+    SPDF_TAG_PREFIX="" SPDF_RELEASE_BRANCH=master
+  else
+    SPDF_TAG_PREFIX="pdf/" SPDF_RELEASE_BRANCH=main
+  fi
+}
+
 spdf_release_fail() {
   printf 'ERROR: %s\n' "$*" >&2
   return 1
@@ -184,6 +198,15 @@ spdf_validate_release_version() {
   local version="$1"
   [[ "$version" =~ ^[0-9]{2}\.[1-9][0-9]*\.[1-9][0-9]*$ ]] || \
     spdf_release_fail "Version must be an unpadded YY.M.DD value: $version"
+}
+
+# The <version>-<build> tags of the GitHub releases on SPDF_RELEASE_GITHUB_REPOSITORY for one version. The Shenzhen
+# repository starts from one commit without the earlier releases' tags: those are only on the release repository, so
+# the next build number has to count them too.
+spdf_release_repository_tags() {
+  local version="$1"
+  git ls-remote --tags --refs "https://github.com/$SPDF_RELEASE_GITHUB_REPOSITORY.git" "refs/tags/${version}-*" |
+    awk '{ sub("^refs/tags/", "", $2); print $2 }'
 }
 
 spdf_next_build_for_tags() {

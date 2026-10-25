@@ -1,5 +1,16 @@
 #import "SPDFMacAIModelCatalog.h"
 static NSError* Error(NSString* text) { return [NSError errorWithDomain:@"ShenzhenPDF.AI.Model" code:1 userInfo:@{NSLocalizedDescriptionKey:text}]; }
+// The window the routed provider serves: the smaller of the model's and its top provider's, when given.
+static NSUInteger ContextTokens(NSDictionary* model) {
+    id provider=model[@"top_provider"]; NSUInteger tokens=0;
+    id routed=[provider isKindOfClass:NSDictionary.class] ? provider[@"context_length"] : nil;
+    NSArray* values=@[model[@"context_length"] ?: NSNull.null,routed ?: NSNull.null];
+    for (id value in values) {
+        if (![value isKindOfClass:NSNumber.class] || [value doubleValue]<1 || [value doubleValue]>100000000) continue;
+        NSUInteger count=[value unsignedIntegerValue]; tokens=tokens ? MIN(tokens,count) : count;
+    }
+    return tokens;
+}
 NSArray<NSDictionary*>* SPDFMacAIModelsFromCatalog(NSData* data,NSError** error) {
     if(error)*error=nil;
     if (!data.length || data.length>8*1024*1024) { if(error)*error=Error(@"Model list unavailable. Try again."); return nil; }
@@ -19,8 +30,12 @@ NSArray<NSDictionary*>* SPDFMacAIModelsFromCatalog(NSData* data,NSError** error)
         id architecture=model[@"architecture"];
         id inputs=[architecture isKindOfClass:NSDictionary.class] ? architecture[@"input_modalities"] : nil;
         BOOL images=[inputs isKindOfClass:NSArray.class] && [inputs containsObject:@"image"];
-        [seen addObject:identifier]; [result addObject:@{@"id":identifier,@"name":images ? [name stringByAppendingString:@" · Images"] : name,
-            @"supportsImages":@(images),@"supported_parameters":@[@"tools"]}];
+        NSMutableDictionary* entry=[@{@"id":identifier,
+            @"name":images ? [name stringByAppendingString:@" · Images"] : name,
+            @"supportsImages":@(images),@"supported_parameters":@[@"tools"]} mutableCopy];
+        NSUInteger context=ContextTokens(model);
+        if (context) entry[@"contextTokens"]=@(context);
+        [seen addObject:identifier]; [result addObject:entry];
     }
     [result sortUsingComparator:^NSComparisonResult(NSDictionary* a,NSDictionary* b) {
         return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]];

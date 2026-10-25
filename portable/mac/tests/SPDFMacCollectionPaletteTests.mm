@@ -28,9 +28,9 @@ int main(void) {
         Expect(@"equal relevance uses most recently focused window", reports.count == 2 &&
                [reports[0][@"path"] isEqual:@"/tmp/new.pdf"]);
         NSArray* assembly = @[
-            @{@"title":@"/Projects/carrier-pcb/Laser Support/01 - Original R2/Assembly guide", @"path":@"/Projects/carrier-pcb/Laser Support/01 - Original R2/Assembly guide.pdf", @"focusedAt":@100},
-            @{@"title":@"carrier-stand-r4-assembly", @"path":@"/Projects/carrier-stand-r4-assembly.pdf"},
-            @{@"title":@"carrier-stand-r2-assembly", @"path":@"/Projects/carrier-stand-r2-assembly.pdf"},
+            @{@"title":@"/Projects/bench-pcb/Mount/01 - Original R2/Assembly guide", @"path":@"/Projects/bench-pcb/Mount/01 - Original R2/Assembly guide.pdf", @"focusedAt":@100},
+            @{@"title":@"bench-stand-r4-assembly", @"path":@"/Projects/bench-stand-r4-assembly.pdf"},
+            @{@"title":@"bench-stand-r2-assembly", @"path":@"/Projects/bench-stand-r2-assembly.pdf"},
             @{@"title":@"assembly R2.pdf", @"path":@"/Projects/assembly R2.pdf", @"focusedAt":@1}];
         NSArray* matches = spdf_collection_palette_open_name_rows(assembly,@"assembly R2");
         Expect(@"exact document name precedes unordered name and path matches regardless of recency",

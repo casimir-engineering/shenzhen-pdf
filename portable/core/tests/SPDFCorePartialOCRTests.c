@@ -4,7 +4,7 @@
 // all processing on this page to avoid losing detail"), so a datasheet with a
 // scanned cover and vector body pages came back with a text layer on page 1
 // and nothing on pages 2..8 -- and the app, which asked only "is there any
-// text?", called that a success. Measured on FHD4020S-2R2MT.pdf: the plain
+// text?", called that a success. Measured on inductor-datasheet.pdf: the plain
 // pass produced p1=1493 chars, p2..p8=0; the same run with --force-ocr
 // produced text on all eight.
 //

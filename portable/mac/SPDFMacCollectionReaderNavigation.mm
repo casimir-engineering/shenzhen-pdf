@@ -88,6 +88,11 @@ static char versionInfoKey, versionIndicatorKey, versionIndicatorRowKey, version
 - (BOOL)collectionTabIsSavedVersion:(SPDFDocumentTab*)tab {
     return tab && objc_getAssociatedObject(tab,&versionInfoKey) != nil;
 }
+- (NSString*)collectionKnownDocumentPathForTab:(SPDFDocumentTab*)tab {
+    NSDictionary* info = tab ? objc_getAssociatedObject(tab,&versionInfoKey) : nil;
+    id path = [info[@"document"] isKindOfClass:NSDictionary.class] ? info[@"document"][@"path"] : nil;
+    return [path isKindOfClass:NSString.class] ? path : nil;
+}
 - (void)collectionSetVersionInfo:(NSDictionary*)info forTab:(SPDFDocumentTab*)tab {
     if (!tab) return;
     objc_setAssociatedObject(tab,&versionInfoKey,info,OBJC_ASSOCIATION_COPY_NONATOMIC);

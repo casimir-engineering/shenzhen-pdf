@@ -1,4 +1,5 @@
 #import "SPDFMacCollectionPaletteModel.h"
+#import "SPDFMacPaletteDocumentNames.h"
 #import <float.h>
 
 static NSString* Text(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
@@ -18,7 +19,10 @@ static NSInteger MatchRank(NSString* query, NSString* title, NSString* path) {
     NSString* phrase = [words componentsJoinedByString:@" "];
     NSStringCompareOptions folded = NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch;
     NSInteger best = NSNotFound;
-    for (NSString* value in @[title.lastPathComponent ?: @"", path.lastPathComponent ?: @""]) {
+    // A title is matched whole ("A/B testing"); one that is itself a path, from
+    // an older saved window, by its last component.
+    NSString* name = [title hasPrefix:@"/"] ? title.lastPathComponent : title;
+    for (NSString* value in @[name ?: @"", path.lastPathComponent ?: @""]) {
         NSString* stem = value.stringByDeletingPathExtension;
         if ([value compare:phrase options:folded] == NSOrderedSame ||
             [stem compare:phrase options:folded] == NSOrderedSame) return 0;
@@ -74,10 +78,16 @@ static NSArray<NSDictionary*>* SessionCandidates(id sessionObject) {
         for (NSDictionary* tab in tabs) {
             if (![tab isKindOfClass:NSDictionary.class]) continue;
             NSString* path = Text(tab[@"path"]); if (!path.length) continue;
-            NSMutableDictionary* row = [@{@"path":path, @"title":Text(tab[@"collectionVersionLabel"]).length ? tab[@"collectionVersionLabel"] : Text(tab[@"title"]),
+            // A saved title that is a path predates clean tab titles; name the file instead.
+            NSString* saved = [Text(tab[@"title"]) containsString:@"/"] ? @"" : Text(tab[@"title"]);
+            NSString* label = Text(tab[@"collectionVersionLabel"]);
+            NSMutableDictionary* row = [@{@"path":path,
+                @"title":label.length || !saved.length ? spdf_palette_document_title(path, label, nil) : saved,
                 @"focusedAt":focusedAt, @"lastViewedAt":Number(tab[@"lastViewedAt"]), @"_order":@(order++),
                 @"markdownLandscape":@([tab[@"markdownLandscape"] boolValue])} mutableCopy];
             if ([tab[@"group"] isKindOfClass:NSDictionary.class]) row[@"group"] = tab[@"group"];
+            for (NSString* key in @[@"collectionVersionLabel", @"collectionHistoryID"])
+                if (Text(tab[key]).length) row[key] = tab[key];
             [results addObject:row];
         }
     }
@@ -97,7 +107,7 @@ NSArray<NSDictionary*>* spdf_collection_palette_open_candidates(NSArray<NSDictio
         NSString* key = PathKey(path); NSNumber* existing = indices[key];
         if (existing) {
             NSMutableDictionary* row = [results[existing.unsignedIntegerValue] mutableCopy];
-            for (NSString* field in @[@"group", @"markdownLandscape", @"focusedAt", @"lastViewedAt"])
+            for (NSString* field in @[@"group", @"markdownLandscape", @"focusedAt", @"lastViewedAt", @"_current"])
                 if (!row[field] && raw[field]) row[field] = raw[field];
             if ([Number(raw[@"focusedAt"]) doubleValue] > [Number(row[@"focusedAt"]) doubleValue])
                 row[@"focusedAt"] = raw[@"focusedAt"];
@@ -106,8 +116,8 @@ NSArray<NSDictionary*>* spdf_collection_palette_open_candidates(NSArray<NSDictio
         }
         NSMutableDictionary* row = [raw mutableCopy];
         row[@"path"] = path; row[@"_order"] = @(order++);
-        if (!Text(row[@"title"]).length) row[@"title"] = path.lastPathComponent.stringByDeletingPathExtension;
-        if ([source[@"live"] boolValue]) row[@"focusedAt"] = @(DBL_MAX);
+        if (!Text(row[@"title"]).length) row[@"title"] = spdf_palette_document_title(path, nil, nil);
+        if ([source[@"live"] boolValue]) { row[@"focusedAt"] = @(DBL_MAX); row[@"_live"] = @YES; }
         indices[key] = @(results.count); [results addObject:row];
     }
     return results;
@@ -117,6 +127,9 @@ NSSet<NSString*>* spdf_collection_palette_open_paths(NSArray<NSDictionary*>* can
     NSMutableSet* paths = [NSMutableSet set];
     for (NSDictionary* candidate in candidates ?: @[]) {
         NSString* path = Text(candidate[@"path"]); if (path.length) [paths addObject:PathKey(path)];
+        if (Text(candidate[@"originalPath"]).length) [paths addObject:PathKey(candidate[@"originalPath"])];
+        NSArray* merged = [candidate[@"mergedPaths"] isKindOfClass:NSArray.class] ? candidate[@"mergedPaths"] : @[];
+        for (NSString* other in merged) if (Text(other).length) [paths addObject:PathKey(other)];
     }
     return paths;
 }
@@ -126,9 +139,12 @@ NSArray<NSDictionary*>* spdf_collection_palette_open_name_rows(NSArray<NSDiction
     NSMutableArray* ranked = [NSMutableArray array];
     for (NSDictionary* candidate in candidates ?: @[]) {
         NSString* path = Text(candidate[@"path"]), *title = Text(candidate[@"title"]);
+        // With nothing typed the list is for switching; the document already in
+        // front is not somewhere to switch to.
+        if (!query.length && [candidate[@"_current"] boolValue]) continue;
         NSInteger rank = MatchRank(query, title, path); if (rank == NSNotFound) continue;
         NSMutableDictionary* row = [candidate mutableCopy];
-        row[@"kind"] = @"openDoc"; row[@"title"] = title.length ? title : path.lastPathComponent;
+        row[@"kind"] = @"openDoc"; row[@"title"] = title.length ? title : spdf_palette_document_title(path, nil, nil);
         row[@"_rank"] = @(rank); row[@"_viewedAt"] = query.length ? @0 : Number(candidate[@"lastViewedAt"]);
         [ranked addObject:row];
     }
@@ -165,6 +181,11 @@ NSArray<NSDictionary*>* spdf_collection_palette_group_rows(id sessionObject, NSS
     return rows;
 }
 
+static NSArray* FirstFive(NSArray* rows) { return rows.count > 5 ? [rows subarrayWithRange:NSMakeRange(0, 5)] : rows; }
+static NSString* PageKey(NSDictionary* hit) {
+    NSString* path = Text(hit[@"path"]);
+    return path.length ? [NSString stringWithFormat:@"%@|%@", PathKey(path), hit[@"page"] ?: @""] : @"";
+}
 static void AddSection(NSMutableArray* rows, NSString* name, NSArray* content) {
     if (!content.count) return;
     [rows addObject:@{@"kind":@"header", @"title":name, @"subtitle":@""}];
@@ -181,14 +202,28 @@ NSArray<NSDictionary*>* spdf_collection_palette_rows(BOOL collectionOnly, NSStri
     if (!collectionOnly) {
         AddSection(rows, @"Open documents", openNames);
         AddSection(rows, @"Tab groups", groups);
-        AddSection(rows, @"Text in open documents", openText.count > 5 ? [openText subarrayWithRange:NSMakeRange(0, 5)] : openText);
+        AddSection(rows, @"Text in open documents", FirstFive(openText));
     }
-    AddSection(rows, @"Collection documents", collectionNames.count > 5 ? [collectionNames subarrayWithRange:NSMakeRange(0, 5)] : collectionNames);
-    AddSection(rows, @"Text in Collection", collectionText.count > 5 ? [collectionText subarrayWithRange:NSMakeRange(0, 5)] : collectionText);
+    AddSection(rows, @"Collection documents", FirstFive(collectionNames));
+    // A page already listed from the open document is not listed again from the Collection.
+    NSMutableSet* openPages = [NSMutableSet set];
+    for (NSDictionary* hit in collectionOnly ? @[] : openText ?: @[])
+        if (PageKey(hit).length) [openPages addObject:PageKey(hit)];
+    NSMutableArray* savedText = [NSMutableArray array];
+    for (NSDictionary* hit in collectionText ?: @[])
+        if (![openPages containsObject:PageKey(hit)]) [savedText addObject:hit];
+    AddSection(rows, @"Text in Collection", FirstFive(savedText));
     if (collectionOnly && showAll)
         [rows addObject:@{@"kind":@"collectionShowAll", @"title":@"Show all in Collection…",
                           @"subtitle":query ?: @"", @"query":query ?: @""}];
     return rows;
+}
+
+NSDictionary* spdf_collection_palette_chat_row(NSString* query) {
+    NSString* text = spdf_collection_palette_single_line(query);
+    NSString* title = text.length ? [NSString stringWithFormat:@"Ask AI about \u201C%@\u201D\u2026", text]
+                                  : @"Chat with your documents";
+    return @{@"kind":@"askAI", @"title":title, @"shortcut":@"\u2318\u21A9"};
 }
 
 BOOL spdf_collection_palette_can_publish(NSProgress* progress, NSUInteger generation,

@@ -31,10 +31,23 @@ static void SPDFWritePNG(NSString* path, NSInteger width, NSInteger height) {
     [PNG writeToFile:path atomically:YES];
 }
 
+// Every fixture folder this run made, removed by exact path when the process exits, so a failed check (which only
+// counts and carries on) or an early return still leaves nothing in the temporary folder.
+static NSMutableArray<NSString*>* SPDFFixtureDirectories;
+static void SPDFRemoveFixtureDirectories(void) {
+    for (NSString* directory in SPDFFixtureDirectories)
+        [[NSFileManager defaultManager] removeItemAtPath:directory error:nil];
+}
+
 static NSString* SPDFCreateFixtureDirectory(void) {
     NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES
                                                attributes:nil error:nil];
+    if (!SPDFFixtureDirectories) {
+        SPDFFixtureDirectories = [NSMutableArray array];
+        atexit(SPDFRemoveFixtureDirectories);
+    }
+    [SPDFFixtureDirectories addObject:directory];
     return directory;
 }
 

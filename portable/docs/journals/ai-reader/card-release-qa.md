@@ -136,7 +136,7 @@ Tool sequence: `read_pages(page=1,count=4)` then `render_page(page=3)`. The mode
 did not request an image of page 1. No card was emitted. Literal final answer:
 
 
-> The only actuator-movement figure given is **travel to closure: 1.6 mm ± 0.2 mm**, so the maximum is **1.8 mm** [MSK13C02-SZ - toggle switch - datasheet · p. 3](spdf-ai://document?path=doc:f8538877d07ab4a986a54389ced19f6c9335ec3a68ffe9567a0ab890f755d244&page=3&revision=16777231:39442337:787494:1791534936:95873130:1791614963:858501215).
+> The only actuator-movement figure given is **travel to closure: 1.6 mm ± 0.2 mm**, so the maximum is **1.8 mm** [SW-1302 - toggle switch - datasheet · p. 3](spdf-ai://document?path=doc:f8538877d07ab4a986a54389ced19f6c9335ec3a68ffe9567a0ab890f755d244&page=3&revision=16777231:39442337:787494:1791534936:95873130:1791614963:858501215).
 >
 > Caveat: that is the handle's travel per position step, not the actuator's protruding length. This datasheet contains no dimensional/mounting drawing (actuator height, width or panel cutout), so a hole size cannot be derived from it — you'd need the mechanical drawing or a physical measurement.
 

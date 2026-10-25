@@ -28,6 +28,7 @@
 #import "SPDFMacCollectionReaderNavigation.h"
 #import "SPDFMacDocumentView.h"
 #import "SPDFMacFileBrowsing.h"
+#import "SPDFMacDocumentOpening.h"
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFMacFindNearest.h"
 #import "SPDFMacInactivePreload.h"
@@ -56,6 +57,9 @@
 #import "SPDFMacTranslationChoice.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacPaletteResults.h"
+#import "SPDFMacPaletteActivation.h"
+#import "SPDFMacPaletteDocumentNames.h"
+#import "SPDFMacStateDirectory.h"
 #import "SPDFMacPassword.h"
 #import "SPDFMacPrintView.h"
 #import "SPDFMacPropertiesPanel.h"
@@ -69,6 +73,7 @@
 #import "SPDFMacTabLifecycle.h"
 #import "SPDFMacTabStripView.h"
 #import "SPDFMacUIHelpers.h"
+#import "SPDFMacViewportRenderPriority.h"
 #import "SPDFUpdater.h"
 
 #include "shenzhen_pdf_core.h"
@@ -432,6 +437,7 @@ static BOOL gSPDFTerminatingAllWindows;
 NSArray<ShenzhenMacDelegate*>* SPDFMacZoomSelfTestWindowControllers(void) {
     return gSPDFWindowControllers ?: @[];
 }
+NSArray<ShenzhenMacDelegate*>* SPDFMacAllWindowControllers(void) { return gSPDFWindowControllers ?: @[]; }
 
 static NSDictionary* spdf_dictionary_from_window_frame(NSRect frame) {
     return @{
@@ -791,6 +797,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
                      dispatch_get_main_queue(), ^{
                        [self resumePersistentStateSavesAfterLaunch];
                        [self showUnifiedSettingsAfterFirstPaint];
+                       [self listenForDocumentsOpenedInOtherWindows];
                        if (self.restoreWindowID.length == 0) {
                            if (!self.detachedTabLaunch) {
                                // Consume the post-update health marker FIRST (writes
@@ -950,40 +957,6 @@ static char kSPDFPasswordPromptClosesNewTabKey;
       [NSApp terminate:self];
     });
     return NO;
-}
-
-- (BOOL)application:(NSApplication*)sender openFile:(NSString*)filename {
-    (void)sender;
-    if (!_uiReady) {
-        if (!_pendingOpenPath.length) _pendingOpenPath = [filename copy];
-        if (filename.length && ![_pendingOpenPaths containsObject:filename]) [_pendingOpenPaths addObject:filename];
-        [self retargetLaunchPrerenderToOpenedPath:_pendingOpenPath];
-        return YES;
-    }
-    if ([self canOpenDocumentAtPath:filename showError:YES]) [self openPath:filename];
-    [self activateWindowForExternalOpen];
-    return YES;
-}
-
-- (void)application:(NSApplication*)application openFiles:(NSArray<NSString*>*)filenames {
-    (void)application;
-    spdf_launch_profile_log(@"application:openFiles: uiReady=%d n=%lu", (int)_uiReady, (unsigned long)filenames.count);
-    if (filenames.count > 0) {
-        if (!_uiReady) {
-            _pendingOpenPath = [filenames.firstObject copy];
-            [_pendingOpenPaths addObjectsFromArray:filenames];
-            // This is the launch's real target — the prerender was started from
-            // main() before the Apple Event arrived and is aimed at the wrong
-            // document until now. -performStartupDocumentWork opens
-            // _pendingOpenPath first, so that is the one to prewarm.
-            [self retargetLaunchPrerenderToOpenedPath:_pendingOpenPath];
-        } else {
-            NSArray<NSString*>* pathsToOpen = [self openableDocumentPathsFromPaths:filenames showErrors:YES];
-            [self openPaths:pathsToOpen];
-            [self activateWindowForExternalOpen];
-        }
-    }
-    [NSApp replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
 - (void)windowDidResize:(NSNotification*)notification {
@@ -1160,7 +1133,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 }
 
 - (void)loadPersistentState {
-    NSDictionary* settings = [self stateObjectFromFile:@"settings.yaml"];
+    NSDictionary* settings = [self friendsLaunchWithSettings:[self stateObjectFromFile:@"settings.yaml"]];
     _darkThemePreservesImagesDefault = YES; /* default ON; a stored key overrides below */
     if ([settings isKindOfClass:NSDictionary.class]) {
         NSNumber* fit = settings[@"fitMode"];
@@ -1593,7 +1566,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         @"id" : _windowSessionID,
         @"frame" : spdf_dictionary_from_window_frame(frame),
         @"selectedTab" : @(_selectedTabIndex),
-        @"tabs" : tabs, @"sidebar" : [self sidebarWorkspaceSnapshot]
+        @"tabs" : tabs, @"sidebar" : [self sidebarWorkspaceSnapshot],
+        @"pid" : @(getpid()) // Lets another window's process hand this window a document it already shows.
     } mutableCopy];
 }
 
@@ -1770,7 +1744,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
     if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, 0);
-    [self writeStateObject:@{
+    [self writeStateObject:SPDFMacFriendsSettingsForSaving(@{
         @"version" : @1,
         @"fitMode" : @(_fitMode),
         /* Always continuous now; kept for backward compat (see SPDFMacModels.mm). */
@@ -1798,7 +1772,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         @"markdownTheme" : _darkReadingTheme ? @"dark" : @"light",
         @"darkThemePreservesImages" : @(_darkThemePreservesImagesDefault),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
-    }
+    })
                    toFile:@"settings.yaml"];
     [self writeStateObject:_favorites toFile:@"favorites.yaml"];
     [self writeStateObject:_documentStates ?: @{} toFile:@"documents.yaml"];
@@ -2155,12 +2129,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 }
 
 - (NSString*)displayVersion {
-    NSDictionary* info = NSBundle.mainBundle.infoDictionary;
-    NSString* version = info[@"CFBundleShortVersionString"];
-    NSString* build = info[(NSString*)kCFBundleVersionKey];
-    if (version.length == 0) version = @"26.10.11";
-    if (build.length == 0) build = @"1";
-    return [NSString stringWithFormat:@"%@-%@", version, build];
+    // The release (SZFReleaseTag), as the update dialog names it; not CFBundleVersion, which Friends changes raise.
+    return spdf_running_version_from_info(NSBundle.mainBundle.infoDictionary) ?: @"unknown";
 }
 
 // ----- Auto-updater bridge (Dev ID build only; runtime sandbox re-check) -------
@@ -3829,12 +3799,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [_queuedRenderPages addObject:number];
 
         NSInteger distance = labs(index - preferredPage);
+        __block __weak SPDFRenderOperation* weakOperation = nil; // cleanup forgets only its own queue entry
         SPDFRenderOperation* operation = [SPDFRenderOperation operationWithRenderBlock:^(spdf_render_token* token) {
           @autoreleasepool {
               if (generation != self->_renderGeneration || liveZoomSequence != self->_liveZoomSequence) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    [self->_queuedRenderPages removeObject:number];
-                    [self->_queuedRenderOperations removeObjectForKey:number];
+                    [self spdf_forgetQueuedRenderOperation:weakOperation page:number];
                   }];
                   return;
               }
@@ -3845,8 +3815,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                                          errorLength:sizeof(err)];
               if (!workerDoc) {
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    [self->_queuedRenderPages removeObject:number];
-                    [self->_queuedRenderOperations removeObjectForKey:number];
+                    [self spdf_forgetQueuedRenderOperation:weakOperation page:number];
                   }];
                   return;
               }
@@ -3862,16 +3831,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
                   if (spdf_render_was_canceled(err) && spdf_zoom_profile_enabled())
                       spdf_zoom_profile_log(@"renderCanceled page=%ld site=pageRender", (long)index);
                   [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                    [self->_queuedRenderPages removeObject:number];
-                    [self->_queuedRenderOperations removeObjectForKey:number];
+                    [self spdf_forgetQueuedRenderOperation:weakOperation page:number];
                   }];
                   return;
               }
 
               [[NSOperationQueue mainQueue] addOperationWithBlock:^{
                 double adoptT0 = spdf_zoom_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-                [self->_queuedRenderPages removeObject:number];
-                [self->_queuedRenderOperations removeObjectForKey:number];
+                [self spdf_forgetQueuedRenderOperation:weakOperation page:number];
                 if (generation != self->_renderGeneration || !self->_doc ||
                     index >= (NSInteger)self->_renderedPages.count || fabs(zoom - self->_zoom) > 0.001 ||
                     fabs(displayScale - [self backingScale]) > 0.001)
@@ -3920,7 +3887,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         operation.queuePriority =
             forceHighPriority ? NSOperationQueuePriorityVeryHigh : [self queuePriorityForRenderDistance:distance];
         operation.qualityOfService = forceHighPriority ? NSQualityOfServiceUserInitiated : NSQualityOfServiceUtility;
-        _queuedRenderOperations[number] = operation;
+        _queuedRenderOperations[number] = weakOperation = operation;
         [(forceHighPriority ? _renderQueue : _backgroundRenderQueue) addOperation:operation];
     }
 }
@@ -4058,10 +4025,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
                 page.minimapImage = thumbnailPage.image;
                 page.minimapImageZoom = thumbnailZoom;
                 page.minimapImageScale = displayScale;
-                // Patch this one thumbnail into the cached strip instead of
-                // invalidating the whole cache (which would force a full rebuild
-                // on the next scroll frame).
-                [self->_minimapView noteThumbnailLoadedForPageIndex:index];
+                // Hand the strip this LIVE page (a full-page render may have replaced
+                // the object its snapshot holds) and patch just its slot -- never a
+                // full updateMinimap from a completion (architecture.md 3.4).
+                [self->_minimapView noteThumbnailLoadedForPage:page];
               }];
           }
         }];
@@ -4070,68 +4037,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [_queuedMinimapThumbnailOperations setObject:operation forKey:number];
         [_minimapQueue addOperation:operation];
     }
-}
-
-- (NSArray<NSNumber*>*)visibleDocumentPageIndexesWithExtraRadius:(NSInteger)radius
-                                                   preferredPage:(NSInteger*)preferredPageOut {
-    NSInteger preferredPage = -1;
-    if (!_pageScrollView || !_pageView || _renderedPages.count == 0) {
-        if (preferredPageOut) *preferredPageOut = preferredPage;
-        return @[];
-    }
-
-    NSRect visibleRect = _pageScrollView.contentView.bounds;
-    preferredPage = [_pageView pageIndexForVisibleRect:visibleRect];
-    preferredPage = MAX(0, MIN(preferredPage, (NSInteger)_renderedPages.count - 1));
-
-    NSMutableOrderedSet<NSNumber*>* indexes = [NSMutableOrderedSet orderedSet];
-    if (_presentationMode) {
-        [indexes addObject:@(preferredPage)];
-    } else {
-        for (NSInteger i = 0; i < (NSInteger)_renderedPages.count; ++i) {
-            NSRect pageRect = [_pageView rectForPageAtIndex:i];
-            if (!NSIsEmptyRect(NSIntersectionRect(visibleRect, pageRect))) [indexes addObject:@(i)];
-        }
-        if (indexes.count == 0) [indexes addObject:@(preferredPage)];
-    }
-
-    if (radius > 0) {
-        NSArray<NSNumber*>* visible = indexes.array;
-        for (NSNumber* number in visible) {
-            NSInteger center = number.integerValue;
-            NSInteger first = MAX(0, center - radius);
-            NSInteger last = MIN((NSInteger)_renderedPages.count - 1, center + radius);
-            for (NSInteger i = first; i <= last; ++i) [indexes addObject:@(i)];
-        }
-    }
-
-    if (preferredPageOut) *preferredPageOut = preferredPage;
-    return indexes.array;
-}
-
-- (void)queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:(BOOL)forceHighPriority {
-    if (!_doc || !_path.length || _renderedPages.count == 0) return;
-    NSInteger preferredPage = -1;
-    NSArray<NSNumber*>* pageIndexes = [self visibleDocumentPageIndexesWithExtraRadius:1 preferredPage:&preferredPage];
-    if (pageIndexes.count == 0) return;
-    [self enqueuePageRendersForGeneration:_renderGeneration
-                              pageIndexes:pageIndexes
-                            preferredPage:preferredPage
-                        forceHighPriority:forceHighPriority];
-}
-
-- (void)syncCurrentPageFromVisibleViewportQueueRenders:(BOOL)queueRenders forceHighPriority:(BOOL)forceHighPriority {
-    if (!_pageScrollView || !_pageView || _renderedPages.count == 0) return;
-    NSInteger visiblePage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
-    visiblePage = MAX(0, MIN(visiblePage, (NSInteger)_renderedPages.count - 1));
-    if (visiblePage != _pageIndex) {
-        _pageIndex = visiblePage;
-        _pageView.currentPageIndex = _pageIndex;
-        [self clearPageFieldFocus];
-        [self updateControls];
-        [self selectCurrentSidebarRow];
-    }
-    if (queueRenders) [self queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:forceHighPriority];
 }
 
 - (void)renderPageIfNeededAtIndex:(NSInteger)pageIndex {
@@ -5698,6 +5603,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     // Re-assert the explicit target so repeated paging moves one page each press.
     _pageIndex = pageIndex;
     _pageView.currentPageIndex = _pageIndex;
+    [self spdf_queueViewportPageRendersNow];
     [self updateControls];
     [self selectCurrentSidebarRow];
     [_pageView setNeedsDisplay:YES];
@@ -8534,61 +8440,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return tab;
 }
 
-- (void)openPaths:(NSArray<NSString*>*)paths {
-    if (!_uiReady || !_window) {
-        if (paths.count > 0) _pendingOpenPath = [paths.firstObject copy];
-        for (NSString* path in paths) {
-            if (path.length && ![_pendingOpenPaths containsObject:path]) [_pendingOpenPaths addObject:path];
-        }
-        return;
-    }
-
-    if (paths.count == 0) return;
-    if (!_suspendPersistentStateSaves) {
-        [self performWithBatchedPersistentStateSaves:^{
-          [self openPaths:paths];
-        }];
-        return;
-    }
-
-    [self rememberActiveTabState]; [self collectionWillOpenPaths:paths];
-    NSInteger targetIndex = -1;
-    for (NSString* path in paths) {
-        if (![path isKindOfClass:NSString.class] || path.length == 0) continue;
-        [self captureSecurityBookmarkForPath:path];
-        NSInteger existing = [self indexOfTabForPath:path];
-        if (existing >= 0) {
-            targetIndex = existing;
-            continue;
-        }
-        SPDFDocumentTab* tab = [self newTabForPath:path];
-        targetIndex = [self appendNewTabToActiveGroup:tab];
-    }
-
-    if (targetIndex >= 0) {
-        if (targetIndex == _selectedTabIndex && [self hasActiveDocument]) {
-            // A stranded Loading markdown session still counts as an active
-            // document: re-kick it instead of early-returning into the strand.
-            SPDFDocumentTab* existingTab = [self selectedTab];
-            if (existingTab.readOnly && existingTab.workingPath.length && !existingTab.readOnlyCopyBinding.count)
-                [self loadSelectedTab]; // Explicit reopen renews legacy provenance after launch.
-            else { [self ensureActiveMarkdownTabHasContent]; [self collectionDidOpenPath:_path]; [self aiDocumentDidOpen:_path]; }
-            if (_path.length > 0) [self rememberRecentlyOpenedPath:_path];
-            [self savePersistentState];
-            [self focusActiveDocumentViewAfterTabSelection];
-            return;
-        }
-        [self selectTabAtIndex:targetIndex];
-        if ([self hasActiveDocument] && _path.length > 0) [self rememberRecentlyOpenedPath:_path];
-        [self savePersistentState];
-    }
-}
-
-- (void)openPath:(NSString*)path {
-    if (!path.length) return;
-    [self openPaths:@[ path ]];
-}
-
 - (SPDFDocumentTab*)tabSnapshotForDragAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tabs.count) return nil;
     [self rememberActiveTabState];
@@ -8745,13 +8596,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)newTabRequested:(id)sender { [self openDocument:sender]; }
-
-- (void)openRecentDocument:(id)sender {
-    if (![sender isKindOfClass:NSMenuItem.class]) return;
-    NSString* path = ((NSMenuItem*)sender).representedObject;
-    if (![path isKindOfClass:NSString.class] || path.length == 0) return;
-    [self openPath:path];
-}
 
 // Most-recent persisted Recently Opened path (index 0 is newest) that isn't
 // already open in a tab, or nil. Used as the Reopen Last Closed fallback after a
@@ -9429,6 +9273,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (generation != self->_scrollIdleMinimapRefreshGeneration || !self->_doc || self->_liveZooming) return;
         [self updateMinimap];
+        [self spdf_queueViewportPageRendersNow]; // settled: no more queueing behind the one-wide queue
         // Warm the zoom-seed caches once scrolling has settled (not per page
         // crossing) so a subsequent zoom is still instant without stuttering the
         // scroll.
@@ -11390,11 +11235,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 }
 
 - (NSString*)shortProvenanceForPath:(NSString*)path {
-    NSString* displayPath = spdf_display_path_without_extension(path);
-    if (displayPath.length <= 52) return spdf_display_name_for_path(path);
-    NSString* head = [displayPath substringToIndex:MIN((NSUInteger)20, displayPath.length)];
-    NSString* tail = [displayPath substringFromIndex:displayPath.length - MIN((NSUInteger)28, displayPath.length)];
-    return [NSString stringWithFormat:@"%@...%@", head, tail];
+    return spdf_palette_location_label(path, NSHomeDirectory(), SPDFMacStateDirectoryPath());
 }
 
 - (NSArray<NSString*>*)labelsFromString:(NSString*)text {
@@ -11710,37 +11551,20 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     return results;
 }
 
-// One palette candidate (@{@"path", @"title"}) per open tab in every window of
-// this process, in window then tab order. The active tab is skipped: the
-// open-documents group lists switch targets, and selecting the document that
-// is already frontmost would be a no-op.
+// One palette candidate per open tab in every window of this process, in window
+// then tab order. The tab in front here is marked _current: with nothing typed
+// the open-documents group lists places to switch to, and that is not one.
 - (NSArray<NSDictionary*>*)openDocumentPaletteCandidates {
     NSMutableArray<NSDictionary*>* candidates = [NSMutableArray array];
     for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
-        NSMutableDictionary* titles = [[controller openDocumentPaletteTitlesByStandardizedPath] mutableCopy];
-        for (SPDFDocumentTab* tab in controller->_tabs)
-            if (tab.collectionVersionLabel.length) titles[tab.path.stringByStandardizingPath] = tab.collectionVersionLabel;
         for (SPDFDocumentTab* tab in controller->_tabs) {
-            NSString* path = tab.path;
-            if (!path.length) continue;
-            NSString* title = titles[path.stringByStandardizingPath];
-            [candidates addObject:@{@"path" : path, @"title" : title ?: @"", @"lastViewedAt":@(tab.lastViewedAt)}];
+            if (!tab.path.length) continue;
+            NSMutableDictionary* candidate = [[controller paletteCandidateForTab:tab] mutableCopy];
+            if (controller == self && tab == [self selectedTab]) candidate[@"_current"] = @YES;
+            [candidates addObject:candidate];
         }
     }
     return candidates;
-}
-
-- (NSDictionary<NSString*, NSString*>*)openDocumentPaletteTitlesByStandardizedPath {
-    NSArray<NSString*>* paths = [self openTabPaths];
-    NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
-    NSMutableDictionary<NSString*, NSString*>* titles = [NSMutableDictionary dictionaryWithCapacity:paths.count];
-    for (NSUInteger i = 0; i < paths.count; ++i) {
-        NSString* path = paths[i];
-        if (!path.length) continue;
-        NSString* title = i < names.count && names[i].length ? names[i] : spdf_display_name_for_path(path);
-        titles[path.stringByStandardizingPath] = title ?: @"";
-    }
-    return titles;
 }
 
 - (NSArray<NSValue*>*)rangesOfPaletteQuery:(NSString*)query inString:(NSString*)text limit:(NSUInteger)limit {
@@ -11880,192 +11704,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
                            range:NSMakeRange(0, boldLength)];
     }
     return attributed;
-}
-
-// Open-document palette entries switch to the live tab (never a duplicate):
-// find the owning window controller, bring its window forward, and select the
-// tab. Falls back to a regular open when the tab was closed while the palette
-// was up (openPaths: reuses an existing tab, so still no duplicates).
-- (void)focusOpenDocumentTabForPath:(NSString*)path {
-    if (!path.length) return;
-    ShenzhenMacDelegate* owner = nil;
-    NSInteger tabIndex = -1;
-    for (ShenzhenMacDelegate* controller in gSPDFWindowControllers ?: @[]) {
-        NSInteger index = [controller indexOfTabForPath:path];
-        if (index < 0) continue;
-        owner = controller;
-        tabIndex = index;
-        if (controller == self) break; // prefer this window when open in several
-    }
-    if (!owner) {
-        [self openPath:path];
-        return;
-    }
-    if (owner != self) {
-        [NSApp activateIgnoringOtherApps:YES];
-        [owner->_window makeKeyAndOrderFront:nil];
-        [owner->_window makeMainWindow];
-    }
-    [owner selectTabAtIndex:tabIndex];
-}
-
-- (void)openPaletteResult:(NSDictionary*)result {
-    NSString* kind = result[@"kind"];
-    if (![self isSelectablePaletteResult:result]) return;
-    if ([self openCollectionPaletteResult:result]) return;
-    if ([kind isEqualToString:@"addPage"]) {
-        [self favoriteCurrentPage:nil];
-        return;
-    }
-    if ([kind isEqualToString:@"addDoc"]) {
-        [self favoriteCurrentDocument:nil];
-        return;
-    }
-    if ([kind isEqualToString:@"menuCommand"]) {
-        NSMenuItem* item = [result[@"menuItem"] isKindOfClass:NSMenuItem.class] ? result[@"menuItem"] : nil;
-        if (!item || !item.action) return;
-        // Defer one runloop turn so key-window restoration after the panel
-        // closes has settled, then dispatch exactly as the menu would:
-        // through the responder chain with the menu item as sender (handlers
-        // like openRecentDocument: read the sender's representedObject).
-        dispatch_async(dispatch_get_main_queue(), ^{
-          if (item.action) [NSApp sendAction:item.action to:item.target from:item];
-        });
-        return;
-    }
-    NSString* path = result[@"path"];
-    if ([kind isEqualToString:@"openDoc"]) {
-        [self focusOpenDocumentTabForPath:path];
-        return;
-    }
-    NSInteger page = [result[@"page"] integerValue];
-    if (path.length) {
-        [self openPath:path];
-        if (_doc && [_path.stringByStandardizingPath isEqualToString:path.stringByStandardizingPath]) {
-            _pageIndex = MAX(0, MIN(page, spdf_page_count(_doc) - 1));
-            _pageView.currentPageIndex = _pageIndex;
-            if ([kind isEqualToString:@"find"]) {
-                NSString* query = result[@"query"] ?: _paletteSearchField.stringValue;
-                _searchField.stringValue = query ?: @"";
-                _findRegexCheckbox.state = NSControlStateValueOff;
-                _findRegexMultiline = YES;
-                _pendingFindPreferredPage = _pageIndex;
-                [self startFindForCurrentQuery];
-            } else {
-                [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-            }
-        }
-    }
-}
-
-- (void)paletteMoveSelection:(NSInteger)delta {
-    if (_paletteResults.count == 0) return;
-    NSInteger row = _paletteTable.selectedRow;
-    if (row < 0) row = delta > 0 ? -1 : 0;
-    NSInteger count = (NSInteger)_paletteResults.count;
-    for (NSInteger step = 0; step < count; ++step) {
-        row = (row + delta + count) % count;
-        if ([self isSelectablePaletteResult:_paletteResults[(NSUInteger)row]]) {
-            [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
-            [self scrollPaletteRowToVisibleWithHeader:row];
-            return;
-        }
-    }
-}
-
-- (void)installPaletteEventMonitor {
-    if (_paletteEventMonitor) return;
-    __weak ShenzhenMacDelegate* weakSelf = self;
-    _paletteEventMonitor =
-        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown |
-                                                      NSEventMaskOtherMouseDown | NSEventMaskKeyDown
-                                              handler:^NSEvent*(NSEvent* event) {
-                                                ShenzhenMacDelegate* strongSelf = weakSelf;
-                                                if (strongSelf && strongSelf->_palettePanel.visible) {
-                                                    if (event.type == NSEventTypeKeyDown &&
-                                                        event.window == strongSelf->_palettePanel) {
-                                                        if (event.keyCode == 53) {
-                                                            [strongSelf closePalette:nil];
-                                                            return nil;
-                                                        }
-                                                        if (event.keyCode == 125) {
-                                                            [strongSelf paletteMoveSelection:1];
-                                                            return nil;
-                                                        }
-                                                        if (event.keyCode == 126) {
-                                                            [strongSelf paletteMoveSelection:-1];
-                                                            return nil;
-                                                        }
-                                                        if (event.keyCode == 36 || event.keyCode == 76) {
-                                                            [strongSelf activatePaletteSelection:nil];
-                                                            return nil;
-                                                        }
-                                                    }
-                                                    if (event.type != NSEventTypeKeyDown &&
-                                                        event.window != strongSelf->_palettePanel)
-                                                        [strongSelf closePalette:nil];
-                                                }
-                                                return event;
-                                              }];
-}
-
-- (void)closePalette:(id)sender {
-    [self cancelCollectionPaletteSearch];
-    (void)sender;
-    if (_paletteEventMonitor) {
-        [NSEvent removeMonitor:_paletteEventMonitor];
-        _paletteEventMonitor = nil;
-    }
-    _paletteFavoritePendingDelete = nil;
-    [_palettePanel orderOut:nil];
-    // Drop the menu-command snapshot and its rows: captured NSMenuItems
-    // retain their targets, so keeping them past close would pin window
-    // controllers. Reopening rebuilds both from the live menu tree anyway.
-    _paletteMenuCommandCandidates = nil;
-    [_paletteResults removeAllObjects];
-    [_paletteTable reloadData];
-}
-
-- (void)paletteFavoriteDeleteClicked:(id)sender {
-    NSInteger row = [_paletteTable rowForView:(NSView*)sender];
-    if (row < 0 || row >= (NSInteger)_paletteResults.count) return;
-
-    NSDictionary* result = _paletteResults[(NSUInteger)row];
-    if (![result[@"kind"] isEqualToString:@"favorite"]) return;
-    NSDictionary* favorite = result[@"favorite"];
-    if (!favorite) return;
-
-    if (_paletteFavoritePendingDelete != favorite) {
-        _paletteFavoritePendingDelete = favorite;
-        [_paletteTable reloadData];
-        [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row] byExtendingSelection:NO];
-        return;
-    }
-
-    NSUInteger index = [_favorites indexOfObjectIdenticalTo:favorite];
-    if (index == NSNotFound) {
-        _paletteFavoritePendingDelete = nil;
-        [self refreshPaletteResults];
-        return;
-    }
-
-    [_favorites removeObjectAtIndex:index];
-    _paletteFavoritePendingDelete = nil;
-    [self savePersistentState];
-    [self refreshPaletteResults];
-    _statusLabel.stringValue = @"Favorite deleted.";
-}
-
-- (void)activatePaletteSelection:(id)sender {
-    if (sender!=_paletteTable && !_paletteSearchField.stringValue.length && _paletteMode==1) { [self showAIChat:nil]; return; }
-    (void)sender;
-    NSInteger row = _paletteTable.selectedRow;
-    if (row < 0 || row >= (NSInteger)_paletteResults.count) return;
-    NSDictionary* result = _paletteResults[(NSUInteger)row];
-    if (![self isSelectablePaletteResult:result]) return;
-    if ([result[@"kind"] isEqual:@"askAI"]) { [self showAIChatForQuery:_paletteSearchField.stringValue]; return; }
-    [self closePalette:nil];
-    [self openPaletteResult:result];
 }
 
 - (void)previousPage:(id)sender {

@@ -183,9 +183,9 @@ static void differential_breadcrumb(void) {
         }
 }
 
-static const char* const kTitles[] = {NULL, "", "Title", "SG882G Hardware Design", "Datasheet (2)", "alpha",
+static const char* const kTitles[] = {NULL, "", "Title", "M100 Hardware Design", "Datasheet (2)", "alpha",
                                       "Caf\xC3\xA9"};
-static const char* const kPaths[] = {NULL, "", "/a/b.pdf", "/docs/Quectel_SG882G.pdf", "/docs/b.pdf",
+static const char* const kPaths[] = {NULL, "", "/a/b.pdf", "/docs/Acme_M100.pdf", "/docs/b.pdf",
                                      "/docs/alpha.pdf", "/other/alpha-two.pdf", "alpha.pdf", "/docs/",
                                      "/x/y/Caf\xC3\xA9.pdf"};
 #define N_TITLES ((int)(sizeof(kTitles) / sizeof(kTitles[0])))

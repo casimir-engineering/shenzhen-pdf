@@ -524,10 +524,6 @@
 - (void)performWithBatchedPersistentStateSaves:(void (^)(void))block;
 - (void)resumePersistentStateSavesAfterLaunch;
 - (void)dismissTabHoverPanel;
-- (NSArray<NSNumber*>*)visibleDocumentPageIndexesWithExtraRadius:(NSInteger)radius
-                                                   preferredPage:(NSInteger*)preferredPageOut;
-- (void)queueVisibleDocumentPageRendersForCurrentViewportForceHighPriority:(BOOL)forceHighPriority;
-- (void)syncCurrentPageFromVisibleViewportQueueRenders:(BOOL)queueRenders forceHighPriority:(BOOL)forceHighPriority;
 - (CGFloat)renderDisplayScaleForPageWidth:(CGFloat)pageWidth
                                pageHeight:(CGFloat)pageHeight
                                      zoom:(CGFloat)zoom

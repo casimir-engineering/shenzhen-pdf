@@ -44,8 +44,38 @@ NSString* spdf_palette_menu_breadcrumb(NSArray<NSString*>* menuTitles, NSString*
 // An empty query matches everything.
 BOOL spdf_palette_menu_command_matches_query(NSString* query, NSString* title, NSString* breadcrumb);
 
+// Other words a menu command answers to, by its menu item's identifier, for commands whose title alone would be
+// missed: "chat" or "nearby" finds Open Friends. Empty for any other item.
+NSArray<NSString*>* spdf_palette_menu_command_keywords(NSString* identifier);
+
+// spdf_palette_menu_command_matches_query, or the query (trimmed) is a case/diacritic-insensitive substring of one of
+// `keywords`.
+BOOL spdf_palette_menu_command_matches_query_or_keywords(NSString* query, NSString* title, NSString* breadcrumb,
+                                                         NSArray<NSString*>* keywords);
+
 // Removes menu-command entries (@{... @"selector"}) whose action selector is
 // already covered by a visible curated palette action, so a curated action
 // and the equivalent menu item never show as duplicate rows.
 NSArray<NSDictionary*>* spdf_palette_menu_commands_excluding_selectors(NSArray<NSDictionary*>* menuCommands,
                                                                        NSSet<NSString*>* excludedSelectors);
+
+// YES for rows a person can highlight and choose; headings, separators and
+// status lines ("Searching…") are not.
+BOOL spdf_palette_row_is_selectable(NSDictionary* row);
+
+// The row to highlight after moving `delta` rows from `current` (-1 when none
+// is highlighted). A single step (`wrap`) goes round from the last row to the
+// first and back; a page stops at the first or last row. Rows that cannot be
+// highlighted are skipped. Returns -1 when no row can be highlighted.
+NSInteger spdf_palette_row_after_move(NSArray<NSDictionary*>* rows, NSInteger current, NSInteger delta, BOOL wrap);
+
+// The first (or last) row that can be highlighted, or -1.
+NSInteger spdf_palette_boundary_row(NSArray<NSDictionary*>* rows, BOOL last);
+
+// The row to highlight when new results replace the list, given the row that
+// was highlighted (nil for none). Unless the person moved the highlight, the
+// first row that can be chosen. Otherwise the same row again even if its
+// title changed, or the row a document now shares with its working copy (its
+// "mergedPaths" hold the highlighted path); failing both, the first row.
+// Returns -1 when no row can be chosen.
+NSInteger spdf_palette_row_to_highlight(NSArray<NSDictionary*>* rows, NSDictionary* highlighted, BOOL movedByPerson);

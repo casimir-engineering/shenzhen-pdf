@@ -1,4 +1,5 @@
 #import "SPDFMacFileBrowsing.h"
+#import "SPDFMacDocumentOpening.h"
 
 #import "SPDFMacFileExplorerPreference.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -16,7 +17,7 @@
     panel.allowsMultipleSelection = NO;
     panel.allowedContentTypes = spdf_document_content_types();
     if (directoryURL) panel.directoryURL = directoryURL;
-    if ([panel runModal] == NSModalResponseOK) [self openPath:panel.URL.path];
+    if ([panel runModal] == NSModalResponseOK && panel.URL.path.length) [self showDocumentsAtPaths:@[ panel.URL.path ]];
 }
 
 // Opening a document needs a chooser that hands the selection back to the app.
@@ -87,7 +88,7 @@
         [self browseForDocumentInDirectory:path];
         return;
     }
-    [self openPath:path];
+    [self showDocumentsAtPaths:@[ path ]];
 }
 
 - (BOOL)openFilesFromPasteboard:(NSPasteboard*)pasteboard {

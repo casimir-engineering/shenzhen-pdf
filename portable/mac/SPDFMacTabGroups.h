@@ -31,6 +31,9 @@ NSString* spdf_tab_group_unused_color(NSArray<SPDFDocumentTab*>* tabs);
 // preserving first-occurrence group order and intra-group tab order.
 void spdf_tab_groups_normalize(NSMutableArray<SPDFDocumentTab*>* tabs);
 void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* selected);
+// An opened document always shows its own tab: its group is unhidden and becomes the
+// expanded one, whichever group the strip was browsing. YES when the strip changed.
+BOOL spdf_tab_groups_reveal(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* opened);
 NSArray<SPDFDocumentTab*>* spdf_tab_group_members(NSArray<SPDFDocumentTab*>* tabs, SPDFTabGroup* group);
 // A drop outside group spans joins General without relocating it. When absent,
 // General is created at the supplied insertion boundary. Called only on drop.

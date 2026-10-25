@@ -7,7 +7,7 @@ static void CheckAICollectionRename(AIContextProbe* reader,SPDFMacCollectionStor
     NSData* originalBytes=[NSData dataWithContentsOfFile:copyPath];
     SPDFDocumentTab* tab=Tab(copyPath,group); [reader seedTabs:@[tab]];
     SPDFMacAITools* tools=[[SPDFMacAITools alloc] initWithReader:reader];
-    NSString* name=@"MSK13C02-SZ - slide switch - datasheet";
+    NSString* name=@"SW-1302 - slide switch - datasheet";
     NSString* renamedPath=[copyPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"pdf"]];
     __block NSDictionary* result;
     NSDictionary* args=@{@"path":SPDFAIDocumentIdentifier(copyPath),@"name":name,@"revision":SPDFSearchFileStamp(copyPath)};

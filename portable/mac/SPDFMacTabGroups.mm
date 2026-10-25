@@ -186,6 +186,16 @@ void spdf_tab_groups_activate(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* 
     selected.group.lastUsedPath = selected.path;
 }
 
+BOOL spdf_tab_groups_reveal(NSArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* opened) {
+    SPDFTabGroup* group = opened.group;
+    if (!group) return NO;
+    BOOL changed = group.hidden || group.collapsed;
+    for (SPDFDocumentTab* tab in tabs) changed = changed || (tab.group != group && !tab.group.collapsed);
+    group.hidden = NO;
+    spdf_tab_groups_activate(tabs, opened);
+    return changed;
+}
+
 void spdf_tab_group_collection_copy(NSMutableArray<SPDFDocumentTab*>* tabs, SPDFDocumentTab* tab) {
     // Compatibility entry point: copies now remain ordinary group members.
     if (tab && [tabs containsObject:tab]) spdf_tab_groups_normalize(tabs);

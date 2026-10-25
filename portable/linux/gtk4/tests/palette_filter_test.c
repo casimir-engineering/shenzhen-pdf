@@ -201,8 +201,8 @@ static void test_open_doc_query_match(void) {
     // directory components never match.
     g_assert_true(spdf_palette_open_document_matches_query("", "Title", "/a/b.pdf"));
     g_assert_true(spdf_palette_open_document_matches_query(NULL, "Title", "/a/b.pdf"));
-    g_assert_true(spdf_palette_open_document_matches_query("hard", "SG882G Hardware Design", "/a/b.pdf"));
-    g_assert_true(spdf_palette_open_document_matches_query("quectel", "Datasheet (2)", "/docs/Quectel_SG882G.pdf"));
+    g_assert_true(spdf_palette_open_document_matches_query("hard", "M100 Hardware Design", "/a/b.pdf"));
+    g_assert_true(spdf_palette_open_document_matches_query("acme", "Datasheet (2)", "/docs/Acme_M100.pdf"));
     g_assert_false(spdf_palette_open_document_matches_query("missing", "Title", "/a/b.pdf"));
     g_assert_false(spdf_palette_open_document_matches_query("docs", "Title", "/docs/b.pdf"));
 }

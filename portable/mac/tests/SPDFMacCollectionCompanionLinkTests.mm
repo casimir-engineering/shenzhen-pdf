@@ -66,7 +66,10 @@ int main(void) {
         Expect(@"helper Documents pane is available",manager.settingsPane.hidden && [manager.destination isEqual:@"Documents"]);
         [runtime setValue:manager forKey:@"manager"];
         [runtime receive:@{@"kind":@"destination",@"destination":@"Settings"}];
-        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]];
+        // The switch arrives on a later main-queue turn; under a loaded build 20 ms was sometimes too soon.
+        NSDate* routed=[NSDate dateWithTimeIntervalSinceNow:5];
+        while (![manager.destination isEqual:@"Settings"] && routed.timeIntervalSinceNow>0)
+            [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
         Expect(@"unified Settings route opens the companion Settings pane",[manager.destination isEqual:@"Settings"] && !manager.settingsPane.hidden);
         [runtime receive:@{@"kind":@"destination",@"destination":@"arbitrary"}];
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];

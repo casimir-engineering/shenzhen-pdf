@@ -87,7 +87,8 @@ expect_rejected "release-dmg rejects an unguarded direct invocation" \
 
 targets="$(spdf_discover_test_targets "$portable_dir/Makefile")"
 for target in icon-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests \
-  mac-selection-click-tests mac-selection-adapter-tests; do
+  mac-selection-click-tests mac-selection-adapter-tests mac-ai-web-tests mac-ai-subagents-tests mac-ai-python-tests \
+  mac-launch-performance-tests; do
   if grep -qxF "$target" <<<"$targets"; then pass "release discovery includes $target"; else fail "release discovery includes $target"; fi
 done
 markdown_gate="$(sed -n '/^mac-markdown-tests:/,/^[^[:space:]].*:/p' "$portable_dir/Makefile")"

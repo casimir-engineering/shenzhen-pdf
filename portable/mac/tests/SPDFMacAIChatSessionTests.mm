@@ -21,11 +21,13 @@ static int failures;
 @property NSUInteger calls;
 @property NSUInteger cancellations;
 @property NSUInteger contextReads;
+@property NSString* lastName;
+@property NSDictionary* lastArguments;
 @property(copy) void (^reply)(NSDictionary*);
 @end
 @implementation FakeTools
 - (void)performTool:(NSString*)name arguments:(NSDictionary*)args completion:(void (^)(NSDictionary*))completion {
-    (void)name; (void)args; self.calls++; self.reply=completion;
+    self.lastName=name; self.lastArguments=args; self.calls++; self.reply=completion;
 }
 - (NSDictionary*)conversationContext {self.contextReads++;return @{@"path":@"doc:active-fixture",@"title":@"Active drawing",@"page":@1};}
 - (void)cancel { self.cancellations++; }
@@ -37,7 +39,12 @@ static int failures;
 #import "SPDFMacAIChatVisionChecks.h"
 #import "SPDFMacAIReasoningChecks.h"
 #import "SPDFMacAICitationRecoveryChecks.h"
+#import "SPDFMacAIDocumentLinkChecks.h"
 #import "SPDFMacAIAnswerCardChecks.h"
+#import "SPDFMacAIChatCompactionChecks.h"
+#import "SPDFMacAIChatContextRetryChecks.h"
+#import "SPDFMacAIChatRewriteChecks.h"
+#import "SPDFMacAIToolArgumentChecks.h"
 int main(void) { @autoreleasepool {
     NSURL* citation=[NSURL URLWithString:@"spdf-ai://document?path=doc:fixture&page=2&revision=abc"];
     NSDictionary* arguments=SPDFMacAICitationArguments(citation);
@@ -56,6 +63,14 @@ int main(void) { @autoreleasepool {
     CheckReasoning([snapshotRoot URLByAppendingPathComponent:@"reasoning"]);
     CheckAnswerCards([snapshotRoot URLByAppendingPathComponent:@"answer-cards"]);
     CheckCitationRecovery([snapshotRoot URLByAppendingPathComponent:@"citation-recovery"]);
+    CheckDocumentLinks();
+    CheckBudgetMath();
+    CheckAutomaticCompaction([snapshotRoot URLByAppendingPathComponent:@"compaction"]);
+    CheckManualCompaction([snapshotRoot URLByAppendingPathComponent:@"manual-compaction"]);
+    CheckEditAndResend([snapshotRoot URLByAppendingPathComponent:@"edit"]);
+    CheckContextLengthRetry([snapshotRoot URLByAppendingPathComponent:@"context-retry"]);
+    CheckHistoryRewrites([snapshotRoot URLByAppendingPathComponent:@"rewrites"]);
+    CheckToolArgumentRecovery([snapshotRoot URLByAppendingPathComponent:@"tool-arguments"]);
     [NSFileManager.defaultManager removeItemAtURL:snapshotRoot error:nil];
     SPDFMacAIChatStore* store=[[SPDFMacAIChatStore alloc] initWithDirectory:root];
     FakeTransport* transport=[FakeTransport new]; FakeTools* tools=[FakeTools new];
@@ -105,6 +120,8 @@ int main(void) { @autoreleasepool {
     [session send:@"bad arguments" model:@"fake/model" apiKey:@"test"];
     transport.reply(@{@"role":@"assistant",@"tool_calls":@[@{@"id":@"badargs",@"function":
         @{@"name":@"undo_action",@"arguments":@"not JSON"}}]},nil);
+    transport.reply(@{@"role":@"assistant",@"tool_calls":@[@{@"id":@"badargs2",@"function":
+        @{@"name":@"undo_action",@"arguments":@"not JSON"}}]},nil); // asked again once, then the request ends
     CHECK(!session.running && tools.calls==callsBefore,"invalid JSON cannot invoke a zero-argument mutation");
     NSString* sharedID=NSUUID.UUID.UUIDString;
     NSDictionary* base=@{@"id":sharedID,@"messages":@[@{@"role":@"user",@"content":@"base"}]};
@@ -139,6 +156,23 @@ int main(void) { @autoreleasepool {
     [[NSData dataWithBytes:bytes length:sizeof(bytes)] writeToFile:png atomically:YES];
     CHECK(![store savePreview:@{@"path":png} chatID:loaded[@"id"]],"deleted chat cannot recreate preview assets");
     CHECK(![NSFileManager.defaultManager fileExistsAtPath:temp],"rejected preview cleans owned temporary directory");
+    // current_view writes viewport.png: its folder is a preview folder too, and is gone once the chat keeps a copy.
+    NSString* viewChat=NSUUID.UUID.UUIDString;
+    [store saveChat:@{@"id":viewChat,@"messages":@[@{@"role":@"user",@"content":@"view"}]} error:nil];
+    NSString* tmp=NSTemporaryDirectory(); NSFileManager* files=NSFileManager.defaultManager;
+    NSString* view=[tmp stringByAppendingFormat:@"/ShenzhenPDF-AI-%@",NSUUID.UUID.UUIDString];
+    NSString* other=[tmp stringByAppendingFormat:@"/ShenzhenPDF-AI-x%@",NSUUID.UUID.UUIDString];
+    for (NSString* folder in @[view,other]) {
+        [files createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+        [[NSData dataWithBytes:bytes length:sizeof(bytes)]
+            writeToFile:[folder stringByAppendingPathComponent:@"viewport.png"] atomically:YES];
+    }
+    NSString* shot=[view stringByAppendingPathComponent:@"viewport.png"];
+    CHECK([store savePreview:@{@"path":shot} chatID:viewChat] && ![files fileExistsAtPath:view],
+        "a saved current_view preview leaves no temporary folder");
+    [SPDFMacAIChatStore discardTemporaryPreview:@{@"path":[other stringByAppendingPathComponent:@"viewport.png"]}];
+    CHECK([files fileExistsAtPath:other],"a folder whose name isn't a preview's is never removed");
+    for (NSString* folder in @[view,other]) [NSFileManager.defaultManager removeItemAtPath:folder error:nil];
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     fprintf(stderr,"AI chat session: %d failures\n",failures); return failures ? 1 : 0;
 } }

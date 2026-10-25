@@ -119,6 +119,14 @@ int main(void) {
         Expect(@"activation remembers last used tab", [purple.lastUsedPath isEqualToString:c.path]);
         spdf_tab_groups_activate(tabs, a);
         Expect(@"entering General collapses other groups", !a.group.collapsed && purple.collapsed && green.collapsed);
+        // Reopening a document (Finder, Open Recent) while the strip browses another
+        // group, or while its group is hidden, must bring its own group forward.
+        purple.hidden = YES;
+        Expect(@"revealing a document in a hidden folded group reports a strip change",
+               spdf_tab_groups_reveal(tabs, c));
+        Expect(@"revealing unhides and expands only the document's group",
+               !purple.hidden && !purple.collapsed && a.group.collapsed && green.collapsed);
+        Expect(@"revealing the group already in front changes nothing", !spdf_tab_groups_reveal(tabs, c));
         NSMutableArray* destination = [@[Tab(@"/existing.pdf")] mutableCopy];
         [destination addObjectsFromArray:RoundTrip(@[b, c])];
         spdf_tab_groups_normalize(destination);
@@ -169,7 +177,10 @@ int main(void) {
             [selectSource containsString:@"if (index != _selectedTabIndex || [self hasActiveDocument])"]
             && ![selectSource containsString:@"[self activateSelectedTabGroup]"]);
         Expect(@"session normalizes group identities after decoding", [coordinator containsString:@"spdf_tab_groups_normalize(_tabs);"]);
-        Expect(@"new documents enter the active group", [coordinator containsString:@"[self appendNewTabToActiveGroup:tab]"]);
+        NSString* opening = [NSString stringWithContentsOfFile:[dir stringByAppendingPathComponent:
+            @"../SPDFMacDocumentOpening.mm"] encoding:NSUTF8StringEncoding error:nil];
+        Expect(@"new documents enter the active group",
+            [opening containsString:@"[self appendNewTabToActiveGroup:tab]"]);
         Expect(@"group detach carries all tab dictionaries and window geometry",
             [integration containsString:@"@{@\"tabs\": tabs, @\"frame\": NSStringFromRect(frame)}"]
             && [detach containsString:@"NSRectFromString(frame)"] && [detach containsString:@"_hasRestoredWindowFrame = YES"]);

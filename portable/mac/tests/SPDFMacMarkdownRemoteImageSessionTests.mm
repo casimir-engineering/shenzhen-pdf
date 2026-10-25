@@ -6,11 +6,13 @@
 #import <AppKit/AppKit.h>
 
 #import "../SPDFMacMarkdownCache.h"
+#import "../SPDFMacMarkdownRemoteImagePolicy.h"
 #import "../SPDFMacMarkdownSessionImageLoader.h"
 #import "../SPDFMacMarkdownSessionPrivate.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <sys/xattr.h>
 
 static BOOL SpinUntil(BOOL (^condition)(void), NSTimeInterval timeout) {
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
@@ -282,6 +284,53 @@ int main(void) {
         assert(cachedLoader.loadedImageData.count == 2);
         assert(cachedFetches == 1 && cachedLoader.networkFetchCount == 1);  // only the broken URL re-tries
         [cachedSession deactivate];
+
+        // --- Documents someone else sent ------------------------------------------------
+        // A quarantined file (Shenzhen Friends marks everything it receives) and a file in Friends' received
+        // folder show remote images as their alt text and never fetch them: fetching would tell the sender's
+        // server when and where the document was opened. The ordinary file above still fetches.
+        NSString* friendsState = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        NSString* received = [friendsState stringByAppendingPathComponent:@"received"];
+        assert([NSFileManager.defaultManager createDirectoryAtPath:received withIntermediateDirectories:YES
+                                                        attributes:nil error:nil]);
+        setenv("SZFRIENDS_STATE_DIR", friendsState.fileSystemRepresentation, 1);
+        NSString* text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+        NSString* quarantined = WriteMarkdown(text);
+        const char* flag = "0083;6720a0b0;Shenzhen Friends;";
+        assert(setxattr(quarantined.fileSystemRepresentation, "com.apple.quarantine", flag, strlen(flag), 0, 0) == 0);
+        NSString* inReceived = [received stringByAppendingPathComponent:@"notes.md"];
+        assert([text writeToFile:inReceived atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+        assert(!SPDFMacMarkdownRemoteImagesWithheld([NSURL fileURLWithPath:path],
+                                                    SPDFMacMarkdownFriendsReceivedDirectory()));
+        assert(SPDFMacMarkdownRemoteImagesWithheld([NSURL fileURLWithPath:quarantined], nil));
+        assert(SPDFMacMarkdownRemoteImagesWithheld([NSURL fileURLWithPath:inReceived],
+                                                   SPDFMacMarkdownFriendsReceivedDirectory()));
+        for (NSString* sentPath in @[ quarantined, inReceived ]) {
+            NSURL* sentCache = [NSURL
+                fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]
+                    isDirectory:YES];
+            SPDFMacMarkdownSession* sent =
+                [[SPDFMacMarkdownSession alloc] initWithDocumentURL:[NSURL fileURLWithPath:sentPath]];
+            SPDFMacMarkdownSessionImageLoader* sentLoader =
+                [[SPDFMacMarkdownSessionImageLoader alloc] initWithCacheDirectory:sentCache];
+            __block NSUInteger sentFetches = 0;
+            sentLoader.fetcher = ^(NSURL* URL, SPDFMacMarkdownImageFetchCompletion completion) {
+              ++sentFetches;
+              completion(responses[URL.absoluteString]);
+            };
+            [sent installRemoteImageLoader:sentLoader];
+            ActivateAndAwait(sent, host, queue);
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
+            assert(sentFetches == 0 && sentLoader.networkFetchCount == 0 && sentLoader.outstandingRequestCount == 0);
+            NSAttributedString* shown = sent.renderedDocument.attributedString;
+            assert([shown.string containsString:@"[Image: Alpha]"] && [shown.string containsString:@"[Image: Beta]"]);
+            assert(AttachedImageCount(shown) == 0);  // no pending boxes waiting for a download that will not come
+            [sent deactivate];
+            [NSFileManager.defaultManager removeItemAtURL:sentCache error:nil];
+        }
+        unsetenv("SZFRIENDS_STATE_DIR");
+        [NSFileManager.defaultManager removeItemAtPath:friendsState error:nil];
+        [NSFileManager.defaultManager removeItemAtPath:quarantined error:nil];
 
         [NSFileManager.defaultManager removeItemAtURL:cacheDirectory error:nil];
         [NSFileManager.defaultManager removeItemAtURL:sessionCache error:nil];

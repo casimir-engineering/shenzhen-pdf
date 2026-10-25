@@ -2,6 +2,7 @@
 
 #import "SPDFMacDelegatePrivate.h"
 #import "SPDFMacSupport.h"
+#import "SPDFMacViewportRenderPriority.h"
 
 @interface ShenzhenMacDelegate (SPDFMacLaunchWorkIntegrationPrivate)
 @property(nonatomic, readonly) SPDFMacLaunchWorkCoordinator* launchWorkCoordinator;
@@ -17,6 +18,8 @@
     if (!path.length) return;
     dispatch_async(dispatch_get_main_queue(), ^{
       [self->_pageScrollView displayIfNeeded];
+      // Painted: the rest of the viewport renders now, before any warm stage.
+      if (generation == self->_renderGeneration) [self spdf_queueViewportPageRendersNow];
       [self.launchWorkCoordinator beginCycleAtStage:SPDFMacLaunchWarmStageActiveDocument
                                             context:@{
                                                 @"generation" : @(generation),
@@ -37,6 +40,8 @@
     if (!path.length) return;
     dispatch_async(dispatch_get_main_queue(), ^{
       [self->_pageScrollView displayIfNeeded];
+      if (generation == self->_renderGeneration && [self->_path isEqualToString:path])
+          [self spdf_queueViewportPageRendersNow];
       [self.launchWorkCoordinator beginCycleAtStage:SPDFMacLaunchWarmStageMetadata
                                             context:@{
                                                 @"generation" : @(generation),
@@ -59,8 +64,22 @@
     }
     spdf_launch_profile_log(@"idle warm stage=%ld generation=%lu", (long)stage, (unsigned long)generation);
     if (stage == SPDFMacLaunchWarmStageMetadata) {
-        [self loadOutlineForCurrentDocumentAsync];
-        [self loadCommentsForCurrentDocumentAsync];
+        // An open that loaded the outline and comments before its first frame (at
+        // launch, or while the window is not on screen yet) adopted them before its
+        // own sidebar rebuild, so the sidebar and the comment overlay already show
+        // them. Loading them again here only re-adopted the same lists and rebuilt
+        // the sidebar twice more: 2 x ~20-27 ms on the main thread ~100 ms after
+        // the open, on a 5-page schematic. A list not yet loaded -- a mid-session
+        // open loads them in the background -- loads as before and rebuilds the
+        // sidebar when it lands.
+        SPDFDocumentTab* tab = [self selectedTab];
+        BOOL adopted = tab && _activeMetadataTab == tab;
+        if (!adopted || !tab.cachedOutlineLoaded || _outline.items != tab.cachedOutline.items ||
+            _outline.count != tab.cachedOutline.count)
+            [self loadOutlineForCurrentDocumentAsync];
+        if (!adopted || !tab.cachedCommentsLoaded || _comments.items != tab.cachedComments.items ||
+            _comments.count != tab.cachedComments.count)
+            [self loadCommentsForCurrentDocumentAsync];
         return;
     }
     if ([context[@"generation"] unsignedIntegerValue] != _renderGeneration) {

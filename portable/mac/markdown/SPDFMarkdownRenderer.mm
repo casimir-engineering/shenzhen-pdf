@@ -80,6 +80,7 @@ NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute = @"SPDFMarkdownCo
     copy.maximumDecodedImagePixels = self.maximumDecodedImagePixels;
     copy.remoteImageData = self.remoteImageData;
     copy.failedRemoteImageTargets = self.failedRemoteImageTargets;
+    copy.remoteImagesWithheld = self.remoteImagesWithheld;
     copy.remoteImagePlaceholderHeight = self.remoteImagePlaceholderHeight;
     // By reference on purpose: the diagram cache is a shared thread-safe store
     // whose whole value is being hit by the copies a rerender makes.

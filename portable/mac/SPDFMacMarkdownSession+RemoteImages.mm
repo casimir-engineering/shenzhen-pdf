@@ -1,6 +1,7 @@
 #import "SPDFMacMarkdownSessionPrivate.h"
 
 #import "SPDFMacMarkdownSessionImageLoader.h"
+#import "SPDFMacMarkdownRemoteImagePolicy.h"
 #import "markdown/SPDFMarkdownResources.h"
 
 // The remote-image half of the session: lazy, active-tab-only downloads.
@@ -45,14 +46,22 @@ static void SPDFMacMarkdownCollectRemoteImageTargets(NSArray<SPDFMarkdownBlock*>
     return _imageLoader;
 }
 
+// A document someone else sent shows remote images as their alt text and never fetches them
+// (SPDFMacMarkdownRemoteImagePolicy.h). Decided per render from the file itself, so removing the quarantine
+// attribute or moving the file out of Friends' received folder takes effect at the next render.
+- (BOOL)remoteImagesWithheld {
+    return SPDFMacMarkdownRemoteImagesWithheld(self.documentURL, SPDFMacMarkdownFriendsReceivedDirectory());
+}
+
 - (void)applyRemoteImageState:(SPDFMarkdownRenderOptions*)options {
+    options.remoteImagesWithheld = [self remoteImagesWithheld];
     if (!_imageLoader) return;
     options.remoteImageData = _imageLoader.loadedImageData;
     options.failedRemoteImageTargets = _imageLoader.failedTargets;
 }
 
 - (void)startRemoteImageFetchesIfNeeded {
-    if (!_active || !self.document) return;
+    if (!_active || !self.document || [self remoteImagesWithheld]) return;
     NSMutableOrderedSet<NSString*>* targets = [NSMutableOrderedSet orderedSet];
     SPDFMacMarkdownCollectRemoteImageTargets(self.document.model.blocks, targets);
     if (!targets.count) return;  // never create a loader for a document without remote images

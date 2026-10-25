@@ -52,6 +52,17 @@
         } else completion(result);
     }];
 }
+// Saving the same edit again gives the PDF a new file identifier, so the bytes a
+// redone edit writes differ from those it wrote the first time. The next Redo
+// expected the first ones; when that is what it saw at Undo, it takes these.
+- (void)carryRedoGuardFrom:(NSString*)firstHash to:(NSString*)redoneHash {
+    NSDictionary* next=self.redoActions.lastObject;
+    if(!firstHash.length || !redoneHash.length || [firstHash isEqual:redoneHash] ||
+       ![next[@"guard"][@"revision"] isEqual:firstHash])return;
+    NSMutableDictionary* carried=[next mutableCopy],*guard=[next[@"guard"] mutableCopy];
+    guard[@"revision"]=redoneHash;carried[@"guard"]=guard;
+    self.redoActions[self.redoActions.count-1]=carried;
+}
 - (void)redoWithCompletion:(void (^)(NSDictionary*))completion {
     NSDictionary* action=self.redoActions.lastObject;
     if(action[@"chatOrganization"]){[self swapChatOrganizationAction:YES completion:completion];return;}
@@ -61,7 +72,12 @@
         if(!result[@"error"]) {
             [self.redoActions removeObjectIdenticalTo:action];
             if(action[@"metadata"]) [self.actions addObject:@{@"id":NSUUID.UUID.UUIDString,@"metadata":result[@"metadataReceipt"]}];
-            else if(self.actions.count) {NSMutableDictionary* recorded=[self.actions.lastObject mutableCopy];recorded[@"forward"]=action[@"forward"];self.actions[self.actions.count-1]=recorded;}
+            else if(self.actions.count) {
+                NSMutableDictionary* recorded=[self.actions.lastObject mutableCopy];
+                recorded[@"forward"]=action[@"forward"];
+                self.actions[self.actions.count-1]=recorded;
+                [self carryRedoGuardFrom:action[@"comment"][@"afterHash"] to:recorded[@"comment"][@"afterHash"]];
+            }
             completion(@{@"redone":@YES});
         } else completion(result);
     };

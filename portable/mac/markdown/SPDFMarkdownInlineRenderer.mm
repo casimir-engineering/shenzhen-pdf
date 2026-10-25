@@ -226,14 +226,17 @@ static void SPDFRenderImageRun(SPDFMarkdownRenderContext* context, SPDFMarkdownI
                                SPDFMarkdownImageFlow flow) {
     NSString* destination = run.destination ?: @"";
     NSURL* resolvedURL = nil;
-    NSImage* image = [context.resourceStore imageForTarget:destination resolvedURL:&resolvedURL];
+    NSString* remoteKey = SPDFMarkdownRemoteImageKeyForTarget(destination);
+    // A withheld document's remote images are never drawn, even from bytes another render left in the map.
+    BOOL withheld = remoteKey != nil && context.options.remoteImagesWithheld;
+    NSImage* image = withheld ? nil : [context.resourceStore imageForTarget:destination resolvedURL:&resolvedURL];
     if (!image || image.size.width <= 0 || image.size.height <= 0) {
         // A well-formed https target with no fetched bytes yet is pending:
         // reserve real layout space for the asynchronous download. Fetched
-        // bytes that fail to decode, session-reported fetch failures, and
-        // every non-https remote scheme keep the stable text placeholder.
-        NSString* remoteKey = SPDFMarkdownRemoteImageKeyForTarget(destination);
-        BOOL pending = remoteKey != nil && context.resourceStore.remoteImageData[remoteKey] == nil &&
+        // bytes that fail to decode, session-reported fetch failures, withheld
+        // documents and every non-https remote scheme keep the stable text
+        // placeholder.
+        BOOL pending = remoteKey != nil && !withheld && context.resourceStore.remoteImageData[remoteKey] == nil &&
                        ![context.options.failedRemoteImageTargets containsObject:remoteKey];
         if (pending) {
             SPDFAppendImageAttachment(context, run, SPDFPendingRemoteImageAttachment(context, run.text),

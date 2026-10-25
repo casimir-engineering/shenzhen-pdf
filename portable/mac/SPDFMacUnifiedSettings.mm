@@ -4,6 +4,8 @@
 #import "SPDFMacGroupActionButton.h"
 #import "SPDFMacSearchablePicker.h"
 #import <math.h>
+#import "friends/SPDFMacFriendsSettingsPage.h"
+#import "SPDFMacAICapabilitiesSettings.h"
 
 const NSInteger SPDFUnifiedSettingsExperienceVersion = 2;
 BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch, BOOL detached) {
@@ -85,8 +87,8 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSView* root=SPDFCollectionSurface(@"window"); window.contentView=root;
     NSStackView* nav=[NSStackView stackViewWithViews:@[]]; self.navigation=nav;
     nav.spacing=8; nav.translatesAutoresizingMaskIntoConstraints=NO;
-    NSArray* keys=@[@"overview",@"ai",@"collection",@"reading"];
-    NSArray* labels=@[@"General",@"AI settings",@"Collection",@"Reading & access"];
+    NSArray* keys=@[@"overview",@"ai",@"collection",@"reading",@"friends"];
+    NSArray* labels=@[@"General",@"AI settings",@"Collection",@"Reading & access",@"Friends"];
     for (NSUInteger i=0;i<keys.count;i++) {
         NSButton* b=[self button:labels[i] action:@selector(changeSection:) key:keys[i]];
         [nav addArrangedSubview:b];
@@ -183,6 +185,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     else if ([section isEqual:@"reading"]) [self buildReading];
     else if([section isEqual:@"access"]) [self buildAccess];
     else if([section isEqual:@"defaults"]) [self buildDefaults];
+    else if([section isEqual:@"friends"]) [self buildFriends];
     else [self buildOverview];
     [self.window.contentView layoutSubtreeIfNeeded];
     [self.content scrollPoint:NSZeroPoint];
@@ -202,10 +205,12 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
 }
 - (void)buildAI {
     [self heading:@"AI settings" subtitle:@"Connect OpenRouter and choose a model. Usage is charged to your OpenRouter account."];
-    BOOL connected=[self.state[@"connected"] boolValue], connecting=[self.state[@"connecting"] boolValue];
-    NSButton* connect=[self button:connected ? @"Disconnect" : connecting ? @"Connecting…" : @"Connect OpenRouter"
+    // Stays clickable while the browser is open: a sign-up can lose its way back,
+    // and clicking again simply starts over. The status line says what is pending.
+    BOOL connected=[self.state[@"connected"] boolValue];
+    NSButton* connect=[self button:connected ? @"Disconnect" : @"Connect OpenRouter"
         action:@selector(performAction:) key:connected ? @"disconnect" : @"connect"];
-    connect.enabled=!connecting; self.controls[@"connection"]=connect;
+    self.controls[@"connection"]=connect;
     NSStackView* connectionRow=[self row:connected ? @"Connected to OpenRouter" : @"OpenRouter account"
         detail:self.state[@"connectionStatus"] ?: (connected ? @"Your credential is stored in macOS Keychain." : @"Sign in in your browser. Your credential stays in macOS Keychain.") control:connect];
     NSStackView* connectionWords=connectionRow.arrangedSubviews.firstObject;
@@ -231,10 +236,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         self.content.arrangedSubviews.lastObject.identifier=@"aiUploadDisclosure";
         return;
     }
-    [self add:[self toggle:@"aiEnabled" label:@"Enable document chat"]];
-    [self add:[self toggle:@"autoAnalyze" label:@"Prepare summaries, tags and missing chapters automatically"]];
-    [self text:@"Automatic preparation sends document text to OpenRouter and its provider after opening, in the background. It uses paid tokens. Existing chapters stay intact; generated information is cached for unchanged documents." size:12 bold:NO secondary:YES];
-    [self text:@"Requests require providers that do not train on your content and retain no request data. If no eligible provider is available, the request stops. You can stop a task at any time." size:12 bold:NO secondary:YES];
+    [self buildAICapabilities]; // What the assistant may do: SPDFMacAICapabilitiesSettings.mm.
 }
 - (void)buildKeyAlternative {
     if([self.state[@"connected"] boolValue]) return;
@@ -448,11 +450,11 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSButton* overview=(NSButton*)self.controls[@"showAI"];
     if(overview) overview.title=@"AI settings";
     if([self.section isEqual:@"ai"]) {
-        BOOL connected=[merged[@"connected"] boolValue], connecting=[merged[@"connecting"] boolValue];
+        BOOL connected=[merged[@"connected"] boolValue];
         NSButton* button=(NSButton*)self.controls[@"connection"];
-        button.title=connected ? @"Disconnect" : connecting ? @"Connecting…" : @"Connect OpenRouter";
+        button.title=connected ? @"Disconnect" : @"Connect OpenRouter";
         button.identifier=connected ? @"disconnect" : @"connect"; button.accessibilityLabel=button.title;
-        button.enabled=!connecting; [button invalidateIntrinsicContentSize];
+        button.enabled=YES; [button invalidateIntrinsicContentSize];
         self.connectionTitle.stringValue=connected ? @"Connected to OpenRouter" : @"OpenRouter account";
         self.connectionDetail.stringValue=merged[@"connectionStatus"] ?: (connected ? @"Your credential is stored in macOS Keychain." : @"Sign in in your browser. Your credential stays in macOS Keychain.");
         self.modelDetail.stringValue=[merged[@"modelsLoading"] boolValue] ? @"Loading models…" : ([merged[@"modelStatus"] length] ? merged[@"modelStatus"] : @"Search available OpenRouter models.");
@@ -464,6 +466,7 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
         if(state[@"aiLanguage"]) [(SPDFMacSearchablePicker*)self.controls[@"aiLanguage"] setSelectedID:merged[@"aiLanguage"]];
         button.hidden=self.usesAPIKey && !connected;
     }
+    [self refreshAICapabilities:state];
     if([self.section isEqual:@"defaults"] && state[@"defaultFormats"]) [self refreshDefaultRows];
     if([self.section isEqual:@"collection"]) {
         if(state[@"collectionDynamicPercent"]) {

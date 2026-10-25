@@ -49,10 +49,10 @@ int main(int argc, char** argv) {
         // --- spdf_palette_open_document_matches_query ---
         expect_true(@"empty query matches", spdf_palette_open_document_matches_query(@"", @"Title", @"/a/b.pdf"));
         expect_true(@"title substring matches case-insensitively",
-                    spdf_palette_open_document_matches_query(@"hard", @"SG882G Hardware Design", @"/a/b.pdf"));
+                    spdf_palette_open_document_matches_query(@"hard", @"M100 Hardware Design", @"/a/b.pdf"));
         expect_true(@"file name matches when title does not",
-                    spdf_palette_open_document_matches_query(@"quectel", @"Datasheet (2)",
-                                                             @"/docs/Quectel_SG882G.pdf"));
+                    spdf_palette_open_document_matches_query(@"acme", @"Datasheet (2)",
+                                                             @"/docs/Acme_M100.pdf"));
         expect_true(@"diacritic-insensitive match",
                     spdf_palette_open_document_matches_query(@"resume", @"R\u00e9sum\u00e9", @"/a/r.pdf"));
         expect_true(@"non-matching query rejected",
@@ -173,6 +173,36 @@ int main(int argc, char** argv) {
                     spdf_palette_menu_command_matches_query(@"resume", @"R\u00e9sum\u00e9 Export", @""));
         expect_true(@"unrelated query does not match",
                     !spdf_palette_menu_command_matches_query(@"zoom", @"Show Minimap", @"View \u25B8 Show Minimap"));
+
+        // --- spdf_palette_menu_command_keywords / ..._matches_query_or_keywords ---
+        NSArray<NSString*>* openKeywords = spdf_palette_menu_command_keywords(@"szfriends.open");
+        NSString* openCrumb = @"View \u25B8 Friends \u25B8 Open Friends";
+        for (NSString* query in @[ @"friends", @"friend", @"nearby", @"add by id", @"chat", @"Chat ", @"PEOPLE" ])
+            expect_true([NSString stringWithFormat:@"\"%@\" finds Open Friends", query],
+                        spdf_palette_menu_command_matches_query_or_keywords(query, @"Open Friends", @"", openKeywords));
+        expect_true(@"the title still matches without keywords",
+                    spdf_palette_menu_command_matches_query_or_keywords(@"open fr", @"Open Friends", openCrumb, @[]));
+        expect_true(@"a word in no keyword or title does not match",
+                    !spdf_palette_menu_command_matches_query_or_keywords(@"zoom", @"Open Friends", openCrumb, openKeywords));
+        expect_true(@"whitespace alone matches nothing through keywords",
+                    !spdf_palette_menu_command_matches_query_or_keywords(@"  ", @"Open Friends", @"", openKeywords));
+        expect_true(@"Add by ID answers to invite",
+                    spdf_palette_menu_command_matches_query_or_keywords(
+                        @"invite", @"Add by ID\u2026", @"", spdf_palette_menu_command_keywords(@"szfriends.add-by-id")));
+        expect_true(@"visibility answers to discoverable",
+                    spdf_palette_menu_command_matches_query_or_keywords(
+                        @"discoverable", @"Make Myself Visible", @"",
+                        spdf_palette_menu_command_keywords(@"szfriends.make-visible")));
+        expect_true(@"Friends Settings answers to preferences",
+                    spdf_palette_menu_command_matches_query_or_keywords(
+                        @"preferences", @"Friends Settings\u2026", @"", spdf_palette_menu_command_keywords(@"szfriends.settings")));
+        expect_true(@"other items have no keywords",
+                    spdf_palette_menu_command_keywords(@"").count == 0 &&
+                        spdf_palette_menu_command_keywords(@"szfriends.share").count == 0 &&
+                        spdf_palette_menu_command_keywords(nil).count == 0);
+        expect_true(@"a menu item without keywords does not match chat",
+                    !spdf_palette_menu_command_matches_query_or_keywords(
+                        @"chat", @"Show Minimap", @"View \u25B8 Show Minimap", spdf_palette_menu_command_keywords(@"")));
 
         // --- spdf_palette_menu_commands_excluding_selectors ---
         NSArray<NSDictionary*>* menuCommands = @[

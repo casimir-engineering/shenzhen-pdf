@@ -7,6 +7,25 @@ static NSDictionary* MetadataTool(SPDFMacAITools* tools,NSString* name,NSDiction
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Check(result!=nil,"metadata/history action finishes");return result;
 }
+// Each save gives the file a fresh second /ID half from a generator MuPDF seeds
+// with the current second, so saving the same pages again differs there alone.
+static NSData* MetadataBytesWithoutFileID(NSData* data) {
+    NSString* text=[[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+    NSRegularExpression* fileID=[NSRegularExpression regularExpressionWithPattern:
+        @"/ID\\s*\\[\\s*<[0-9A-Fa-f]*>\\s*<[0-9A-Fa-f]*>\\s*\\]" options:0 error:nil];
+    NSString* kept=[fileID stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0,text.length)
+        withTemplate:@"/ID[]"];
+    return [kept dataUsingEncoding:NSISOLatin1StringEncoding];
+}
+// Waits for the next second, so a redone save always gets a different identifier
+// from the first one, as it does when a person redoes an edit later.
+static void MetadataNextSecond(void) {
+    time_t start=time(NULL);
+    while(time(NULL)==start)[NSThread sleepForTimeInterval:.01];
+}
+static BOOL MetadataSamePages(NSData* a,NSData* b) {
+    return a && b && [MetadataBytesWithoutFileID(a) isEqual:MetadataBytesWithoutFileID(b)];
+}
 static void CheckAIMetadataHistory(NSString* root,NSString* path) {
     AIContextProbe* reader=[AIContextProbe new];[reader seedTabs:@[]];[reader seedControls];
     SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:
@@ -66,9 +85,11 @@ static void CheckAIMetadataHistory(NSString* root,NSString* path) {
         [MetadataTool(tools,@"undo_action",@{})[@"undone"] boolValue] &&
         [[cache analysisForHash:key] isEqual:before] && [[reader aiAnalysisForPath:path] isEqual:before],
         "metadata Undo survives a later file Undo restoring its source bytes");
+    MetadataNextSecond();
     Check([MetadataTool(tools,@"redo_action",@{})[@"redone"] boolValue] &&
         [MetadataTool(tools,@"redo_action",@{})[@"redone"] boolValue] &&
-        [[cache analysisForHash:key] isEqual:after] && [[NSData dataWithContentsOfFile:path] isEqual:mixedRotation],
+        [[cache analysisForHash:key] isEqual:after] &&
+        MetadataSamePages([NSData dataWithContentsOfFile:path],mixedRotation),
         "mixed metadata and file history redoes both changes");
     Check([MetadataTool(tools,@"undo_action",@{})[@"undone"] boolValue],"mixed rotation restored for conflict test");
     NSMutableData* conflicting=[document mutableCopy];[conflicting appendData:[@"\n% external\n" dataUsingEncoding:NSUTF8StringEncoding]];
@@ -87,9 +108,11 @@ static void CheckAIMetadataHistory(NSString* root,NSString* path) {
     NSData* twiceRotated=[NSData dataWithContentsOfFile:path];
     Check([MetadataTool(tools,@"undo_action",@{})[@"undone"] boolValue] &&
         [MetadataTool(tools,@"undo_action",@{})[@"undone"] boolValue],"two file actions undo in sequence");
+    MetadataNextSecond();
     Check([MetadataTool(tools,@"redo_action",@{})[@"redone"] boolValue] &&
         [MetadataTool(tools,@"redo_action",@{})[@"redone"] boolValue],"two file actions redo despite new file revisions");
-    Check([[NSData dataWithContentsOfFile:path] isEqual:twiceRotated],"file redo returns to exact final bytes");
+    Check(MetadataSamePages([NSData dataWithContentsOfFile:path],twiceRotated),
+        "file redo returns to the same final pages");
     Check([MetadataTool(tools,@"undo_action",@{})[@"undone"] boolValue],"file redo creates a fresh Undo receipt");
     NSMutableData* external=[[NSData dataWithContentsOfFile:path] mutableCopy];
     [external appendData:[@"\n% human edit\n" dataUsingEncoding:NSUTF8StringEncoding]];[external writeToFile:path atomically:YES];

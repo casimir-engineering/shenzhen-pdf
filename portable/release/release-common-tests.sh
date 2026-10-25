@@ -82,6 +82,17 @@ git -C "$readme_repo" -c user.name=t -c user.email=t@t commit -qm rewrite
 expect_equal "a wholesale readme rewrite is accepted" \
   "$(spdf_require_fresh_readme "$readme_repo" "26.8.1-1" && echo ok)" "ok"
 
+# The standalone repository tags 26.8.2-1 on master; the Shenzhen repository, where this app is apps/pdf, tags
+# pdf/26.8.2-1 on main.
+layout_repo="$(mktemp -d "${TMPDIR:-/tmp}/spdf-release-layout.XXXXXX")"
+git -C "$layout_repo" init -q
+mkdir -p "$layout_repo/apps/pdf/portable"
+expect_equal "standalone layout" \
+  "$(spdf_release_layout "$layout_repo" && echo "[$SPDF_TAG_PREFIX] $SPDF_RELEASE_BRANCH")" "[] master"
+expect_equal "monorepo layout" \
+  "$(spdf_release_layout "$layout_repo/apps/pdf" && echo "[$SPDF_TAG_PREFIX] $SPDF_RELEASE_BRANCH")" "[pdf/] main"
+rm -rf "$layout_repo"
+
 if ((failures)); then
   printf 'release-common-tests: %d failure(s)\n' "$failures" >&2
   exit 1

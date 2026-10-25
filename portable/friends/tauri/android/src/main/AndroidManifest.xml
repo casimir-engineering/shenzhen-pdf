@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What Shenzhen Friends needs on Android (ADR 0015 § 10), merged into the app's manifest. NsdManager needs only the
+  install-time network permissions. The Bluetooth ones are asked for only when the person turns Friends on (the
+  `activate` intent), never at launch:
+  - Android 12 and later: Bluetooth scan, advertise and connect, declared as never used for location;
+  - Android 11 and earlier: Bluetooth scanning required location, so fine location is declared for those levels only.
+  No storage permission: received files go to the public Downloads through MediaStore (Android 10 and later, which
+  needs none); on Android 9 and earlier they stay in the app's private directory and leave it through the share sheet.
+  Notifications (ADR 0017): POST_NOTIFICATIONS, asked with the Bluetooth permissions (Android 13 and later); "Stay
+  reachable in the background" runs ReachableService, a specialUse foreground service, from the app; after a restart
+  of the phone BootReceiver says Friends stopped (Android starts no app by itself) and its tap opens the app;
+  ReplyReceiver takes a message notification's Reply. ShareActivity is "Send to a friend" in the share sheet: files
+  from any app go to the app's own activity, and Friends opens to choose who receives them.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="30" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+
+    <application>
+        <provider
+            android:name="com.shenzhen.friends.FriendsShareProvider"
+            android:authorities="${applicationId}.szfriends.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/szfriends_share_paths" />
+        </provider>
+
+        <!-- "Send to a friend" in the system's share sheet, for any file (FriendsPlugin.kt, ShareActivity). -->
+        <activity
+            android:name="com.shenzhen.friends.ShareActivity"
+            android:exported="true"
+            android:label="Send to a friend"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="app.shenzhen.friends.notify.ReachableService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Stay reachable to friends" />
+        </service>
+        <receiver
+            android:name="app.shenzhen.friends.notify.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="app.shenzhen.friends.notify.ReplyReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

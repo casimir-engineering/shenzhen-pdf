@@ -5,6 +5,9 @@
 @protocol SPDFTabCollectionMenuProviding <NSObject>
 - (void)addCollectionItemsToTabMenu:(NSMenu*)menu path:(NSString*)path;
 @end
+@protocol SPDFTabFriendsMenuProviding <NSObject>
+- (void)friendsAddItemsToTabMenu:(NSMenu*)menu path:(NSString*)path;
+@end
 
 @implementation SPDFTabStripView (Menus)
 - (NSMenu*)newTabOrGroupMenu {
@@ -158,6 +161,8 @@
     copyPath.target = self; copyPath.representedObject = indexNumber;
     if ([self.reader respondsToSelector:@selector(addCollectionItemsToTabMenu:path:)])
         [(id<SPDFTabCollectionMenuProviding>)self.reader addCollectionItemsToTabMenu:menu path:tabPath];
+    if ([self.reader respondsToSelector:@selector(friendsAddItemsToTabMenu:path:)] && !document.missingFile)
+        [(id<SPDFTabFriendsMenuProviding>)self.reader friendsAddItemsToTabMenu:menu path:tabPath];
     [menu addItem:NSMenuItem.separatorItem];
     NSMenuItem* close=[menu addItemWithTitle:@"Close Document" action:@selector(tabContextCloseDocument:) keyEquivalent:@""];
     close.target=self; close.representedObject=indexNumber;

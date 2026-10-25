@@ -29,4 +29,9 @@
 // Called when a page's minimap thumbnail finishes rendering: patches just that
 // page into the cached strip (cheap) rather than forcing a full-strip rebuild.
 - (void)noteThumbnailLoadedForPageIndex:(NSInteger)pageIndex;
+// The same for a reader whose page objects are replaced as they render (PDF):
+// `page` is the live object holding the thumbnail. It takes the slot of the
+// object the `pages` snapshot holds when the geometry matches, so the strip
+// draws the thumbnail without a full `pages` reassignment.
+- (void)noteThumbnailLoadedForPage:(SPDFRenderedPage*)page;
 @end

@@ -1,0 +1,150 @@
+// Which discovery adapters the helper runs, and the harness's seams (SZFriendsHelperTesting.h).
+
+#import "service/helper/SZFriendsHelperTesting.h"
+
+#import "client/szfriends_client.h"
+#import "service/discovery/SZFriendsBluetoothRadio.h"
+#import "service/identity/SZFriendsDeviceChain.h"
+#import "service/online/driver/SZFriendsOnlineDriver.h"
+
+static NSArray<id<SZFriendsDiscoveryAdapter>> * (^SZFriendsExtraAdapters)(dispatch_queue_t);
+static BOOL SZFriendsWithholdAcknowledgements;
+static double SZFriendsChunkBytesPerSecond;
+static NSTimeInterval SZFriendsOutboxClockOffset;
+static NSTimeInterval SZFriendsStrangerIdleTimeoutOverride;
+static NSTimeInterval SZFriendsStrangerSessionLifeOverride;
+static NSString *SZFriendsInitialFriendsID;
+static NSString *SZFriendsDeviceNameOverride;
+static NSString *SZFriendsDeviceSystemOverride;
+
+NSString *SZFriendsHelperDeviceName(void) {
+    return SZFriendsDeviceNameOverride.length ? SZFriendsDeviceNameOverride : SZFriendsLocalDeviceName();
+}
+
+NSString *SZFriendsHelperDeviceSystem(void) {
+    return SZFriendsDeviceSystemOverride.length ? SZFriendsDeviceSystemOverride : SZFriendsLocalDeviceSystem();
+}
+
+static SZFriendsAdmissionLimits *SZFriendsAdmissionLimitsOverride;
+
+@implementation SZFriendsHelperTestHooks
+
++ (NSString *)deviceName {
+    return SZFriendsDeviceNameOverride;
+}
++ (void)setDeviceName:(NSString *)deviceName {
+    SZFriendsDeviceNameOverride = [deviceName copy];
+}
++ (NSString *)deviceSystem {
+    return SZFriendsDeviceSystemOverride;
+}
++ (void)setDeviceSystem:(NSString *)deviceSystem {
+    SZFriendsDeviceSystemOverride = [deviceSystem copy];
+}
+
++ (NSArray<id<SZFriendsDiscoveryAdapter>> * (^)(dispatch_queue_t))extraAdapters {
+    return SZFriendsExtraAdapters;
+}
++ (void)setExtraAdapters:(NSArray<id<SZFriendsDiscoveryAdapter>> * (^)(dispatch_queue_t))extraAdapters {
+    SZFriendsExtraAdapters = [extraAdapters copy];
+}
++ (BOOL)withholdAcknowledgements {
+    return SZFriendsWithholdAcknowledgements;
+}
++ (void)setWithholdAcknowledgements:(BOOL)withhold {
+    SZFriendsWithholdAcknowledgements = withhold;
+}
++ (double)chunkBytesPerSecond {
+    return SZFriendsChunkBytesPerSecond;
+}
++ (void)setChunkBytesPerSecond:(double)rate {
+    SZFriendsChunkBytesPerSecond = rate;
+}
++ (NSTimeInterval)outboxClockOffset {
+    return SZFriendsOutboxClockOffset;
+}
++ (void)setOutboxClockOffset:(NSTimeInterval)offset {
+    SZFriendsOutboxClockOffset = offset;
+}
++ (NSTimeInterval)strangerIdleTimeout {
+    return SZFriendsStrangerIdleTimeoutOverride;
+}
++ (void)setStrangerIdleTimeout:(NSTimeInterval)timeout {
+    SZFriendsStrangerIdleTimeoutOverride = timeout;
+}
++ (NSTimeInterval)strangerSessionLife {
+    return SZFriendsStrangerSessionLifeOverride;
+}
++ (void)setStrangerSessionLife:(NSTimeInterval)life {
+    SZFriendsStrangerSessionLifeOverride = life;
+}
++ (NSString *)initialFriendsID {
+    return SZFriendsInitialFriendsID;
+}
++ (void)setInitialFriendsID:(NSString *)friendsID {
+    SZFriendsInitialFriendsID = [friendsID copy];
+}
++ (SZFriendsAdmissionLimits *)admissionLimits {
+    return SZFriendsAdmissionLimitsOverride;
+}
++ (void)setAdmissionLimits:(SZFriendsAdmissionLimits *)limits {
+    SZFriendsAdmissionLimitsOverride = [limits copy];
+}
+
+@end
+
+BOOL SZFriendsHelperTestServiceTypeIsValid(NSString *serviceType) {
+    if (![serviceType hasPrefix:@"_"] || ![serviceType hasSuffix:@"._tcp"]) return NO;
+    NSString *name = [serviceType substringWithRange:NSMakeRange(1, serviceType.length - 6)];
+    // DNS-SD service names are at most 15 characters; the production name is refused so a test helper never
+    // answers, or is found by, a real helper on this Mac.
+    if (name.length < 1 || name.length > 15 || [serviceType isEqualToString:SZFriendsBonjourServiceType]) return NO;
+    NSCharacterSet *allowed =
+        [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                                           @"0123456789-"];
+    return [name rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
+}
+
+NSArray<id<SZFriendsDiscoveryAdapter>> *SZFriendsHelperMakeAdapters(dispatch_queue_t queue,
+                                                                    NSDictionary<NSString *, NSString *> *env) {
+    NSMutableArray<id<SZFriendsDiscoveryAdapter>> *adapters = [NSMutableArray array];
+    if (env[@SZFRIENDS_ENV_STATE_DIR] == nil) {
+        [adapters addObject:SZFriendsMakeNetworkAdapter(queue)];
+        [adapters addObject:SZFriendsMakeBluetoothAdapter(queue)];
+    } else {
+        // Tests and probes: a real browser on Wi-Fi would ask for Local Network access, and a Bluetooth manager
+        // for Bluetooth access, on a Mac whose owner is working. Loopback only, and only when asked for.
+        NSString *serviceType = env[@"SZFRIENDS_TEST_SERVICE_TYPE"];
+        if (SZFriendsHelperTestServiceTypeIsValid(serviceType)) {
+            id<SZFriendsDiscoveryAdapter> network = SZFriendsMakeLoopbackNetworkAdapter(queue, serviceType);
+            NSString *hold = env[@"SZFRIENDS_TEST_NETWORK_HOLD"];
+            if (hold.absolutePath) network = SZFriendsHelperHoldNetworkAdapter(queue, network, hold);
+            [adapters addObject:network];
+        }
+        // A test air on loopback in place of CoreBluetooth, which is never created here.
+        NSString *air = env[@"SZFRIENDS_TEST_BLUETOOTH"];
+        if (air.absolutePath) {
+            id<SZFriendsBluetoothRadio> radio =
+                SZFriendsMakeTestAirRadio(queue, air, env[@"SZFRIENDS_TEST_BLUETOOTH_POWER"]);
+            [adapters addObject:SZFriendsMakeBluetoothAdapterWithRadio(queue, radio,
+                                                                       [SZFriendsBluetoothAdapterOptions new])];
+        }
+    }
+    NSArray<id<SZFriendsDiscoveryAdapter>> * (^extra)(dispatch_queue_t) = SZFriendsHelperTestHooks.extraAdapters;
+    if (extra != nil) [adapters addObjectsFromArray:extra(queue) ?: @[]];
+    return adapters;
+}
+
+void SZFriendsHelperSetOnlineTestHooks(NSDictionary<NSString *, NSString *> *env) {
+    NSString *state = env[@SZFRIENDS_ENV_STATE_DIR];
+    if (state.length == 0) return;
+    // A test home goes online only with a list of loopback hosts (SZFriendsHostCheckIn.m), so its peer connections
+    // stay on this Mac too, as the Rust helper's test homes do: without it, nothing direct could pair with a peer
+    // offering 127.0.0.1, and only the relay would ever connect.
+    if (env[@"SZFRIENDS_TEST_HOST_LIST"].length > 0) SZFriendsOnlineDriverTestHooks.loopbackOnly = YES;
+    if (SZFriendsOnlineDriverTestHooks.directPathsBlocked != nil) return;
+    NSString *block = [state stringByAppendingPathComponent:@"online-block-direct"];
+    SZFriendsOnlineDriverTestHooks.directPathsBlocked = ^BOOL {
+        return [[NSFileManager defaultManager] fileExistsAtPath:block];
+    };
+}

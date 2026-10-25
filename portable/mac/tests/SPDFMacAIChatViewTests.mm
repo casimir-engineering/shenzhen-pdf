@@ -4,6 +4,9 @@
 #import "../SPDFMacAIChatMarkdown.h"
 #import "../SPDFMacAIChatSession.h"
 #import "../SPDFMacAIChatSearch.h"
+#import "../SPDFMacAIChatActivity.h"
+#import "../SPDFMacChatMarkdownView.h"
+#import "../SPDFMacAIChatViewParts.h"
 static int failures;
 static NSEvent* pendingUp;
 @interface NSButton (AIChatSymbolProbe)
@@ -21,6 +24,8 @@ static NSEvent* pendingUp;
 @property(nonatomic) BOOL running;
 @property(nonatomic) BOOL canUndo;
 @property(nonatomic) BOOL canRedo;
+@property(nonatomic) BOOL canCompact;
+@property(nonatomic) BOOL canRetry;
 @property(nonatomic) SPDFMacAIChatActivityState activityState;
 @property(nonatomic) NSString* activityDetail;
 @end
@@ -32,7 +37,7 @@ static NSView* Find(NSView* root,NSString* key) {
 }
 static NSUInteger InspectTargets(NSView* view) {
     NSUInteger count=0;
-    if([NSStringFromClass(view.class) isEqual:@"SPDFChatButton"] && !view.hidden) {
+    if([view isKindOfClass:NSClassFromString(@"SPDFChatButton")] && !view.hiddenOrHasHiddenAncestor) {
         NSView* root=view.window.contentView;
         for(NSValue* p in @[[NSValue valueWithPoint:NSMakePoint(2,2)],
             [NSValue valueWithPoint:NSMakePoint(NSWidth(view.bounds)-2,NSHeight(view.bounds)-2)]]) {
@@ -48,11 +53,36 @@ static NSUInteger ImageCount(NSView* view) {
     NSUInteger count=[view isKindOfClass:NSImageView.class] ? 1 : 0;
     for(NSView* child in view.subviews) count+=ImageCount(child); return count;
 }
+// Evidence renders go where SPDF_AI_CHAT_RENDERS names, to be looked at; otherwise into a folder of this run's own,
+// removed when it exits, so a test run leaves nothing behind.
+static NSString* gOwnRenders;
+static void RemoveOwnRenders(void) {
+    if(gOwnRenders) [NSFileManager.defaultManager removeItemAtPath:gOwnRenders error:nil];
+}
+static NSString* RenderPath(NSString* name) {
+    static NSString* folder;
+    if(!folder) {
+        const char* named=getenv("SPDF_AI_CHAT_RENDERS");
+        if(named && *named) {
+            folder=@(named);
+            [NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil
+                                                          error:nil];
+        } else {
+            char pattern[PATH_MAX];
+            snprintf(pattern,sizeof pattern,"%s/sz-ai-chat-renders.XXXXXX",
+                     NSTemporaryDirectory().fileSystemRepresentation);
+            if(mkdtemp(pattern)) { folder=gOwnRenders=@(pattern); atexit(RemoveOwnRenders); }
+            else folder=NSTemporaryDirectory();
+        }
+    }
+    return [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"sz-ai-chat-%@.png",name]];
+}
 static void Capture(NSView* view,NSString* name) {
     [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.03]];
     [view layoutSubtreeIfNeeded];
     NSBitmapImageRep* rep=[view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
-    Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[@"/tmp/sz-ai-chat-" stringByAppendingFormat:@"%@.png",name] atomically:YES],@"native state evidence saved");
+    Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:RenderPath(name)
+        atomically:YES],@"native state evidence saved");
 }
 static void Click(NSWindow* window,NSButton* button,NSPoint local) {
     NSPoint point=[button convertPoint:local toView:nil];
@@ -67,25 +97,162 @@ static void Click(NSWindow* window,NSButton* button,NSPoint local) {
     Method injected=class_getInstanceMethod(NSWindow.class,@selector(chatProbeEvent:));
     method_exchangeImplementations(original,injected); [hit mouseDown:down]; method_exchangeImplementations(original,injected);
 }
+// AppKit calls -visualizeConstraints: when it has to break a constraint, once the
+// NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints default is on (its log goes only to the unified log);
+// counting the calls instead of drawing them keeps the window off screen.
+@interface ConstraintWatchWindow : NSWindow
+@property(nonatomic) NSUInteger conflicts;
+@end
+@implementation ConstraintWatchWindow
+- (void)visualizeConstraints:(NSArray<NSLayoutConstraint*>*)constraints { (void)constraints; self.conflicts++; }
+@end
+static void CheckNoConstraintConflicts(void) {
+    NSString* key=@"NSConstraintBasedLayoutVisualizeMutuallyExclusiveConstraints";
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{key:@YES}];
+    ConstraintWatchWindow* window=[[ConstraintWatchWindow alloc] initWithContentRect:NSMakeRect(0,0,400,600)
+        styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    SPDFMacAIChatView* view=[[SPDFMacAIChatView alloc] initWithFrame:window.contentView.bounds];
+    window.contentView=view;
+    ChatFixture* fixture=[ChatFixture new];
+    fixture.chat=@{@"id":@"constraints",@"messages":@[@{@"role":@"user",@"content":@"Hello"},
+                                                      @{@"role":@"assistant",@"content":@"Hi."}]};
+    NSView* transcript=[view valueForKey:@"scroll"], *input=view.composer.enclosingScrollView;
+    NSView* issue=[view valueForKey:@"issue"], *recovery=[view valueForKey:@"recovery"];
+    BOOL placed=YES;
+    for(NSNumber* width in @[@400,@320]) {
+        [window setContentSize:NSMakeSize(width.doubleValue,600)];
+        [view displaySession:(id)fixture]; [view layoutSubtreeIfNeeded];
+        // Hidden, the transcript ends 12 pt above the composer, as it always has.
+        placed&=fabs(NSMaxY(transcript.frame)-(NSMinY(input.frame)-12))<.5;
+        [view showSubmissionError:@"macOS blocked the saved OpenRouter key." recoveryAction:@"authorize"];
+        [view layoutSubtreeIfNeeded];
+        placed&=NSHeight(issue.frame)==60 && NSHeight(recovery.frame)==28 && !recovery.hiddenOrHasHiddenAncestor &&
+            fabs(NSMaxY(transcript.frame)-(NSMinY(issue.frame)-8))<.5;
+        [view showSubmissionError:nil]; [view layoutSubtreeIfNeeded];
+    }
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]]; [view layoutSubtreeIfNeeded];
+    Check(placed,@"the submission issue row keeps its place, shown and hidden");
+    Check(!window.conflicts,[NSString stringWithFormat:@"the chat lays out without breaking a constraint (%lu broken)",
+                                                       (unsigned long)window.conflicts]);
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{key:@NO}];
+}
+// Cards that hold text the person approves (SPDFMacAIActivityBodyIsLiteral), checked by the activity layout checks.
+// What a friends.send card asks the person to approve, holding everything Markdown would hide or move sideways.
+static NSString* LiteralMessage(void) {
+    NSString* code = [@"" stringByPaddingToLength:400 withString:@"print('every character of a long line') "
+                                  startingAtIndex:0];
+    return [NSString stringWithFormat:@"Friday works.<!-- file list: ~/Documents/tax-2026.pdf -->\n\n"
+        "<span title=\"secret title attr\">See</span> <script>leak()</script><style>p{}</style>\n"
+        "[the schedule][s] and [inline](https://evil.example/?q=Documents \"hidden link title\")\n"
+        "![chart](https://img.example/pixel.png?d=payroll)\n\n[s]: https://ref.example/schedule \"reference title\"\n"
+        "[unused]: https://unused.example/\n\n```\n%@\n```\nzero\u200Bwidth, tags \U000E0041\U000E0042, "
+        "turned \u202Eback, a\uFE01b, family 👨\u200D👩\u200D👧, keycap 1\uFE0F\u20E3, \u200F.", code];
+}
+
+// A card's text with each "‹U+XXXX›" marker turned back into the character it stands for.
+static NSString* UnmarkedText(NSString* shown) {
+    NSRegularExpression* marker = [NSRegularExpression regularExpressionWithPattern:@"‹U\\+([0-9A-F]{4,6})›"
+                                                                            options:0 error:nil];
+    NSMutableString* text = [NSMutableString string];
+    __block NSUInteger from = 0;
+    [marker enumerateMatchesInString:shown options:0 range:NSMakeRange(0, shown.length)
+                          usingBlock:^(NSTextCheckingResult* match, NSMatchingFlags flags, BOOL* stop) {
+        (void)flags; (void)stop;
+        [text appendString:[shown substringWithRange:NSMakeRange(from, match.range.location - from)]];
+        UTF32Char c = (UTF32Char)strtoul([shown substringWithRange:[match rangeAtIndex:1]].UTF8String, NULL, 16);
+        unichar units[2] = {(unichar)c, 0};
+        BOOL pair = c > 0xFFFF && CFStringGetSurrogatePairForLongCharacter(c, units);
+        [text appendString:[NSString stringWithCharacters:units length:pair ? 2 : 1]];
+        from = NSMaxRange(match.range);
+    }];
+    [text appendString:[shown substringFromIndex:from]];
+    return text;
+}
+
+static NSUInteger ScrollViews(NSView* root) {
+    NSUInteger count = [root isKindOfClass:NSScrollView.class] ? 1 : 0;
+    for (NSView* child in root.subviews) count += ScrollViews(child);
+    return count;
+}
+
+// Every character Friends will deliver is on the card, laid out inside it: the HTML comment, tag attributes, script,
+// link addresses and titles, reference definitions, the whole long line, and characters that draw nothing.
+static void CheckLiteralCard(NSView* card, NSTextView* body, NSString* message, NSString* at) {
+    NSArray* parts = @[@"<!-- file list: ~/Documents/tax-2026.pdf -->", @"title=\"secret title attr\"",
+        @"<script>leak()</script><style>p{}</style>", @"(https://evil.example/?q=Documents \"hidden link title\")",
+        @"![chart](https://img.example/pixel.png?d=payroll)", @"[s]: https://ref.example/schedule \"reference title\"",
+        @"[unused]: https://unused.example/", @"‹U+200B›", @"‹U+E0041›‹U+E0042›", @"‹U+202E›", @"‹U+FE01›",
+        @"‹U+200F›", @"👨\u200D👩\u200D👧", @"1\uFE0F\u20E3"];
+    BOOL all = body.string.length > 0;
+    for (NSString* part in parts) all &= [body.string containsString:part];
+    NSArray* longestFirst = [[message componentsSeparatedByString:@"\n"]
+        sortedArrayUsingComparator:^(NSString* a, NSString* b) { return [@(b.length) compare:@(a.length)]; }];
+    NSString* line = longestFirst.firstObject;
+    Check(all && [body.string containsString:line] && [UnmarkedText(body.string) isEqual:message] &&
+          ![body isKindOfClass:SPDFMacChatMarkdownView.class],
+          [@"a send card shows its message as literal text, every character" stringByAppendingString:at]);
+    __block BOOL decorated = NO;
+    [body.textStorage enumerateAttributesInRange:NSMakeRange(0, body.textStorage.length) options:0
+                                      usingBlock:^(NSDictionary* attributes, NSRange range, BOOL* stop) {
+        (void)range; (void)stop;
+        decorated |= attributes[NSLinkAttributeName] || attributes[NSAttachmentAttributeName];
+    }];
+    NSArray<NSValue*>* invisible = nil;
+    SPDFMacAIActivityVisibleText(body.string, &invisible);
+    Check(!decorated && !invisible.count && !ScrollViews(card),
+          [@"no link, picture, sideways strip or invisible character on a send card" stringByAppendingString:at]);
+    NSLayoutManager* layout = body.layoutManager;
+    NSTextContainer* container = body.textContainer;
+    [layout ensureLayoutForTextContainer:container];
+    __block CGFloat right = 0;
+    __block NSUInteger lines = 0;
+    [layout enumerateLineFragmentsForGlyphRange:NSMakeRange(0, layout.numberOfGlyphs)
+                                     usingBlock:^(NSRect rect, NSRect used, NSTextContainer* in, NSRange glyphs,
+                                                  BOOL* stop) {
+        (void)rect; (void)in; (void)glyphs; (void)stop;
+        right = MAX(right, NSMaxX(used));
+        lines++;
+    }];
+    NSRect used = [layout usedRectForTextContainer:container];
+    Check(layout.firstUnlaidCharacterIndex == body.string.length && right <= container.size.width + .5 &&
+          fabs(container.size.width - (NSWidth(body.bounds) - 2 * body.textContainerInset.width)) < 1 &&
+          NSMaxY(used) + 2 * body.textContainerInset.height <= NSHeight(body.bounds) + .5 &&
+          lines > [message componentsSeparatedByString:@"\n"].count &&
+          NSContainsRect(NSInsetRect(card.bounds, -.5, -.5), [body convertRect:body.bounds toView:card]),
+          [NSString stringWithFormat:@"the message wraps inside the card, long line included (%.0f of %.0f pt)%@",
+                                     right, container.size.width, at]);
+    Check([[(NSTextField*)Find(card, [@"activityNote:" stringByAppendingString:[body.identifier
+              substringFromIndex:@"activityBody:".length]]) stringValue] isEqual:
+              @"Each ‹U+…› marks a character in the message that doesn’t show on screen."],
+          [@"marked characters are explained under the message" stringByAppendingString:at]);
+}
+
 #import "SPDFMacAIChatDockChecks.h"
 #import "SPDFMacAIChatReopenChecks.h"
 #import "SPDFMacAIChatOrderChecks.h"
 #import "SPDFMacAIChatBlankRowsChecks.h"
 #import "SPDFMacAIAnswerCardViewChecks.h"
+#import "SPDFMacAIChatActivityViewChecks.h"
+#import "SPDFMacAIChatActivityStepChecks.h"
+#import "SPDFMacAIChatBannerChecks.h"
+#import "SPDFMacAIChatEditChecks.h"
+#import "SPDFMacAIChatLinkChecks.h"
+#import "SPDFMacAIChatWrapChecks.h"
+#import "SPDFMacAIChatRetryChecks.h"
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
+    NSDate* started=[NSDate date];
+    CheckNoConstraintConflicts();
+    RunChatBannerChecks();
     RunChatReopenChecks();
     RunChatOrderChecks();
     RunBlankChatRowsChecks();
     RunAnswerCardViewChecks();
-    NSAttributedString* safe=SPDFMacAIChatMarkdown(@"**Evidence** [page](spdf-ai://document?path=test&page=2) [site](https://example.com) [unsafe](file:///tmp/private) ![hidden](file:///tmp/private.png) ![remote](https://example.com/tracker.png)",500,YES);
-    __block NSUInteger links=0,attachments=0;
-    [safe enumerateAttributesInRange:NSMakeRange(0,safe.length) options:0 usingBlock:^(NSDictionary* a,NSRange r,BOOL* stop){
-        (void)r;(void)stop; if(a[NSLinkAttributeName]) { links++; Check(SPDFMacAIChatLinkAllowed(a[NSLinkAttributeName]),@"rendered link is allowed"); }
-        if(a[NSAttachmentAttributeName]) attachments++;
-    }];
-    Check(links==2,@"rich Markdown retains document and HTTPS links"); Check(!attachments,@"model images cannot resolve any resource");
-    Check(!SPDFMacAIChatLinkAllowed([NSURL URLWithString:@"https://user:secret@example.com"]),@"credential URL is not clickable");
+    RunChatActivityViewChecks();
+    RunChatActivityLayoutChecks();
+    RunChatActivityStepChecks();
+    RunChatLinkChecks();
+    RunChatWrapChecks();
     NSWindow* window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,760,580) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     SPDFMacAIChatView* view=[[SPDFMacAIChatView alloc] initWithFrame:window.contentView.bounds]; window.contentView=view;
     ChatFixture* fixture=[ChatFixture new]; fixture.chat=@{@"id":@"test",@"messages":@[
@@ -98,12 +265,20 @@ int main(void) { @autoreleasepool {
     Check([answer.string hasPrefix:@"Power requirements"],@"assistant response follows the user in chronological order");
     Check([[(NSTextField*)Find(view,@"latestUserPrompt") stringValue] containsString:@"What is the board’s power requirement?"],@"latest user question stays visible above a long answer");
     [window setContentSize:NSMakeSize(520,580)]; [window.contentView layoutSubtreeIfNeeded];
-    [window.contentView layoutSubtreeIfNeeded];
-    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]]; [window.contentView layoutSubtreeIfNeeded];
+    // The message renders again for its new width after the layout pass that resized it: wait for that, up to 5 s,
+    // instead of a fixed 20 ms, which a loaded machine sometimes missed.
+    BOOL (^fits)(void)=^BOOL{
+        NSRange finalGlyph=NSMakeRange(answer.layoutManager.numberOfGlyphs-1,1);
+        NSRect finalLine=[answer.layoutManager boundingRectForGlyphRange:finalGlyph
+                                                          inTextContainer:answer.textContainer];
+        return NSHeight(answer.frame)>wide && NSMaxY(finalLine)<=NSHeight(answer.bounds)+.5;
+    };
+    for(NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:5];!fits() && deadline.timeIntervalSinceNow>0;) {
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]];
+        [window.contentView layoutSubtreeIfNeeded];
+    }
     Check(NSHeight(answer.frame)>wide,@"message height reflows at narrower width");
-    NSRange finalGlyph=NSMakeRange(answer.layoutManager.numberOfGlyphs-1,1);
-    NSRect finalLine=[answer.layoutManager boundingRectForGlyphRange:finalGlyph inTextContainer:answer.textContainer];
-    Check([answer.string hasSuffix:@"next message."] && NSMaxY(finalLine)<=NSHeight(answer.bounds)+.5,
+    Check([answer.string hasSuffix:@"next message."] && fits(),
         @"compact measurement preserves the final line of long wrapped prose");
     Check(InspectTargets(view)>=10,@"all narrow chat header controls tested at visible corners");
     NSScrollView* transcript=[view valueForKey:@"scroll"];
@@ -218,7 +393,8 @@ int main(void) { @autoreleasepool {
                 isEqual:[user.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace]],@"user and assistant have distinct shades in each theme");
         }];
         NSBitmapImageRep* rep=[view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
-        Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"/tmp/sz-ai-chat-%@.png",appearance] atomically:YES],@"chat native preview saved");
+        Check([[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+            writeToFile:RenderPath(appearance) atomically:YES],@"chat native preview saved");
     }
     [view displayChats:@[]];
     Check([(NSButton*)Find(view,@"stop") isEnabled],@"history keeps cancellation available for active tasks");
@@ -260,6 +436,7 @@ int main(void) { @autoreleasepool {
     [view displaySession:(id)fixture]; Capture(view,@"error");
     Check([[(NSTextField*)Find(view,@"chatStatus") stringValue] containsString:@"Error"] &&
         [[(NSTextField*)Find(view,@"chatActivityDetail") stringValue] containsString:@"another window"],@"error heading and recovery detail remain visible");
+    CheckRetryRow(view,fixture);
     view.composer.string=@"Please summarize this document.";
     [view showSubmissionError:@"macOS blocked the saved OpenRouter key. Authorize access to send this message." recoveryAction:@"authorize"];
     Capture(view,@"authorize-minimum");
@@ -304,5 +481,16 @@ int main(void) { @autoreleasepool {
     [NSFileManager.defaultManager removeItemAtPath:scratch error:nil];
         Check(!window.visible,@"probe never shows an app window");
     CheckChatDock();
+    // Earlier runs rewrote /tmp/sz-ai-chat-*.png every time and never removed them.
+    BOOL wroteTmp=NO;
+    for(NSString* name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:@"/private/tmp" error:nil]) {
+        if(![name hasPrefix:@"sz-ai-chat-"]) continue;
+        NSString* path=[@"/private/tmp" stringByAppendingPathComponent:name];
+        NSDate* written=[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil].fileModificationDate;
+        wroteTmp|=[written compare:started]!=NSOrderedAscending;
+    }
+    Check(!wroteTmp && [NSFileManager.defaultManager fileExistsAtPath:RenderPath(@"empty")],
+          @"evidence renders go to SPDF_AI_CHAT_RENDERS or this run's own folder, never /tmp");
+    RunChatEditChecks();
     fprintf(stderr,"AI chat view: %d failures\n",failures); return failures?1:0;
 } }

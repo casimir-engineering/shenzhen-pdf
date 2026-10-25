@@ -74,7 +74,7 @@ exercises the command‑line path. They differ; measure the one you mean.
 | `ShenzhenPDFMac.mm` | The everything‑controller: `ShenzhenMacDelegate` owns the window, scroll view, the **render pipeline**, scroll/zoom/minimap orchestration, tabs, search, OCR, translation, the permissions wizard. Most of this doc lives here. |
 | `SPDFMacDelegatePrivate.h` | The delegate's ivars (the class extension). |
 | `SPDFMacDocumentView.{h,mm}` | `SPDFDocumentView` — the scrollable page canvas. Owns the **continuous layout** and `drawRect:`. |
-| `SPDFMacMinimapView.{h,mm}` | `SPDFMinimapView` — the page‑thumbnail strip on the left. |
+| `SPDFMacMinimapView.{h,mm}` | `SPDFMinimapView` — the page‑thumbnail strip on the right (theme chrome and find/selection overlays in `SPDFMacMinimapViewTheme.mm` / `SPDFMacMinimapViewOverlays.mm`). |
 | `SPDFMacUIHelpers.{h,mm}` | `SPDFScrollView` (custom scroll), **`SPDFDocumentClipView`** (the horizontal‑lock clip view), `SPDFWindow`, misc views, `spdf_ui_clamp_cg`. |
 | `SPDFMacModels.{h,mm}` | `SPDFRenderedPage` — the per‑page model holding the various cached images. |
 | `SPDFMacTabStripView.mm` | The tab bar. |
@@ -152,6 +152,21 @@ scrolling uses `forceHighPriority:NO` (→ the 1‑wide Utility
 `_backgroundRenderQueue`). So when chasing a scroll stall, *background render
 contention was a red herring* — the trackpad path is on the gentle queue.
 
+**The viewport renders side by side when nothing is moving.** Once an open has
+painted, after an explicit jump (`goToPage:`) and when a scroll settles (the
+300 ms idle tail of the maintenance tick), `spdf_queueViewportPageRendersNow`
+(`SPDFMacViewportRenderPriority.mm`) sends every page intersecting the viewport
+to `_renderQueue` together, withdraws ones still waiting on the background
+queue (an operation cannot change queues), and demotes render‑queue work still
+waiting for pages the viewport has left. Before (26.10.11) those pages came
+through the maintenance tick onto the 1‑wide queue and rendered one after
+another: on a 10‑page A3 vector set at Fit Page, 2x, the neighbours peeking in
+at a restored page 7 were sharp ~830 ms after the open, a jump to page 30 of
+40 took ~530 ms, and key‑repeat paging queued the last page behind every page
+passed. The open's own page is still the synchronous first paint and nothing
+runs before it; trackpad scrolling keeps the gentle queue while it moves.
+`mac-page-load-tests` pins all of this.
+
 ### 3.4 Render completion: the "adoption" blocks
 
 A render finishes on a background queue, then hops to the main queue to "adopt"
@@ -173,7 +188,9 @@ This was the single biggest source of scroll stutter. Rules now enforced:
   render never changes a minimap *thumbnail* (those have their own pipeline). The
   old code called `applySearchHighlightsToCurrentPage` (which does a full
   `updateMinimap` + `_pageView.pages` reassignment) on every adoption — pure
-  waste; removed.
+  waste; removed. It does, however, *replace* the page object, which leaves the
+  strip's `pages` snapshot holding the old one; see §7 for how a thumbnail that
+  lands afterwards still reaches the strip.
 - **Coalesce eviction.** `scheduleRenderAdoptionMaintenance` debounces the
   O(n) eviction sweep to ~80 ms instead of running it per completion.
 
@@ -309,6 +326,15 @@ A vertical strip of page thumbnails with a viewport indicator and a draggable
 
 - **Thumbnails** (`minimapImage`) are rendered on `_minimapQueue` and patched
   individually into place; they persist (never evicted).
+- **The strip draws a snapshot.** `pages` is a copy of `_renderedPages`, taken
+  by the full `updateMinimap`. ADOPT‑PAGE replaces page objects, so a thumbnail
+  finishing after its page's full render is stored on an object the snapshot
+  does not hold. The completion therefore hands the strip the live object
+  (`noteThumbnailLoadedForPage:`), which swaps it into the snapshot when the
+  geometry matches and patches only that slot. Before this (26.10.11), a
+  restored 10‑page A3 set at page 7 showed thumbnails 1–4 and placeholders for
+  5–10 until a scroll reassigned `pages`: the neighbours of page 7 render first,
+  their thumbnails last. `mac-minimap-fill-tests` pins this interleaving.
 - **Width cap:** an oversized page's thumbnail is capped at
   `kMinimapMaxWidthRatio` (2.5×) the *median* page width, so one giant page
   doesn't shrink the normal thumbnails to dots.
@@ -386,6 +412,9 @@ the minimap early‑return path skips".
 - **Two rendering regimes** (full‑page vs crop) — most render/draw code branches
   on `fullPageRenderAllowedForPage:`. The crop regime is the oversized‑page path.
 - **`_renderQueue` concurrency is capped on purpose** (memory bandwidth).
+- **Opens, jumps and settled scrolls queue the viewport through
+  `spdf_queueViewportPageRendersNow`** (§3.3). Left to the scroll tick, the
+  viewport's pages render one after another on the 1‑wide queue.
 - **Profiling first.** `SPDF_ZOOM_PROFILE=1` already instruments the main
   suspects with thresholds; reach for it before theorising.
 - **Direct GitHub release signing** depends on the publisher's Developer ID

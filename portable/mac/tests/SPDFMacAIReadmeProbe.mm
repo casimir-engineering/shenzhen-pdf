@@ -67,6 +67,8 @@ int main(int argc,const char* argv[]) { @autoreleasepool {
     [fm createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:output withIntermediateDirectories:YES attributes:nil error:nil];
     setenv("SPDF_STATE_DIR",root.UTF8String,1); setenv("SPDF_NO_WINDOW_FIRST","1",1);
+    // Friends is on by default and attaches after first paint; its state must be the probe's, never the real one.
+    setenv("SZFRIENDS_STATE_DIR",root.UTF8String,1);
     [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
     spdf_sidebar_probe_install_order_guard();
     NSURL* extended=Plan(root,YES); NSURL* standard=Plan(root,NO);

@@ -15,7 +15,7 @@ while AppKit supplies drag scrolling. No screen capture or app restart is used.
 
 ## Saved-conversation diagnosis
 
-Inspected the requested “MSK13C02-SZ Toggle Switch Travel Range” transcript and
+Inspected the requested “SW-1302 Toggle Switch Travel Range” transcript and
 its saved PNGs, read-only. The model captured page 1 several times. The crop
 clearly shows the actuator's solid/dashed extreme positions and the 3.1 mm
 center-to-center dimension; 1.3 mm is the actuator width. The final answer even

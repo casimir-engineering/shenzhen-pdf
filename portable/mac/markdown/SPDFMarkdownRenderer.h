@@ -62,6 +62,10 @@ FOUNDATION_EXPORT NSAttributedStringKey const SPDFMarkdownCodeLanguageAttribute;
 // placeholder, and non-https remote schemes are always rejected.
 @property(nonatomic, copy, nullable) NSDictionary<NSString*, NSData*>* remoteImageData;
 @property(nonatomic, copy, nullable) NSSet<NSString*>* failedRemoteImageTargets;
+// YES for a document whose remote images must not be fetched (one someone else sent: see
+// SPDFMacMarkdownRemoteImagePolicy.h): every remote target renders as the "[Image: alt]" text placeholder, never as
+// a pending box waiting for a download that will not come, whatever remoteImageData holds.
+@property(nonatomic) BOOL remoteImagesWithheld;
 // Height of the pending remote-image placeholder box (width is the printable
 // page width when the render carries one, else maximumImageWidth). Unscaled
 // by fontScale, like the image budgets.

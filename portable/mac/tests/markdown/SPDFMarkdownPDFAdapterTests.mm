@@ -22,7 +22,9 @@ static NSData* SPDFCreatePDF(SPDFMarkdownPaginationPlan* plan, NSAttributedStrin
     return data;
 }
 
-static NSURL* SPDFCreateImageDocument(NSString** temporaryRoot) {
+static NSString* SPDFImageRoot; // removed by exact path at exit, so a failed check still leaves nothing behind
+static void SPDFRemoveImageRoot(void) { [NSFileManager.defaultManager removeItemAtPath:SPDFImageRoot error:nil]; }
+static NSURL* SPDFCreateImageDocument(void) {
     NSString* root = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES
                                              attributes:nil error:nil];
@@ -45,7 +47,8 @@ static NSURL* SPDFCreateImageDocument(NSString** temporaryRoot) {
     NSString* documentPath = [root stringByAppendingPathComponent:@"image.md"];
     [@"# Exported image\n\n![Magenta proof](local.png)\n\nAfter image\n"
         writeToFile:documentPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    *temporaryRoot = root;
+    SPDFImageRoot = root;
+    atexit(SPDFRemoveImageRoot);
     return [NSURL fileURLWithPath:documentPath];
 }
 
@@ -400,8 +403,7 @@ int main(void) {
                            decorationBottom + NSHeight(diagramDecoration.rect) + 2,
                    @"an exported diagram label sits inside its own diagram artwork box");
 
-        NSString* temporaryRoot = nil;
-        SPDFMarkdownDocument* imageDocument = [SPDFMarkdownDocument documentWithURL:SPDFCreateImageDocument(&temporaryRoot)
+        SPDFMarkdownDocument* imageDocument = [SPDFMarkdownDocument documentWithURL:SPDFCreateImageDocument()
                                                                              options:nil error:&error];
         SPDFMarkdownPaginationPlan* imagePlan =
             [imageDocument paginationPlanForConfiguration:SPDFMarkdownPageConfiguration.A4PortraitConfiguration];
@@ -450,7 +452,6 @@ int main(void) {
         NSData* smallPDF = SPDFCreatePDF(smallPlan, imageDocument.renderedDocument.attributedString);
         SPDFExpect(foundScaledFragment && SPDFPDFContainsMagentaImage(smallPDF),
                    @"over-tall local images are scaled into small printable pages and remain visible");
-        [NSFileManager.defaultManager removeItemAtPath:temporaryRoot error:nil];
 
         // Asymmetric printable rects (NSPrintInfo-style top != bottom margins)
         // must anchor content to the TOP margin. Paper 500x700 with printable

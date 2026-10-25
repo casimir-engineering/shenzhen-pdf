@@ -1,5 +1,6 @@
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
+#import "SPDFMacMinimapViewOverlays.h"
 #import "SPDFMacMinimapViewTheme.h"
 #import "SPDFMacSupport.h"
 
@@ -523,47 +524,6 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
     return YES;
 }
 
-- (void)drawRects:(NSArray<NSValue*>*)rects
-         pageRect:(NSRect)pageRect
-            scale:(CGFloat)scale
-            color:(NSColor*)color
-        minHeight:(CGFloat)minHeight {
-    if (rects.count == 0) return;
-    [color setFill];
-    for (NSValue* value in rects) {
-        NSRect r = [value rectValue];
-        r.origin.x = NSMinX(pageRect) + r.origin.x * scale;
-        r.origin.y = NSMinY(pageRect) + r.origin.y * scale;
-        r.size.width = MAX(1.0, r.size.width * scale);
-        r.size.height = MAX(minHeight, r.size.height * scale);
-        NSRectFillUsingOperation(NSIntersectionRect(r, pageRect), NSCompositingOperationSourceOver);
-    }
-}
-
-- (void)drawSearchRects:(NSArray<NSValue*>*)rects pageRect:(NSRect)pageRect scale:(CGFloat)scale {
-    if (rects.count == 0) return;
-    for (NSValue* value in rects) {
-        NSRect r = [value rectValue];
-        r.origin.x = NSMinX(pageRect) + r.origin.x * scale;
-        r.origin.y = NSMinY(pageRect) + r.origin.y * scale;
-        r.size.width = MAX(2.0, r.size.width * scale);
-        r.size.height = MAX(3.0, r.size.height * scale);
-        CGFloat cx = NSMidX(r);
-        CGFloat cy = NSMidY(r);
-        r.size.width *= 2.0;
-        r.origin.x = cx - NSWidth(r) / 2.0;
-        r.origin.y = cy - NSHeight(r) / 2.0;
-        r = NSIntersectionRect(r, NSInsetRect(pageRect, -1.0, -1.0));
-        if (NSIsEmptyRect(r)) continue;
-        [[NSColor colorWithCalibratedRed:1.0 green:0.86 blue:0.06 alpha:0.88] setFill];
-        NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:1.5 yRadius:1.5];
-        [path fill];
-        [[NSColor colorWithCalibratedRed:0.88 green:0.08 blue:0.03 alpha:0.96] setStroke];
-        path.lineWidth = 1.1;
-        [path stroke];
-    }
-}
-
 - (void)drawPageContentAtContentTop:(CGFloat)contentTop
                               scale:(CGFloat)scale
                                 gap:(CGFloat)gap
@@ -612,6 +572,26 @@ static const CGFloat kMinimapMaxWidthRatio = 2.5;
               color:[NSColor colorWithCalibratedRed:0.30 green:0.58 blue:0.93 alpha:0.70]
           minHeight:1.0];
     [self drawPageBorderInRect:pageRect];
+}
+
+// `pages` is a snapshot, and a full-page render REPLACES the reader's page
+// object; a thumbnail landing after that was stored on the replacement only, so
+// its slot kept the placeholder until a scroll reassigned `pages` (26.10.11: a
+// restored A3 set at page 7 showed 4 of 10). Swap the live object in -- same
+// geometry, so the layout and the cached strip stay valid -- then patch.
+- (void)noteThumbnailLoadedForPage:(SPDFRenderedPage*)page {
+    NSInteger index = page.pageIndex;
+    SPDFRenderedPage* held = index >= 0 && index < (NSInteger)_pages.count ? _pages[(NSUInteger)index] : nil;
+    if (held && held != page && held.pageIndex == index && fabs(held.pageWidth - page.pageWidth) <= 0.01 &&
+        fabs(held.pageHeight - page.pageHeight) <= 0.01) {
+        NSArray<SPDFRenderedPage*>* previous = _pages;
+        NSMutableArray<SPDFRenderedPage*>* adopted = [_pages mutableCopy];
+        adopted[(NSUInteger)index] = page;
+        _pages = [adopted copy];
+        if (_miniLayoutPages == previous) _miniLayoutPages = _pages;
+        if (_contentImageCachePages == previous) _contentImageCachePages = _pages;
+    }
+    [self noteThumbnailLoadedForPageIndex:index];
 }
 
 // A thumbnail finished rendering: draw just that page into the existing cached

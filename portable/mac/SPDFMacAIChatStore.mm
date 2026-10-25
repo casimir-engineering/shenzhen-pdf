@@ -4,6 +4,9 @@
 #import <sys/file.h>
 #import <fcntl.h>
 #import <unistd.h>
+NSString* const SPDFMacAIChatTitleSearchOnlyKey=@"titleSearchOnly";
+// Compaction keeps long conversations usable, so saved chats may hold many turns.
+static const NSUInteger ChatFileLimit=32*1024*1024, ChatMessageLimit=4096;
 static BOOL ValidID(NSString* value) { return [value isKindOfClass:NSString.class] && [[NSUUID alloc] initWithUUIDString:value]; }
 static NSString* OrganizationRevision(NSDictionary* org) {
     NSData* data=org ? [NSJSONSerialization dataWithJSONObject:org options:NSJSONWritingSortedKeys error:nil] : nil;
@@ -23,13 +26,14 @@ static NSString* OrganizationRevision(NSDictionary* org) {
 - (NSDictionary*)rawChatWithID:(NSString*)identifier {
     NSURL* URL=[self URLForID:identifier]; if (!URL) return nil;
     NSNumber* size=nil; [URL getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-    if (size.unsignedLongLongValue>8*1024*1024) return nil;
+    if (size.unsignedLongLongValue>ChatFileLimit) return nil;
     NSData* data=[NSData dataWithContentsOfURL:URL options:NSDataReadingMappedIfSafe error:nil];
     id chat=data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
     if (![chat isKindOfClass:NSDictionary.class] || ![chat[@"id"] isEqual:identifier] ||
         ![chat[@"messages"] isKindOfClass:NSArray.class]) return nil;
     if ((chat[@"title"] && ![chat[@"title"] isKindOfClass:NSString.class]) ||
-        (chat[@"updated"] && ![chat[@"updated"] isKindOfClass:NSNumber.class]) || [chat[@"messages"] count]>512) return nil;
+        (chat[@"updated"] && ![chat[@"updated"] isKindOfClass:NSNumber.class]) ||
+        [chat[@"messages"] count]>ChatMessageLimit) return nil;
     NSMutableSet* pending=[NSMutableSet set]; NSMutableSet* seen=[NSMutableSet set];
     for (id message in chat[@"messages"]) {
         if (![message isKindOfClass:NSDictionary.class] || ![message[@"role"] isKindOfClass:NSString.class] ||
@@ -37,6 +41,11 @@ static NSString* OrganizationRevision(NSDictionary* org) {
         NSString* role=message[@"role"];
         if ([role isEqual:@"preview"]) {
             if (![message[@"local"] isEqual:@YES] || ![message[@"preview"] isKindOfClass:NSDictionary.class]) return nil;
+            continue;
+        }
+        if ([role isEqual:@"compaction"]) {
+            if (![message[@"local"] isEqual:@YES] || ![message[@"summary"] isKindOfClass:NSString.class] ||
+                ![message[@"summary"] length] || [message[@"summary"] length]>262144 || pending.count) return nil;
             continue;
         }
         if (message[@"local"] || ![@[@"user",@"assistant",@"tool"] containsObject:role]) return nil;
@@ -73,6 +82,9 @@ static NSString* OrganizationRevision(NSDictionary* org) {
 }
 - (NSArray<NSDictionary*>*)chats { return [self chatsMatchingQuery:@""]; }
 - (NSArray<NSDictionary*>*)chatsMatchingQuery:(NSString*)query {
+    return [self chatsMatchingQuery:query forAssistant:NO];
+}
+- (NSArray<NSDictionary*>*)chatsMatchingQuery:(NSString*)query forAssistant:(BOOL)forAssistant {
     NSMutableArray* chats=[NSMutableArray array];
     NSDictionary* organization=[self organization];
     NSArray* URLs=[NSFileManager.defaultManager contentsOfDirectoryAtURL:_directory includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
@@ -85,6 +97,8 @@ static NSString* OrganizationRevision(NSDictionary* org) {
         chat[@"folder"]=metadata[@"folder"] ?: @"";
         NSString* snippet=@"";
         if(query.length && ![chat[@"title"] localizedCaseInsensitiveContainsString:query]) {
+            // Not even whether it matched: a listed chat would tell the request what its answers say.
+            if (forAssistant && [chat[SPDFMacAIChatTitleSearchOnlyKey] isEqual:@YES]) continue;
             for(NSDictionary* message in [chat[@"messages"] reverseObjectEnumerator]) {
                 NSString* text=message[@"content"];
                 if (![@[@"user",@"assistant"] containsObject:message[@"role"]] || ![text isKindOfClass:NSString.class]) continue;
@@ -114,20 +128,27 @@ static NSString* OrganizationRevision(NSDictionary* org) {
     return [[_directory URLByAppendingPathComponent:@".deleted"] URLByAppendingPathComponent:identifier];
 }
 - (BOOL)saveChat:(NSDictionary*)chat error:(NSError**)error {
+    return [self saveChat:chat replacingMessages:nil error:error];
+}
+- (BOOL)saveChat:(NSDictionary*)chat replacingMessages:(NSArray*)expected error:(NSError**)error {
     NSURL* URL=[self URLForID:chat[@"id"]];
     if (!URL || ![NSJSONSerialization isValidJSONObject:chat]) return NO;
     NSData* data=[NSJSONSerialization dataWithJSONObject:chat options:0 error:error];
-    if (!data || data.length>8*1024*1024) return NO;
+    if (!data || data.length>ChatFileLimit) return NO;
     // Compare the exact serialized snapshot that will be committed, never mutable caller state.
     chat=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (expected) expected=[NSJSONSerialization isValidJSONObject:expected] ? [NSJSONSerialization JSONObjectWithData:
+        [NSJSONSerialization dataWithJSONObject:expected options:0 error:nil] options:0 error:nil] : nil;
     int fd=[self lockStore:error]; if (fd<0) return NO;
     BOOL removed=[NSFileManager.defaultManager fileExistsAtPath:[self tombstone:chat[@"id"]].path];
     BOOL conflict=NO;
     if (!removed && [NSFileManager.defaultManager fileExistsAtPath:URL.path]) {
         NSData* existing=[NSData dataWithContentsOfURL:URL options:NSDataReadingMappedIfSafe error:nil];
-        id previous=existing.length<=8*1024*1024 ? [NSJSONSerialization JSONObjectWithData:existing options:0 error:nil] : nil;
+        id previous=existing.length<=ChatFileLimit ?
+            [NSJSONSerialization JSONObjectWithData:existing options:0 error:nil] : nil;
         NSArray* old=[previous isKindOfClass:NSDictionary.class] ? previous[@"messages"] : nil;
-        NSArray* incoming=chat[@"messages"];
+        // An edit or compaction rewrites history the caller has seen; anything else may only append.
+        NSArray* incoming=expected ?: chat[@"messages"];
         if (![old isKindOfClass:NSArray.class] || ![incoming isKindOfClass:NSArray.class] || old.count>incoming.count) conflict=YES;
         else for (NSUInteger i=0;i<old.count;i++) if (![old[i] isEqual:incoming[i]]) { conflict=YES; break; }
     }
@@ -287,6 +308,33 @@ static NSString* OrganizationRevision(NSDictionary* org) {
     } @finally { [SPDFMacAIChatStore discardTemporaryPreview:preview]; }
     return result;
 }
+- (void)removeUnusedPreviewsForChatID:(NSString*)identifier {
+    NSURL* URL=[self URLForID:identifier]; if (!URL) return;
+    int fd=[self lockStore:nil]; if (fd<0) return;
+    // Only the saved chat says which pictures are still shown; without it nothing is removed.
+    NSData* data=[NSData dataWithContentsOfURL:URL options:NSDataReadingMappedIfSafe error:nil];
+    id chat=data.length && data.length<=ChatFileLimit ?
+        [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    NSArray* messages=[chat isKindOfClass:NSDictionary.class] ? chat[@"messages"] : nil;
+    NSMutableSet* shown=[NSMutableSet set];
+    for (NSDictionary* message in [messages isKindOfClass:NSArray.class] ? messages : @[]) {
+        NSDictionary* preview=[message isKindOfClass:NSDictionary.class] ? message[@"preview"] : nil;
+        if ([preview isKindOfClass:NSDictionary.class] && [preview[@"path"] isKindOfClass:NSString.class])
+            [shown addObject:[preview[@"path"] lastPathComponent]];
+    }
+    NSString* assets=[_directory URLByAppendingPathComponent:[identifier stringByAppendingString:@"-assets"]].path;
+    NSArray* names=[messages isKindOfClass:NSArray.class] ?
+        [NSFileManager.defaultManager contentsOfDirectoryAtPath:assets error:nil] : nil;
+    for (NSString* name in names) {
+        // Only pictures this store saved: a UUID-named PNG that is a plain file, never a link.
+        NSString* path=[assets stringByAppendingPathComponent:name]; struct stat info;
+        if ([shown containsObject:name] || ![name.pathExtension isEqual:@"png"] ||
+            !ValidID(name.stringByDeletingPathExtension) || lstat(path.fileSystemRepresentation,&info) ||
+            !S_ISREG(info.st_mode)) continue;
+        unlink(path.fileSystemRepresentation);
+    }
+    flock(fd,LOCK_UN); close(fd);
+}
 // This is the only model-facing saved-preview read. Saved JSON is not a trusted path.
 - (NSData*)previewData:(NSDictionary*)preview chatID:(NSString*)identifier {
     if (![preview isKindOfClass:NSDictionary.class]) return nil;
@@ -317,7 +365,9 @@ static NSString* OrganizationRevision(NSDictionary* org) {
     if (![path isKindOfClass:NSString.class]) return;
     NSString* parent=path.stringByDeletingLastPathComponent.stringByResolvingSymlinksInPath;
     NSString* temp=NSTemporaryDirectory().stringByResolvingSymlinksInPath;
-    if ([path.lastPathComponent isEqual:@"page.png"] && [parent.stringByDeletingLastPathComponent isEqual:temp] &&
+    // render_page writes page.png and current_view viewport.png; a name outside these is not a preview folder.
+    if ([@[@"page.png",@"viewport.png"] containsObject:path.lastPathComponent] &&
+        [parent.stringByDeletingLastPathComponent isEqual:temp] &&
         [parent.lastPathComponent hasPrefix:@"ShenzhenPDF-AI-"] &&
         ValidID([parent.lastPathComponent substringFromIndex:[@"ShenzhenPDF-AI-" length]]))
         [NSFileManager.defaultManager removeItemAtPath:parent error:nil];

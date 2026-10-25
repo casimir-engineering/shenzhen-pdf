@@ -27,5 +27,17 @@ int main(void) { @autoreleasepool {
     }
     if(![visual[@"supportsImages"] boolValue] || ![visual[@"name"] isEqual:@"Vision · Images"] ||
         [plain[@"supportsImages"] boolValue] || ![plain[@"name"] isEqual:@"Text"]) return 8;
+    if(visual[@"contextTokens"] || plain[@"contextTokens"]) return 9;
+    NSData* windows=[NSJSONSerialization dataWithJSONObject:@{@"data":@[
+        @{@"id":@"fixture/long",@"supported_parameters":@[@"tools"],@"context_length":@1048576,
+          @"top_provider":@{@"context_length":@1000000}},
+        @{@"id":@"fixture/plain",@"supported_parameters":@[@"tools"],@"context_length":@163840},
+        @{@"id":@"fixture/bad",@"supported_parameters":@[@"tools"],@"context_length":@"lots",
+          @"top_provider":@{@"context_length":@-1}}
+    ]} options:0 error:nil];
+    NSMutableDictionary* sizes=[NSMutableDictionary dictionary];
+    for(NSDictionary* item in SPDFMacAIModelsFromCatalog(windows,nil)) sizes[item[@"id"]]=item[@"contextTokens"] ?: @0;
+    if(![sizes[@"fixture/long"] isEqual:@1000000] || ![sizes[@"fixture/plain"] isEqual:@163840] ||
+       ![sizes[@"fixture/bad"] isEqual:@0]) return 10;
     puts("AI model catalog: passed"); return 0;
 } }

@@ -26,7 +26,9 @@ NSArray* SPDFChatOrganizationToolDefinitions(void) {
         if(progress.cancelled){dispatch_async(dispatch_get_main_queue(),^{completion(@{@"cancelled":@YES});});return;}
         NSDictionary* result=nil;NSDictionary* receipt=nil;NSError* error=nil;
         if([name isEqual:@"list_chats"]) {
-            NSDictionary* snapshot=[store organizationSnapshot];NSArray* chats=[store chatsMatchingQuery:arguments[@"query"] ?: @""];
+            NSDictionary* snapshot=[store organizationSnapshot];
+            // As the assistant: chats quoting Friends messages match by title only (SPDFMacAIChatTitleSearchOnlyKey).
+            NSArray* chats=[store chatsMatchingQuery:arguments[@"query"] ?: @"" forAssistant:YES];
             NSUInteger first=MAX(1,[arguments[@"first"] unsignedIntegerValue]),count=arguments[@"count"] ? MIN(100,[arguments[@"count"] unsignedIntegerValue]) : 50;
             NSUInteger offset=MIN(first-1,chats.count),length=MIN(count,chats.count-offset);
             result=snapshot ? @{@"chats":[chats subarrayWithRange:NSMakeRange(offset,length)],@"folders":store.folders,

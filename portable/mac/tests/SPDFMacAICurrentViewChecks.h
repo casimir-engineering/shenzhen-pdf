@@ -4,6 +4,20 @@
 @interface AIViewportCanvas : SPDFDocumentView
 @property NSUInteger draws;
 @end
+// The chat store removes current_view's ShenzhenPDF-AI-<UUID>/viewport.png folder once it keeps a copy or the
+// preview is discarded, in the app as here. A folder still there fails the check; it is removed first, because a
+// failed Check aborts and the run must still leave nothing behind.
+static void CheckViewportFolderRemoved(NSDictionary* preview,const char* message) {
+    NSString* path=[preview[@"path"] isKindOfClass:NSString.class] ? preview[@"path"] : nil;
+    NSString* folder=path.stringByDeletingLastPathComponent;
+    NSString* parent=folder.stringByDeletingLastPathComponent.stringByResolvingSymlinksInPath;
+    BOOL ours=[path.lastPathComponent isEqual:@"viewport.png"] &&
+        [folder.lastPathComponent hasPrefix:@"ShenzhenPDF-AI-"] &&
+        [parent isEqual:NSTemporaryDirectory().stringByResolvingSymlinksInPath];
+    BOOL gone=ours && ![NSFileManager.defaultManager fileExistsAtPath:folder];
+    if(ours && !gone)[NSFileManager.defaultManager removeItemAtPath:folder error:nil];
+    Check(gone,message);
+}
 @implementation AIViewportCanvas
 - (void)drawRect:(NSRect)rect {
     self.draws++;[NSColor.redColor setFill];NSRectFill(self.bounds);
@@ -55,6 +69,7 @@ static void CheckCurrentView(NSString* path,NSString* root) {
     NSArray* wire=SPDFMacAIChatVisionMessages(@[@{@"role":@"preview",@"local":@YES,@"preview":saved}],chatID,store,nil);
     Check([wire[0][@"content"][0][@"text"] containsString:@"viewport"] &&
         [wire[0][@"content"][1][@"image_url"][@"url"] hasPrefix:@"data:image/png;base64,"],"viewport kind and pixels survive storage and reach model input");
+    CheckViewportFolderRemoved(preview,"keeping current_view's picture with the chat removes its temporary folder");
     __block NSDictionary* cancelled=nil;
     [tools performTool:@"current_view" arguments:@{} completion:^(NSDictionary* value){cancelled=value;}];[tools cancel];
     NSDate* end=[NSDate dateWithTimeIntervalSinceNow:5];
@@ -80,7 +95,9 @@ static void CheckCurrentView(NSString* path,NSString* root) {
     NSDictionary* textView=CitationTool(textTools,@"current_view",@{});
     Check([textView[@"captured"] boolValue] && [textView[@"citation"] containsString:@"layoutIdentity="],
         "live Markdown viewport carries its exact pagination identity and pixels");
-    [SPDFMacAIChatStore discardTemporaryPreview:textView[@"_localPreview"]];[text deactivate];
+    [SPDFMacAIChatStore discardTemporaryPreview:textView[@"_localPreview"]];
+    CheckViewportFolderRemoved(textView[@"_localPreview"],"a discarded current_view picture leaves no folder");
+    [text deactivate];
     AIContextProbe* empty=[AIContextProbe new];tools=[[SPDFMacAITools alloc] initWithReader:empty];
     Check(CitationTool(tools,@"current_view",@{})[@"error"]!=nil,"no-document viewport returns a useful error");
 }

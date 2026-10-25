@@ -1,6 +1,11 @@
 #import "SPDFMacCollectionAvailability.h"
 #import "SPDFMacCollectionPalette.h"
 #import "SPDFMacCollectionPaletteModel.h"
+#import "SPDFMacCollectionReaderNavigation.h"
+#import "SPDFMacPaletteActivation.h"
+#import "SPDFMacPaletteDocumentNames.h"
+#import "SPDFMacPaletteResults.h"
+#import "SPDFMacStateDirectory.h"
 #import "SPDFMacPaletteTextSearch.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
@@ -9,15 +14,11 @@
 #import <PDFKit/PDFKit.h>
 #import <objc/runtime.h>
 #import <float.h>
+#import "friends/SPDFMacFriendsIntegration.h"
 
 id spdf_state_object_from_yaml_data(NSData* data);
 static const void* kSPDFPaletteSearchToken = &kSPDFPaletteSearchToken;
 
-static NSString* RowIdentity(NSDictionary* row) {
-    if (![row isKindOfClass:NSDictionary.class]) return @"";
-    return [NSString stringWithFormat:@"%@|%@|%@|%@|%@", row[@"kind"] ?: @"", row[@"path"] ?: @"",
-        row[@"page"] ?: @"", row[@"query"] ?: @"", row[@"title"] ?: @""];
-}
 static NSArray<NSDictionary*>* SessionWindows(id session) {
     return [session isKindOfClass:NSDictionary.class] && [session[@"windows"] isKindOfClass:NSArray.class]
         ? session[@"windows"] : @[];
@@ -33,15 +34,29 @@ static NSArray<NSDictionary*>* SearchCandidates(NSArray<NSDictionary*>* candidat
       return recent != NSOrderedSame ? recent : [a[@"_order"] compare:b[@"_order"]];
     }];
 }
+// Where each row's document lives, for the quiet column beside its name.
+static NSArray<NSDictionary*>* Located(NSArray<NSDictionary*>* rows) {
+    NSString* home = NSHomeDirectory(), *support = SPDFMacStateDirectoryPath();
+    NSMutableArray* located = [NSMutableArray arrayWithCapacity:rows.count];
+    for (NSDictionary* row in rows) {
+        NSMutableDictionary* display = [row mutableCopy];
+        display[@"location"] = spdf_palette_location_label(row[@"path"], home, support);
+        [located addObject:display];
+    }
+    return located;
+}
 static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSString* query, BOOL text) {
     NSMutableArray* rows = [NSMutableArray array];
-    for (NSDictionary* hit in hits ?: @[]) {
+    for (NSDictionary* hit in Located(hits ?: @[])) {
         NSMutableDictionary* row = [hit mutableCopy]; row[@"kind"] = @"collectionDocument";
-        row[@"title"] = hit[@"title"] ?: [hit[@"path"] lastPathComponent] ?: @"Document";
-        row[@"subtitle"] = text ? spdf_collection_palette_single_line(hit[@"snippet"] ?: @"") : hit[@"path"] ?: @"";
+        NSString* saved = [hit[@"title"] isKindOfClass:NSString.class] ? hit[@"title"] : @"";
+        row[@"title"] = saved.length ? spdf_palette_file_display_name(saved)
+                                     : spdf_palette_document_title(hit[@"path"], nil, nil);
+        row[@"subtitle"] = text ? spdf_collection_palette_single_line(hit[@"snippet"] ?: @"") : @"";
         NSInteger oneBasedPage = [hit[@"page"] integerValue];
         if (text) row[@"page"] = @(oneBasedPage > 0 ? oneBasedPage - 1 : 0);
-        if (text && oneBasedPage > 0) row[@"title"] = [NSString stringWithFormat:@"%@ · page %ld", row[@"title"], (long)oneBasedPage];
+        if (text && oneBasedPage > 0)
+            row[@"title"] = [NSString stringWithFormat:@"%@ · page %ld", row[@"title"], (long)oneBasedPage];
         if (text) row[@"query"] = query;
         [rows addObject:row];
     }
@@ -60,16 +75,23 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
     }
     return @{@"id":@"live-palette", @"focusedAt":@(DBL_MAX), @"tabs":tabs};
 }
-- (void)applyPaletteRows:(NSArray<NSDictionary*>*)rows preservingIdentity:(NSString*)identity {
-    [_paletteResults setArray:rows.count ? rows : @[@{@"kind":@"status", @"title":@"No matches",
-        @"subtitle":@"Try a document name, group, or col: followed by text."}]];
-    [_paletteTable reloadData]; [self updatePalettePanelFramePreservingTop:YES];
-    NSInteger match = -1;
-    if (identity.length) for (NSUInteger index = 0; index < _paletteResults.count; index++)
-        if ([RowIdentity(_paletteResults[index]) isEqual:identity]) { match = (NSInteger)index; break; }
-    if (match >= 0) [_paletteTable selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)match]
-                              byExtendingSelection:NO];
-    else [self selectFirstPaletteResult];
+- (NSDictionary*)paletteCandidateForTab:(SPDFDocumentTab*)tab {
+    // A document already loaded knows its own title; nothing is read for it.
+    spdf_document* doc = tab.cachedDocument;
+    if (!doc && tab == [self selectedTab] && [_path isEqualToString:tab.path]) doc = _doc;
+    const char* metadata = doc ? spdf_title(doc) : NULL;
+    NSString* title = spdf_palette_document_title(tab.path, tab.collectionVersionLabel,
+                                                  metadata ? [NSString stringWithUTF8String:metadata] : nil);
+    NSMutableDictionary* item = [@{@"path":tab.path, @"title":title ?: @"", @"lastViewedAt":@(tab.lastViewedAt)}
+        mutableCopy];
+    if (tab.collectionVersionLabel.length) item[@"collectionVersionLabel"] = tab.collectionVersionLabel;
+    if (tab.collectionHistoryDocumentID.length) item[@"collectionHistoryID"] = tab.collectionHistoryDocumentID;
+    // A working copy's tab knows its original once opened, so the two fold into one row at once.
+    NSString* original = spdf_palette_collection_copy_document_id(tab.path)
+        ? [self collectionKnownDocumentPathForTab:tab] : nil;
+    if (original.length) item[@"originalPath"] = original;
+    if (tab.group) item[@"group"] = tab.group.dictionary;
+    return item;
 }
 - (void)cancelCollectionPaletteSearch {
     [objc_getAssociatedObject(self, kSPDFPaletteSearchToken) cancel];
@@ -77,6 +99,7 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
 }
 - (void)refreshPaletteResults {
     [self cancelCollectionPaletteSearch];
+    [self paletteForgetHighlightMove]; // new words: the best match leads again
     NSProgress* progress = [NSProgress progressWithTotalUnitCount:1];
     objc_setAssociatedObject(self, kSPDFPaletteSearchToken, progress, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSUInteger generation = ++_paletteSearchGeneration;
@@ -85,18 +108,20 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
     NSArray* liveCandidates = [self openDocumentPaletteCandidates];
     NSDictionary* liveWindow = [self livePaletteSessionWindow];
     NSDictionary* immediateSession = MergeSession(nil, liveWindow);
-    NSArray* immediateOpen = spdf_collection_palette_open_candidates(liveCandidates, immediateSession);
-    NSArray* supplements = collectionOnly ? @[] : [self collectionPaletteSupplementaryRowsForQuery:query excludingOpenPaths:spdf_collection_palette_open_paths(immediateOpen)];
-    if (!collectionOnly && query.length) supplements=[supplements arrayByAddingObject:
-        @{@"kind":@"askAI",@"title":@"Ask AI about this…",@"subtitle":@"Chat with your documents"}];
-    NSArray* openNames = collectionOnly ? @[] : spdf_collection_palette_open_name_rows(immediateOpen, query);
-    NSMutableArray* titledOpen = [NSMutableArray array];
-    for (NSDictionary* row in openNames) {
-        NSMutableDictionary* display = [row mutableCopy]; display[@"subtitle"] = [self shortProvenanceForPath:row[@"path"]];
-        [titledOpen addObject:display];
-    }
+    NSArray* immediateOpen = spdf_palette_merge_collection_copies(
+        spdf_collection_palette_open_candidates(liveCandidates, immediateSession), @{});
+    NSArray* supplements = collectionOnly ? @[] : [self collectionPaletteSupplementaryRowsForQuery:query
+        excludingOpenPaths:spdf_collection_palette_open_paths(immediateOpen)];
+    // The chat is a row like any other: first while nothing is typed, so Return
+    // on an empty search still opens it, and last once words are typed.
+    BOOL chatFirst = !collectionOnly && !query.length;
+    NSArray* leading = chatFirst ? @[spdf_collection_palette_chat_row(@"")] : @[];
+    if (!collectionOnly && query.length)
+        supplements = [supplements arrayByAddingObject:spdf_collection_palette_chat_row(query)];
+    NSArray* titledOpen = collectionOnly ? @[] : Located(spdf_collection_palette_open_name_rows(immediateOpen, query));
     NSArray* groups = collectionOnly ? @[] : spdf_collection_palette_group_rows(immediateSession, query);
-    NSArray* instant = [spdf_collection_palette_rows(collectionOnly, query, titledOpen, groups, @[], @[], @[], NO) arrayByAddingObjectsFromArray:supplements];
+    NSArray* instant = [[leading arrayByAddingObjectsFromArray:spdf_collection_palette_rows(collectionOnly, query,
+        titledOpen, groups, @[], @[], @[], NO)] arrayByAddingObjectsFromArray:supplements];
     [_paletteResults setArray:instant];
     [_paletteResults addObject:@{@"kind":@"status", @"title":@"Searching…",
                                  @"subtitle":@"Open documents, groups and local Collection"}];
@@ -108,50 +133,58 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
     // hold back an indexed Collection title (or another keystroke).
     __block NSArray *latestNames = titledOpen, *latestGroups = groups;
     __block NSArray *latestOpenText = @[], *latestCollectionNames = @[], *latestCollectionText = @[];
+    __block NSArray *latestFriends = @[];
     void (^publish)(NSString*, NSArray*, NSArray*) = ^(NSString* tier, NSArray* first, NSArray* second) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!spdf_collection_palette_can_publish(progress,generation,self->_paletteSearchGeneration,self->_palettePanel.visible)) return;
+            NSUInteger current = self->_paletteSearchGeneration;
+            BOOL visible = self->_palettePanel.visible;
+            if (!spdf_collection_palette_can_publish(progress, generation, current, visible)) return;
             if ([tier isEqual:@"names"]) { latestNames = first; latestGroups = second; }
             if ([tier isEqual:@"openText"]) latestOpenText = first;
             if ([tier isEqual:@"collectionNames"]) latestCollectionNames = first;
             if ([tier isEqual:@"collectionText"]) latestCollectionText = first;
-            NSArray* rows = [spdf_collection_palette_rows(collectionOnly, query, latestNames, latestGroups,
-                latestOpenText, latestCollectionNames, latestCollectionText, collectionOnly)
-                arrayByAddingObjectsFromArray:supplements];
-            NSInteger selected = self->_paletteTable.selectedRow;
-            NSString* identity = selected >= 0 && selected < (NSInteger)self->_paletteResults.count
-                ? RowIdentity(self->_paletteResults[(NSUInteger)selected]) : @"";
-            [self applyPaletteRows:rows preservingIdentity:identity];
+            if ([tier isEqual:@"friends"]) latestFriends = first;
+            NSArray* rows = [[leading arrayByAddingObjectsFromArray:spdf_collection_palette_rows(collectionOnly,
+                query, latestNames, latestGroups, latestOpenText, latestCollectionNames, latestCollectionText,
+                collectionOnly)] arrayByAddingObjectsFromArray:supplements];
+            rows = SPDFMacFriendsPaletteMergeRows(rows, latestFriends);
+            [self applyPaletteRows:rows];
         });
     };
+    if (!collectionOnly) [self friendsSearchPaletteQuery:query progress:progress
+                                                  publish:^(NSArray* rows) { publish(@"friends", rows, nil); }];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         if (progress.cancelled) return;
         NSDictionary* stored = SPDFSearchCachedFile(sessionPath,@"session",1024 * 1024, ^id {
             return spdf_state_object_from_yaml_data([NSData dataWithContentsOfFile:sessionPath]);
         });
         NSDictionary* session = MergeSession(stored, liveWindow);
-        NSArray* candidates = spdf_collection_palette_open_candidates(liveCandidates, session);
+        SPDFMacCollectionStore* store = SPDFMacCollectionStore.defaultStore;
+        // The search below reads the same cached manifest; it says which open
+        // working copy belongs to which original.
+        NSString* manifestPath = [store.rootURL URLByAppendingPathComponent:@"manifest.json"].path;
+        NSDictionary* manifest = SPDFSearchCachedJSON(manifestPath);
+        NSDictionary* originals = spdf_palette_collection_original_paths(manifest);
+        NSArray* candidates = spdf_palette_titled_from_collection(spdf_palette_merge_collection_copies(
+            spdf_collection_palette_open_candidates(liveCandidates, session), originals), originals,
+            spdf_palette_collection_titles(manifest));
         NSSet* openPaths = spdf_collection_palette_open_paths(candidates);
         NSArray* asyncOpenNames = collectionOnly ? @[] : spdf_collection_palette_open_name_rows(candidates, query);
         NSArray* asyncGroups = collectionOnly ? @[] : spdf_collection_palette_group_rows(session, query);
-        NSMutableArray* displayNames = [NSMutableArray array];
-        for (NSDictionary* row in asyncOpenNames) {
-            NSMutableDictionary* display = [row mutableCopy];
-            display[@"subtitle"] = [self shortProvenanceForPath:row[@"path"]]; [displayNames addObject:display];
-        }
-        publish(@"names",displayNames,asyncGroups);
+        publish(@"names",Located(asyncOpenNames),asyncGroups);
         if (progress.cancelled) return;
         if (!collectionOnly && query.length) {
             // Serialize cold extraction so rapid typing cannot run multiple
             // Markdown pagination jobs concurrently. Warm reads reuse text.
             static dispatch_queue_t textQueue; static dispatch_once_t once;
-            dispatch_once(&once, ^{ textQueue = dispatch_queue_create("org.shenzhenpdf.palette-text", DISPATCH_QUEUE_SERIAL); });
+            dispatch_once(&once, ^{
+                textQueue = dispatch_queue_create("org.shenzhenpdf.palette-text", DISPATCH_QUEUE_SERIAL);
+            });
             dispatch_async(textQueue, ^{
                 if (progress.cancelled) return;
                 publish(@"openText",SPDFPaletteOpenTextMatches(SearchCandidates(candidates),query,progress),nil);
             });
         }
-        SPDFMacCollectionStore* store = SPDFMacCollectionStore.defaultStore;
         NSSet* nameExclusions = collectionOnly ? NSSet.set : openPaths;
         NSArray* nameHits = [store search:query titlesOnly:YES excludingPaths:nameExclusions limit:5 progress:progress];
         publish(@"collectionNames",CollectionRows(nameHits,query,NO),nil);
@@ -161,6 +194,7 @@ static NSArray<NSDictionary*>* CollectionRows(NSArray<NSDictionary*>* hits, NSSt
     });
 }
 - (BOOL)openCollectionPaletteResult:(NSDictionary*)result {
+    if ([self friendsOpenPaletteResult:result]) return YES;
     NSString* kind = result[@"kind"];
     if (![kind hasPrefix:@"collection"]) return NO;
     if ([kind isEqual:@"collectionShowAll"]) {

@@ -1,0 +1,369 @@
+//! Friends on a phone (ADR 0015 § 3, § 7, § 10, § 17): the service in the app's own process, its key store, a
+//! restored store's Start again, and the foreground-only lifecycle.
+//!
+//! - The identity's key lives in the Android Keystore (a sealed file) or the iOS Keychain (this device only), and the
+//!   state directory is kept out of backups (Android's no-backup directory, iOS's excluded-from-backup flag), so a
+//!   restored phone starts Friends afresh instead of with somebody else's history.
+//! - A store whose key is missing, or that belongs to another key, is never used: [`restored::Restored`] explains it
+//!   and offers Start again, which is Reset Friends: the key goes, then the store (keeping received files), and the
+//!   service starts with a new identity. Reset Friends from a running service also stops it first
+//!   (`szfriends_helper::service::reset`).
+//! - Friends runs while the app is in the foreground. When the app goes to the background, sessions and transfers
+//!   carry on for a grace period; after it, received bytes are made durable at a verified offset (the service's
+//!   Sleep). Back in the foreground the service dials its friends again and transfers resume where they stopped.
+//!   While "Stay reachable in the background" is on (Android, ADR 0017), a foreground service keeps the process and
+//!   the service sleeps not at all.
+//!
+//! Everything here builds and is tested on any computer; `native.rs` joins it to the app's Kotlin and Swift code.
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod animals;
+pub mod keys;
+pub mod notify;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod native;
+pub mod received;
+pub mod restored;
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
+
+use serde_json::Value;
+use szfriends_contract::handshake::ClientInfo;
+use szfriends_core::store::{ReceivedDefaults, Store};
+use szfriends_helper::events::SystemEvent;
+use szfriends_helper::presentation::{Presentation, StubPresentation};
+use szfriends_helper::server::{Connection, Reply};
+use szfriends_helper::service::reset::{self, Connections, Serving};
+use szfriends_helper::service::Service;
+use szfriends_identity::keystore::{IdentityManager, KeyStore};
+use szfriends_identity::IdentityError;
+
+/// How long Friends keeps going after the app leaves the foreground: long enough for switching apps to copy a code
+/// or answer a message without cutting a transfer, short enough to stop well before the system suspends the app.
+pub const GRACE: Duration = Duration::from_secs(20);
+
+/// Makes the key store the identity lives in, each time the service (re)starts.
+pub type Keys = Arc<dyn Fn() -> Box<dyn KeyStore> + Send + Sync>;
+
+/// The phone's notifier as the service sees it (`notify.rs`): what it posts with, "Stay reachable in the
+/// background", and what the person does with a notification.
+pub trait PhoneNotify: Send + Sync {
+    fn notifier(&self) -> Arc<dyn szfriends_helper::notify::Notifier>;
+    /// Starts or stops the background service (Android); whether it runs now.
+    fn set_background(&self, on: bool) -> bool;
+    /// Where taps, replies and permission changes go.
+    fn listen(&self, listener: Box<dyn Fn(notify::Event) + Send + Sync>);
+}
+
+/// What runs behind the phone's protocol server now.
+enum Current {
+    Service(Arc<Service>),
+    Restored(Arc<restored::Restored>),
+    /// The key store refused (a locked device, a broken Keystore): nothing is created or removed; the panel shows
+    /// that Friends is not answering, and the next start tries again.
+    Stub(Arc<StubPresentation>),
+}
+
+impl Serving for Current {
+    fn service(&self) -> Option<Arc<Service>> {
+        match self {
+            Self::Service(service) => Some(service.clone()),
+            Self::Restored(_) | Self::Stub(_) => None,
+        }
+    }
+}
+
+impl Current {
+    fn presentation(&self) -> Arc<dyn Presentation> {
+        match self {
+            Self::Service(s) => s.clone(),
+            Self::Restored(r) => r.clone(),
+            Self::Stub(s) => s.clone(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Lifecycle {
+    /// Bumped on every change, so a grace timer that outlived its background period does nothing.
+    generation: u64,
+    foreground: bool,
+    /// The grace period ended in the background: the service was told to pause.
+    paused: bool,
+    /// "Stay reachable in the background" is on: the service keeps running in the background.
+    reachable: bool,
+}
+
+/// The service a phone's app runs in-process, with Start again and the foreground lifecycle.
+pub struct PhoneService {
+    state_dir: PathBuf,
+    keys: Keys,
+    /// Where received files go (`received.rs`).
+    received: ReceivedDefaults,
+    current: RwLock<Current>,
+    /// Every connection, whatever served it: Reset Friends closes them all.
+    connections: Connections,
+    lifecycle: Mutex<Lifecycle>,
+    grace: Duration,
+    /// The phone's notifier, installed in every service this starts (a reset starts a new one).
+    notify: Option<Arc<dyn PhoneNotify>>,
+}
+
+impl std::fmt::Debug for PhoneService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PhoneService").field("state_dir", &self.state_dir).field("state", &self.state()).finish()
+    }
+}
+
+/// What the store and key say at a start.
+fn begin(state_dir: &Path, keys: &Keys, received: &ReceivedDefaults, notify: Option<&Arc<dyn PhoneNotify>>) -> Current {
+    let checked = (|| {
+        std::fs::create_dir_all(state_dir).map_err(|_| IdentityError::StoreFailed)?;
+        // A store that records no identity is another identity's; one that cannot be opened is no reason to offer
+        // Start again (it answers as the key store refusing).
+        let recorded = Store::identity_of(state_dir).map_err(|error| match error {
+            szfriends_core::store::StoreError::IdentityMismatch => IdentityError::StoreMismatch,
+            _ => IdentityError::Unavailable,
+        })?;
+        IdentityManager::new(Boxed(keys())).load_or_create(recorded)
+    })();
+    match checked {
+        Ok(_) => match Service::start_with(state_dir, keys(), received.clone()) {
+            Ok(service) => {
+                if let Some(notify) = notify {
+                    service.install_notifier(notify.notifier());
+                    // The switch as this store keeps it: the background service runs while it is on.
+                    notify.set_background(szfriends_helper::notify::prefs::Prefs::load(state_dir).background);
+                }
+                Current::Service(service)
+            }
+            Err(error) => {
+                crate::link::log(&format!("Friends service not started: {error}"));
+                Current::Stub(Arc::default())
+            }
+        },
+        Err(IdentityError::KeyMissing | IdentityError::StoreMismatch) => {
+            crate::link::log("the Friends store has no key on this device: Start again is offered");
+            Current::Restored(Arc::default())
+        }
+        Err(error) => {
+            crate::link::log(&format!("the Friends key cannot be read: {error}"));
+            Current::Stub(Arc::default())
+        }
+    }
+}
+
+impl PhoneService {
+    /// Received files stay inside `state_dir` (`Downloads`): what tests get.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn start(state_dir: PathBuf, keys: Keys) -> Arc<Self> {
+        let received = ReceivedDefaults::contained(&state_dir);
+        Self::with_grace(state_dir, keys, received, GRACE)
+    }
+
+    /// With where received files go on this phone (`received::defaults`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn start_with(state_dir: PathBuf, keys: Keys, received: ReceivedDefaults) -> Arc<Self> {
+        Self::with_grace(state_dir, keys, received, GRACE)
+    }
+
+    pub fn with_grace(state_dir: PathBuf, keys: Keys, received: ReceivedDefaults, grace: Duration) -> Arc<Self> {
+        Self::with_notify(state_dir, keys, received, grace, None)
+    }
+
+    /// With the phone's notifier (`notify.rs`), installed in the service and listened to.
+    pub fn with_notify(
+        state_dir: PathBuf,
+        keys: Keys,
+        received: ReceivedDefaults,
+        grace: Duration,
+        notify: Option<Arc<dyn PhoneNotify>>,
+    ) -> Arc<Self> {
+        let current = begin(&state_dir, &keys, &received, notify.as_ref());
+        let reachable = notify.is_some() && szfriends_helper::notify::prefs::Prefs::load(&state_dir).background;
+        let lifecycle = Lifecycle { foreground: true, reachable, ..Lifecycle::default() };
+        let service = Arc::new(Self {
+            state_dir,
+            keys,
+            received,
+            current: RwLock::new(current),
+            connections: Connections::default(),
+            lifecycle: Mutex::new(lifecycle),
+            grace,
+            notify,
+        });
+        if let Some(notify) = &service.notify {
+            let weak = Arc::downgrade(&service);
+            notify.listen(Box::new(move |event| {
+                let Some(phone) = weak.upgrade() else { return };
+                let Some(core) = phone.current.read().unwrap_or_else(|e| e.into_inner()).service() else { return };
+                match event {
+                    notify::Event::Response(response) => core.notification_response(response),
+                    // Installing it again tells the service to show the system's new answer (Settings, the card).
+                    notify::Event::Permission(_) => {
+                        if let Some(notify) = &phone.notify {
+                            core.install_notifier(notify.notifier());
+                        }
+                    }
+                }
+            }));
+        }
+        service
+    }
+
+    /// "service", "restored" or "stub", for tests and the log.
+    pub fn state(&self) -> &'static str {
+        match &*self.current.read().unwrap_or_else(|e| e.into_inner()) {
+            Current::Service(_) => "service",
+            Current::Restored(_) => "restored",
+            Current::Stub(_) => "stub",
+        }
+    }
+
+    fn presentation(&self) -> Arc<dyn Presentation> {
+        self.current.read().unwrap_or_else(|e| e.into_inner()).presentation()
+    }
+
+    /// Reset Friends, and a restored store's Start again: the old identity's key, service and store go (received
+    /// files stay), a new identity's service starts with Nearby as it was, and every connection is closed, so each
+    /// page reconnects to it and subscribes again.
+    fn reset(&self, connection: &Connection, reply: Reply) {
+        let start = || begin(&self.state_dir, &self.keys, &self.received, self.notify.as_ref());
+        let keys = self.keys.as_ref()();
+        reset::reset(&self.current, start, (&self.state_dir, &*keys), &self.connections, (connection, reply));
+    }
+
+    /// The app left the foreground: after the grace period, unless it came back, the service pauses.
+    pub fn suspended(self: &Arc<Self>) {
+        let generation = {
+            let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+            lifecycle.generation += 1;
+            lifecycle.foreground = false;
+            lifecycle.generation
+        };
+        let service = Arc::downgrade(self);
+        let grace = self.grace;
+        let spawned = std::thread::Builder::new().name("szfriends-grace".into()).spawn(move || {
+            std::thread::sleep(grace);
+            let Some(service) = service.upgrade() else { return };
+            let mut lifecycle = service.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+            if lifecycle.generation == generation && !lifecycle.foreground && !lifecycle.paused && !lifecycle.reachable {
+                lifecycle.paused = true;
+                drop(lifecycle);
+                service.presentation().system_event(SystemEvent::Sleep);
+            }
+        });
+        if spawned.is_err() {
+            self.presentation().system_event(SystemEvent::Sleep);
+        }
+    }
+
+    /// Back in the foreground: a paused service dials its friends again and resumes transfers.
+    pub fn resumed(&self) {
+        let paused = {
+            let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+            lifecycle.generation += 1;
+            lifecycle.foreground = true;
+            std::mem::take(&mut lifecycle.paused)
+        };
+        if paused {
+            self.presentation().system_event(SystemEvent::Wake);
+        }
+    }
+
+    /// "Stay reachable in the background" turned on or off: on, the service no longer sleeps in the background (and
+    /// wakes if it was asleep); off, it sleeps after the grace period as before.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_reachable(self: &Arc<Self>, on: bool) {
+        let (background, paused) = {
+            let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+            lifecycle.reachable = on;
+            (!lifecycle.foreground, lifecycle.paused)
+        };
+        if on && paused {
+            self.lifecycle.lock().unwrap_or_else(|e| e.into_inner()).paused = false;
+            self.presentation().system_event(SystemEvent::Wake);
+        } else if !on && background && !paused {
+            self.suspended();
+        }
+    }
+
+    /// The switch from an intent: the app is in front, so nothing sleeps now; only the flag changes.
+    fn set_reachable_flag(&self, on: bool) {
+        self.lifecycle.lock().unwrap_or_else(|e| e.into_inner()).reachable = on;
+    }
+
+    /// Whether the grace period ended in the background (for tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn paused(&self) -> bool {
+        self.lifecycle.lock().unwrap_or_else(|e| e.into_inner()).paused
+    }
+}
+
+/// A boxed key store, for the generic manager.
+struct Boxed(Box<dyn KeyStore>);
+
+impl KeyStore for Boxed {
+    fn secret(&self, name: &str) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>, IdentityError> {
+        self.0.secret(name)
+    }
+
+    fn store(&self, name: &str, secret: &[u8]) -> Result<(), IdentityError> {
+        self.0.store(name, secret)
+    }
+
+    fn delete(&self, name: &str) -> Result<(), IdentityError> {
+        self.0.delete(name)
+    }
+}
+
+impl Presentation for PhoneService {
+    fn welcome(&self, client: &ClientInfo) -> Value {
+        self.presentation().welcome(client)
+    }
+
+    fn connected(&self, connection: &Connection) {
+        self.connections.add(connection);
+        self.presentation().connected(connection);
+    }
+
+    fn intent(&self, connection: &Connection, intent: &Value, reply: Reply) {
+        if intent["type"] == "reset_friends" {
+            if let Some(reply) = reset::confirmed(intent, reply) {
+                self.reset(connection, reply);
+            }
+            return;
+        }
+        // "Stay reachable in the background": the core keeps the switch, the app runs the foreground service.
+        let background = (intent["type"] == "set_notifications").then(|| intent["background"].as_bool()).flatten();
+        let serving = self.current.read().unwrap_or_else(|e| e.into_inner()).service().is_some();
+        self.presentation().intent(connection, intent, reply);
+        if let (Some(on), Some(notify), true) = (background, &self.notify, serving) {
+            notify.set_background(on);
+            self.set_reachable_flag(on);
+        }
+    }
+
+    fn disconnected(&self, connection_id: u64) {
+        self.connections.remove(connection_id);
+        self.presentation().disconnected(connection_id);
+    }
+
+    fn system_event(&self, event: SystemEvent) {
+        self.presentation().system_event(event);
+    }
+
+    fn work_in_flight(&self) -> bool {
+        self.presentation().work_in_flight()
+    }
+
+    fn shutdown(&self) {
+        self.presentation().shutdown();
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/phone.rs"]
+mod tests;

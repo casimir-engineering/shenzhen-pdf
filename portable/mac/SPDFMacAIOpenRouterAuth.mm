@@ -151,6 +151,12 @@ static NSString* RandomToken(void) {
     if(!self.queue)return;
     dispatch_async(self.queue,^{ [self finish:NO error:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]]; });
 }
+- (BOOL)isAwaitingBrowser {
+    dispatch_queue_t queue=self.queue; if(!queue)return NO;
+    __block BOOL awaiting=NO;
+    dispatch_sync(queue,^{ awaiting=!self.finished && !self.exchanging; });
+    return awaiting;
+}
 - (void)dealloc {
     if(_listener)dispatch_source_cancel(_listener); if(_timer)dispatch_source_cancel(_timer); [_session invalidateAndCancel];
 }

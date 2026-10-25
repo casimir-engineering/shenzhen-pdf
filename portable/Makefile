@@ -34,6 +34,11 @@ endif
 MUPDF_BUILD := $(MUPDF_DIR)/$(MUPDF_OUT)
 MUPDF_LIBS := $(MUPDF_BUILD)/libmupdf.a $(MUPDF_BUILD)/libmupdf-third.a $(MUPDF_BUILD)/libmupdf-pkcs7.a
 CPU := $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+# Records a suite that passed on this commit (tools/test-stamp.sh), so tools/release.sh does not run it again on the
+# same commit. The tool exists only in the Shenzhen repository; a partial run (a subset of flows, fewer rounds) records
+# nothing.
+SPDF_TEST_STAMP_TOOL := $(wildcard $(CURDIR)/../../../tools/test-stamp.sh)
+spdf_test_stamp = $(if $(SPDF_TEST_STAMP_TOOL),@"$(SPDF_TEST_STAMP_TOOL)" record pdf/$(1),@:)
 
 CORE_SRC := core/shenzhen_pdf_core.c
 CORE_HDR := core/shenzhen_pdf_core.h
@@ -105,8 +110,19 @@ MAC_MARKDOWN_SRCS := $(sort $(wildcard mac/markdown/*.mm))
 include mac/companion/sources.mk
 MAC_SRCS := $(filter-out mac/SPDFUpdaterTests.mm,$(sort $(wildcard mac/*.mm))) $(MAC_MARKDOWN_SRCS)
 MAC_HDRS := $(sort $(wildcard mac/*.h) $(wildcard mac/markdown/*.h))
-MAC_VERSION ?= 26.10.11
+# The reader's sources compile one object each, across all cores, with the headers each includes recorded by -MMD,
+# so a change recompiles only what it touches; they used to compile in one clang++ call, one file after the other,
+# every time the app was built. The flags are written to MAC_APP_FLAGS_FILE, which every object depends on, so building
+# with other flags (PORTABLE_OPTFLAGS, MAC_ARCH, release mode) recompiles them all.
+MAC_APP_OBJ_DIR := $(BUILD)/mac-app
+MAC_APP_OBJS := $(patsubst %.mm,$(MAC_APP_OBJ_DIR)/%.o,$(MAC_SRCS))
+MAC_APP_COMPILE_FLAGS = $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include
+MAC_APP_FLAGS_FILE := $(MAC_APP_OBJ_DIR)/compile-flags
+MAC_VERSION ?= 26.10.25
 MAC_BUILD ?= 1
+# The release this app is, as people see it and the updater compares it (mac/Info.plist SZFReleaseTag, which
+# cut-release.sh sets). MAC_BUILD alone is not it: Friends changes raise MAC_BUILD between releases.
+MAC_RELEASE_TAG ?=
 MAC_SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
 NOTARY_RESULT ?= $(DIST)/notarytool-$(MAC_VERSION)-$(MAC_BUILD).json
@@ -273,7 +289,14 @@ $(MAC_TAB_STRIP_GEOMETRY_TEST): mac/tests/SPDFMacTabStripGeometryTests.mm mac/SP
 mac-tab-strip-geometry-tests: $(MAC_TAB_STRIP_GEOMETRY_TEST)
 	"$(MAC_TAB_STRIP_GEOMETRY_TEST)"
 
-$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripScrolling.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripGeometry.h mac/SPDFMacTabStripStyle.mm mac/SPDFMacTabStripStyle.h mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
+$(MAC_TAB_STRIP_INTERACTION_TEST): mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm \
+	mac/SPDFMacTabStripScrolling.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm \
+	mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm \
+	mac/SPDFMacTabDragSignature.h mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm \
+	mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm \
+	mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripView.h mac/SPDFMacTabStripGeometry.mm \
+	mac/SPDFMacTabStripGeometry.h mac/SPDFMacTabStripStyle.mm mac/SPDFMacTabStripStyle.h \
+	mac/SPDFMacWindowChrome.mm mac/SPDFMacWindowChrome.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStripInteractionTests.mm mac/SPDFMacTabStripLayout.mm mac/SPDFMacTabStripScrolling.mm mac/SPDFMacTabStripHover.mm mac/SPDFMacTabStripMenus.mm mac/SPDFMacTabGroupPicker.mm mac/SPDFMacTabStripDrawing.mm mac/SPDFMacTabStripDrag.mm mac/SPDFMacTabGroupLayout.mm mac/SPDFMacTabGroupInteraction.mm mac/SPDFMacTabGroupNamePrompt.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabStripView.mm mac/SPDFMacTabAccessibility.mm mac/SPDFMacTabStripGeometry.mm mac/SPDFMacTabStripStyle.mm mac/SPDFMacWindowChrome.mm -framework Cocoa -o "$(MAC_TAB_STRIP_INTERACTION_TEST)"
 
 mac-tab-strip-interaction-tests: $(MAC_TAB_STRIP_INTERACTION_TEST)
@@ -285,6 +308,11 @@ mac-tab-group-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 	"$(BUILD)/SPDFMacTabGroupTests"
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupIntegrationTests.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacTabGroupIntegrationTests"
 	"$(BUILD)/SPDFMacTabGroupIntegrationTests"
+
+.PHONY: mac-document-opening-tests
+mac-document-opening-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-objc-protocol-method-implementation -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacDocumentOpeningTests.mm mac/SPDFMacDocumentOpening.mm mac/SPDFMacOpenRouting.mm mac/SPDFMacModels.mm mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacDocumentOpeningTests"
+	"$(BUILD)/SPDFMacDocumentOpeningTests"
 
 .PHONY: mac-tab-group-integration-tests mac-tab-group-interaction-tests
 mac-tab-group-integration-tests: mac-tab-group-tests
@@ -348,6 +376,26 @@ $(MAC_PALETTE_RESULTS_TEST): mac/tests/SPDFMacPaletteResultsTests.mm mac/SPDFMac
 mac-palette-results-tests: $(MAC_PALETTE_RESULTS_TEST)
 	"$(MAC_PALETTE_RESULTS_TEST)"
 
+# Cmd+K rows: titles, locations, merged copies, movement (pure), then what
+# choosing a row does on a headless reader with the production open path.
+MAC_PALETTE_NAME_SRCS := mac/SPDFMacPaletteDocumentNames.mm mac/SPDFMacCollectionPaletteModel.mm \
+	mac/SPDFMacPaletteResults.mm
+.PHONY: mac-palette-document-names-tests mac-palette-activation-tests
+mac-palette-document-names-tests: | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore \
+		mac/tests/SPDFMacPaletteDocumentNamesTests.mm $(MAC_PALETTE_NAME_SRCS) mac/SPDFMacSupport.mm \
+		mac/SPDFMacToolbarSegments.mm -framework Cocoa -framework UniformTypeIdentifiers \
+		-o "$(BUILD)/SPDFMacPaletteDocumentNamesTests"
+	"$(BUILD)/SPDFMacPaletteDocumentNamesTests"
+
+mac-palette-activation-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Wno-objc-protocol-method-implementation \
+		-Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacPaletteActivationTests.mm mac/SPDFMacPaletteActivation.mm \
+		$(MAC_PALETTE_NAME_SRCS) mac/SPDFMacDocumentOpening.mm mac/SPDFMacOpenRouting.mm mac/SPDFMacModels.mm \
+		mac/SPDFMacTabGroups.mm mac/SPDFMacTabGroupIntegration.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) \
+		-framework Cocoa -lm -o "$(BUILD)/SPDFMacPaletteActivationTests"
+	"$(BUILD)/SPDFMacPaletteActivationTests"
+
 $(MAC_FIND_NEAREST_TEST): mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm mac/SPDFMacFindNearest.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacFindNearestTests.mm mac/SPDFMacFindNearest.mm -framework Cocoa -o "$(MAC_FIND_NEAREST_TEST)"
 
@@ -371,9 +419,10 @@ mac-markdown-tests:
 	mac/tests/markdown/run-tests.sh
 	mac/tests/run-markdown-integration-tests.sh
 
-linux-password-tests:
+# The runtime check links the core objects built here, in $(BUILD), so a scratch BUILD gets a clean build of its own.
+linux-password-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 	linux/gtk4/tests/password_source_test.sh
-	linux/gtk4/tests/run_password_runtime_tests.sh
+	linux/gtk4/tests/run_password_runtime_tests.sh "$(BUILD)" "$(MUPDF_BUILD)"
 
 file-size-ratchet-tests:
 	../tools/test-file-size-ratchet.sh
@@ -412,7 +461,9 @@ $(MAC_TAB_LIFECYCLE_TEST): mac/tests/SPDFMacTabLifecycleTests.mm mac/SPDFMacTabL
 mac-tab-lifecycle-tests: $(MAC_TAB_LIFECYCLE_TEST)
 	"$(MAC_TAB_LIFECYCLE_TEST)"
 
-$(MAC_TAB_STATE_TEST): mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacTabGroups.mm mac/SPDFMacModels.mm mac/SPDFMacModels.h | $(BUILD)
+# It links the core and recolor objects, so it builds them: a fresh BUILD has neither.
+$(MAC_TAB_STATE_TEST): mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacTabGroups.mm mac/SPDFMacModels.mm \
+	mac/SPDFMacModels.h $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabStateTests.mm mac/SPDFMacTabGroups.mm mac/SPDFMacModels.mm "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Cocoa -lm -o "$(MAC_TAB_STATE_TEST)"
 
 mac-tab-state-tests: $(MAC_TAB_STATE_TEST)
@@ -460,13 +511,25 @@ $(MAC_STATE_YAML_TEST): mac/tests/SPDFStateYamlTests.mm $(YAML_OBJ) | $(BUILD)
 mac-state-yaml-tests: $(MAC_STATE_YAML_TEST)
 	"$(MAC_STATE_YAML_TEST)"
 
-$(MAC_BIN): core/spdf_document_export.h $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) $(MAC_COLLECTION_SRCS) mac/companion/main.mm mac/companion/sources.mk mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
+$(MAC_APP_FLAGS_FILE): FORCE
+	@mkdir -p "$(@D)"
+	@printf '%s\n' '$(MAC_APP_COMPILE_FLAGS)' | cmp -s - "$@" || printf '%s\n' '$(MAC_APP_COMPILE_FLAGS)' > "$@"
+.PHONY: FORCE
+FORCE:
+
+-include $(MAC_APP_OBJS:.o=.d)
+$(MAC_APP_OBJ_DIR)/%.o: %.mm $(MAC_APP_FLAGS_FILE) Makefile
+	@mkdir -p "$(@D)"
+	clang++ $(MAC_APP_COMPILE_FLAGS) -MMD -MP -c "$<" -o "$@"
+
+$(MAC_BIN): $(MAC_APP_OBJS) core/spdf_document_export.h $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_OBJS) $(YAML_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_SRCS) $(MAC_HDRS) $(MAC_ICON_SRCS) $(MAC_COLLECTION_SRCS) mac/companion/main.mm mac/companion/sources.mk mac/Info.plist mac/CollectionCompanion-Info.plist mac/Assets.xcassets/Contents.json mac/Assets.xcassets/AppIcon.appiconset/Contents.json
 	rm -rf "$(MAC_APP)"
 	mkdir -p "$(MAC_APP)/Contents/MacOS" "$(MAC_APP)/Contents/Resources" "$(DIST)"
 	cp "mac/Info.plist" "$(MAC_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(MAC_BUNDLE_ID)" "$(MAC_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(MAC_VERSION)" "$(MAC_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(MAC_BUILD)" "$(MAC_APP)/Contents/Info.plist"
+	$(if $(MAC_RELEASE_TAG),/usr/libexec/PlistBuddy -c "Set :SZFReleaseTag $(MAC_RELEASE_TAG)" "$(MAC_APP)/Contents/Info.plist")
 	rm -rf "$(BUILD)/ShenzhenPDF.iconset"
 	mkdir -p "$(BUILD)/ShenzhenPDF.iconset"
 	cp ../gfx/ShenzhenPDF-16x16x32.png "$(BUILD)/ShenzhenPDF.iconset/icon_16x16.png"
@@ -484,13 +547,20 @@ $(MAC_BIN): core/spdf_document_export.h $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_
 	cp mac/Assets.xcassets/Contents.json "$(BUILD)/Assets.xcassets/"
 	cp mac/Assets.xcassets/AppIcon.appiconset/Contents.json "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
 	cp "$(BUILD)/ShenzhenPDF.iconset"/*.png "$(BUILD)/Assets.xcassets/AppIcon.appiconset/"
+	# actool leaves its ibtoold agent running for two minutes after it returns, holding every descriptor it inherited.
+	# It gets neither make's output nor make's job slots (descriptors 3 to 9), or the build would wait for it.
 	if xcrun --find actool >/dev/null 2>&1; then \
-		xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target "$(MACOSX_DEPLOYMENT_TARGET)" --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist"; \
+		( exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-; xcrun actool "$(BUILD)/Assets.xcassets" --compile "$(MAC_APP)/Contents/Resources" --platform macosx --minimum-deployment-target "$(MACOSX_DEPLOYMENT_TARGET)" --app-icon AppIcon --output-partial-info-plist "$(BUILD)/actool-partial.plist" > "$(BUILD)/actool.log" 2>&1 ) || \
+			{ cat "$(BUILD)/actool.log" >&2; exit 1; }; \
 	else \
 		echo "warning: actool not found; using .icns app icon fallback"; \
 	fi
 	iconutil -c icns "$(BUILD)/ShenzhenPDF.iconset" -o "$(MAC_APP)/Contents/Resources/AppIcon.icns"
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Icore -I$(MUPDF_DIR)/include $(MAC_SRCS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication -framework ImageIO -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc \
+		$(MAC_APP_OBJS) $(CORE_OBJS) "$(YAML_OBJ)" $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_FRIENDS_LINK) \
+		$(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework \
+		UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication \
+		-framework ImageIO $(MAC_FRIENDS_FRAMEWORKS) -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
@@ -503,9 +573,15 @@ $(MAC_BIN): core/spdf_document_export.h $(MAC_COLLECTION_BIN) mupdf-libs $(CORE_
 	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(MAC_VERSION)" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(MAC_BUILD)" "$(MAC_COLLECTION_APP)/Contents/Info.plist"
 	cp "$(MAC_APP)/Contents/Resources/AppIcon.icns" "$(MAC_COLLECTION_APP)/Contents/Resources/AppIcon.icns"
+	$(MAC_FRIENDS_EMBED)
+	$(MAC_PYTHON_SANDBOX_EMBED)
 	xattr -cr "$(MAC_APP)"
 	$(subst $(MAC_APP),$(MAC_COLLECTION_APP),$(MAC_CODESIGN_APP))
+	$(subst $(MAC_APP),$(MAC_FRIENDS_HELPER_APP),$(MAC_CODESIGN_APP))
+	$(subst $(MAC_APP),$(MAC_PYTHON_SANDBOX_HELPER),$(MAC_CODESIGN_APP))
 	$(MAC_CODESIGN_APP)
+	$(MAC_FRIENDS_BUNDLE_CHECK)
+	$(MAC_PYTHON_SANDBOX_CHECK)
 
 dmg: mac-app
 	mac/make-installer-dmg.sh "$(MAC_APP)" "$(MAC_DMG)" "Shenzhen PDF"
@@ -648,7 +724,10 @@ mac-search-file-cache-tests: | $(BUILD)
 
 .PHONY: mac-collection-palette-tests
 mac-collection-palette-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacCollectionPaletteTests.mm mac/SPDFMacCollectionPaletteModel.mm mac/SPDFMacSearchFileCache.mm -framework Cocoa -o "$(BUILD)/SPDFMacCollectionPaletteTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac \
+		mac/tests/SPDFMacCollectionPaletteTests.mm mac/SPDFMacCollectionPaletteModel.mm \
+		mac/SPDFMacPaletteDocumentNames.mm mac/SPDFMacSearchFileCache.mm -framework Cocoa \
+		-o "$(BUILD)/SPDFMacCollectionPaletteTests"
 	"$(BUILD)/SPDFMacCollectionPaletteTests"
 
 .PHONY: mac-collection-reader-navigation-tests
@@ -711,8 +790,11 @@ mac-tab-group-performance: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -O2 -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacTabGroupPerformance.mm mac/SPDFMacTabGroups.mm -framework Cocoa -o "$(BUILD)/SPDFMacTabGroupPerformance"
 	"$(BUILD)/SPDFMacTabGroupPerformance" --verify
 
-$(MAC_COLLECTION_BIN): mac/companion/main.mm mac/companion/sources.mk $(MAC_COLLECTION_SRCS) $(MAC_HDRS) $(YAML_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) | $(BUILD)
-	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include mac/companion/main.mm $(MAC_COLLECTION_SRCS) "$(YAML_OBJ)" $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_COLLECTION_FRAMEWORKS) -Wl,-dead_strip -Wl,-x -o "$(MAC_COLLECTION_BIN)"
+# The companion's sources are reader sources compiled with the same flags, so it links the reader's objects.
+MAC_COLLECTION_OBJS = $(patsubst %.mm,$(MAC_APP_OBJ_DIR)/%.o,mac/companion/main.mm $(MAC_COLLECTION_SRCS))
+-include $(MAC_APP_OBJ_DIR)/mac/companion/main.d
+$(MAC_COLLECTION_BIN): $(MAC_COLLECTION_OBJS) mac/companion/sources.mk $(YAML_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) | $(BUILD)
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc $(MAC_COLLECTION_OBJS) "$(YAML_OBJ)" $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MAC_COLLECTION_FRAMEWORKS) -Wl,-dead_strip -Wl,-x -o "$(MAC_COLLECTION_BIN)"
 
 .PHONY: mac-collection-companion-link-tests
 mac-collection-companion-link-tests: $(MAC_COLLECTION_SRCS) $(YAML_OBJ) $(CORE_RECOLOR_OBJ) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) | $(BUILD)
@@ -824,26 +906,213 @@ mac-document-rename-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacDocumentRenameTests.mm -framework Foundation -o "$(BUILD)/SPDFMacDocumentRenameTests"
 	"$(BUILD)/SPDFMacDocumentRenameTests"
 
-.PHONY: mac-ai-transport-tests mac-ai-chat-tests mac-unified-settings-tests
+.PHONY: mac-ai-transport-tests mac-ai-chat-tests mac-ai-tool-seam-tests mac-unified-settings-tests
+# The chat session and the tool seam it runs on (mac/SPDFMacAIToolProvider.h).
+MAC_AI_SESSION_SRCS := mac/SPDFMacAIChatSession.mm mac/SPDFMacAIAnswerCard.mm mac/SPDFMacAIChatVision.mm \
+	mac/SPDFMacAIChatStore.mm mac/SPDFMacAIChatStoreRequestOnly.mm \
+	mac/SPDFMacAITransport.mm mac/SPDFMacAICitations.mm mac/SPDFMacAIToolRegistry.mm \
+	mac/SPDFMacAIRequestContext.mm mac/SPDFMacAIChatActivity.mm mac/SPDFMacAIChatSessionSummaries.mm \
+	mac/SPDFMacAIChatBudget.mm mac/SPDFMacAIChatSessionCalls.mm mac/SPDFMacAIToolArguments.mm
 mac-ai-transport-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAITransportTests.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICredentials.mm mac/SPDFMacAISettings.mm mac/SPDFMacAIOpenRouterAuth.mm -framework Foundation -framework Security -framework LocalAuthentication -o "$(BUILD)/SPDFMacAITransportTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAITransportTests.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICredentials.mm mac/SPDFMacAISettings.mm mac/SPDFMacAIOpenRouterAuth.mm mac/SPDFMacAISignInReturnWatch.mm -framework AppKit -framework Security -framework LocalAuthentication -o "$(BUILD)/SPDFMacAITransportTests"
 	"$(BUILD)/SPDFMacAITransportTests"
 mac-ai-chat-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIChatSessionTests.mm mac/SPDFMacAIChatSession.mm mac/SPDFMacAIAnswerCard.mm mac/SPDFMacAIChatVision.mm mac/SPDFMacAIChatStore.mm mac/SPDFMacAITransport.mm mac/SPDFMacAICitations.mm -framework Cocoa -framework ImageIO -o "$(BUILD)/SPDFMacAIChatSessionTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac \
+		mac/tests/SPDFMacAIChatSessionTests.mm $(MAC_AI_SESSION_SRCS) -framework Cocoa -framework ImageIO -o \
+		"$(BUILD)/SPDFMacAIChatSessionTests"
 	"$(BUILD)/SPDFMacAIChatSessionTests"
+mac-ai-tool-seam-tests: | $(BUILD)
+	rm -f "$(BUILD)/SPDFMacAIToolSeamTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIToolSeamTests.mm \
+		$(MAC_AI_SESSION_SRCS) mac/SPDFMacAISettings.mm -framework Cocoa -framework ImageIO \
+		-o "$(BUILD)/SPDFMacAIToolSeamTests"
+	"$(BUILD)/SPDFMacAIToolSeamTests"
+# The Settings window as its tests link it: the controller and the pages it builds.
+MAC_SETTINGS_WINDOW_SRCS := mac/SPDFMacUnifiedSettings.mm mac/SPDFMacAICapabilitiesSettings.mm \
+	mac/SPDFMacSearchablePicker.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm \
+	mac/friends/SPDFMacFriendsSettingsPage.mm mac/friends/SPDFMacFriendsSettingsPane.mm
 mac-unified-settings-tests: | $(BUILD)
-	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacUnifiedSettingsTests.mm mac/SPDFMacUnifiedSettings.mm mac/SPDFMacSearchablePicker.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm -framework Cocoa -o "$(BUILD)/SPDFMacUnifiedSettingsTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac \
+		mac/tests/SPDFMacUnifiedSettingsTests.mm $(MAC_SETTINGS_WINDOW_SRCS) -framework Cocoa -o \
+		"$(BUILD)/SPDFMacUnifiedSettingsTests"
 	"$(BUILD)/SPDFMacUnifiedSettingsTests"
+# The AI page's capabilities section with the settings it saves. The reader's two category files need the whole
+# coordinator to link, so they are compiled for syntax only.
+.PHONY: mac-ai-capabilities-settings-tests
+mac-ai-capabilities-settings-tests: | $(BUILD)
+	rm -f "$(BUILD)/SPDFMacAICapabilitiesSettingsTests"
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -fsyntax-only -Imac -Icore \
+		-I$(MUPDF_DIR)/include mac/SPDFMacAICapabilitiesSettingsIntegration.mm mac/SPDFMacAISettingsIntegration.mm
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac \
+		mac/tests/SPDFMacAICapabilitiesSettingsTests.mm $(MAC_SETTINGS_WINDOW_SRCS) mac/SPDFMacAISettings.mm \
+		mac/SPDFMacAITransport.mm -framework Cocoa -o "$(BUILD)/SPDFMacAICapabilitiesSettingsTests"
+	"$(BUILD)/SPDFMacAICapabilitiesSettingsTests" "$(abspath .)"
 .PHONY: mac-ai-model-tests
 mac-ai-model-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAIModelCatalogTests.mm mac/SPDFMacAIModelCatalog.mm -framework Foundation -o "$(BUILD)/SPDFMacAIModelCatalogTests"
 	"$(BUILD)/SPDFMacAIModelCatalogTests"
 
-# Registered here so release discovery includes the production-linked AI suites.
+# Registered here so release discovery includes the production-linked AI suites. Discovery
+# (release/release-common.sh spdf_discover_test_targets) reads only this file, so each suite's name is a line here.
 include mac/tests/ai-reader-tests.mk
 include mac/tests/ai-document-job-tests.mk
-.PHONY: mac-ai-reader-tests mac-ai-document-job-tests
+include mac/tests/ai-web-tests.mk
+include mac/tests/ai-subagents-tests.mk
+.PHONY: mac-ai-reader-tests mac-ai-document-job-tests mac-chat-markdown-tests mac-ai-web-tests mac-ai-subagents-tests
 mac-ai-reader-tests: mac-ai-reader-acceptance
+# Markdown in AI chat and Friends messages (mac/tests/chat-markdown-tests.mk, included by ai-reader-tests.mk).
+mac-chat-markdown-tests: mac-chat-markdown-acceptance
 mac-ai-document-job-tests: mac-ai-document-job-acceptance
+# The assistant's web search and pages, and run_subagents' parallel read-only tasks.
+mac-ai-web-tests: mac-ai-web-acceptance
+mac-ai-subagents-tests: mac-ai-subagents-acceptance
+# The assistant's Python sandbox helper, embedded and signed by mac-app above, and run_python's suites.
+include mac/python-sandbox/python-sandbox.mk
+.PHONY: mac-ai-python-tests
+mac-ai-python-tests: mac-ai-python-suite
+$(MAC_BIN): $(MAC_PYTHON_SANDBOX_BIN)
 
 include mac/tests/translation-tests.mk
+include friends/friends.mk
+# The host adapter's suite runs with the Friends suites, so the release sweep's friends-tests covers it.
+include mac/friends/friends-host-adapter.mk
+# The dropdown driven end to end, clicks and keys against real helpers (mac/friends/tests/ui-e2e/friends-ui-e2e.mk).
+include mac/friends/tests/ui-e2e/friends-ui-e2e.mk
+friends-tests: friends-suite mac-friends-host-adapter-tests friends-ui-e2e
+	$(if $(FRIENDS_UI_E2E_VARIANTS)$(FRIENDS_UI_E2E_FLOWS),@:,$(call spdf_test_stamp,friends-tests))
+
+# Shenzhen Friends in ShenzhenPDF.app (friends/README.md § Integration the lead owns). Read after friends.mk, so the
+# Friends variables are set here and prerequisite lists get a second expansion.
+#
+# The app links the views, the client library, cJSON and the avatars set, never the picture pipeline or libsodium:
+# those stay in the helper, so a hostile image is only ever decoded there. The host adapter is compiled on its own
+# with -Ifriends, so no reader source sees the Friends include path; reader files reach it only through
+# friends/SPDFMacFriendsIntegration.h and friends/SPDFMacFriendsSettingsPage.h, which need -Imac alone.
+MAC_FRIENDS_ADAPTER_SRCS := $(sort $(wildcard mac/friends/SPDFMacFriends*.mm))
+MAC_FRIENDS_ADAPTER_HDRS := $(sort $(wildcard mac/friends/*.h))
+MAC_FRIENDS_ADAPTER_OBJS := $(patsubst mac/friends/%.mm,$(BUILD)/friends-app/%.o,$(MAC_FRIENDS_ADAPTER_SRCS))
+MAC_FRIENDS_LINK := $(MAC_FRIENDS_ADAPTER_OBJS) $(FRIENDS_VIEWS_OBJS) $(FRIENDS_CLIENT_OBJS) $(FRIENDS_CJSON_OBJ) \
+	$(FRIENDS_AVATARS_SET_OBJS)
+MAC_FRIENDS_FRAMEWORKS := $(FRIENDS_VIEWS_LIBS)
+
+$(BUILD)/friends-app/%.o: mac/friends/%.mm $(MAC_FRIENDS_ADAPTER_HDRS) $(MAC_HDRS) $(FRIENDS_VIEWS_HDRS) Makefile
+	@mkdir -p "$(@D)"
+	clang++ $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include \
+		-Ifriends -Imac/friends -c "$<" -o "$@"
+
+# The helper bundle (friends/service/helper/helper.mk) goes in Contents/Helpers/, where the adapter's
+# SPDFMacFriendsHelperExecutablePath looks, and is signed on its own line before the outer bundle, like the Collection
+# companion. Its version keys are set again here from this build's MAC_VERSION and MAC_BUILD, because helper.mk's
+# bundle is only rebuilt when a file changes: CFBundleShortVersionString is the app's version, and CFBundleVersion
+# and SZFriendsBuildNumber are helper.mk's YYMMDDBB build number. The views send CFBundleVersion and the running
+# helper compares it with its own SZFriendsBuildNumber to decide on a handover (PROTOCOL.md § Lifecycle), so the two
+# must be the same number, and one that only increases from release to release (MAC_BUILD alone restarts at 1).
+#
+# The animal set ships once, in the app's Resources/Friends/animals/, where the views' +[SZFriendsAnimalSet
+# bundledSet] looks; the embedded helper drops its own copy and finds the app's (friends/avatars/SZFriendsAnimalSet.m).
+# The standalone helper bundle keeps its copy for the helper's own tests.
+MAC_FRIENDS_HELPER_APP := $(MAC_APP)/Contents/Helpers/$(FRIENDS_HELPER_APP_NAME).app
+MAC_FRIENDS_HELPER_PLIST = "$(MAC_FRIENDS_HELPER_APP)/Contents/Info.plist"
+MAC_FRIENDS_RESOURCES := $(MAC_APP)/Contents/Resources/Friends
+MAC_FRIENDS_ANIMALS := friends/avatars/animals
+MAC_FRIENDS_ANIMAL_SVGS := $(sort $(wildcard $(MAC_FRIENDS_ANIMALS)/svg/*.svg))
+MAC_FRIENDS_ANIMAL_PDFS := $(sort $(wildcard $(MAC_FRIENDS_ANIMALS)/pdf/*.pdf))
+MAC_FRIENDS_ACKNOWLEDGEMENTS := friends/ACKNOWLEDGEMENTS.txt
+FRIENDS_HELPER_RESOURCES += $(MAC_FRIENDS_ACKNOWLEDGEMENTS)=Acknowledgements.txt
+
+define MAC_FRIENDS_EMBED
+mkdir -p "$(MAC_FRIENDS_RESOURCES)/animals/svg" "$(MAC_FRIENDS_RESOURCES)/animals/pdf"
+cp $(MAC_FRIENDS_ANIMALS)/manifest.json "$(MAC_FRIENDS_RESOURCES)/animals/"
+cp $(MAC_FRIENDS_ANIMAL_SVGS) "$(MAC_FRIENDS_RESOURCES)/animals/svg/"
+cp $(MAC_FRIENDS_ANIMAL_PDFS) "$(MAC_FRIENDS_RESOURCES)/animals/pdf/"
+cp $(MAC_FRIENDS_ACKNOWLEDGEMENTS) "$(MAC_FRIENDS_RESOURCES)/Acknowledgements.txt"
+cp -R "$(FRIENDS_HELPER_APP)" "$(MAC_APP)/Contents/Helpers/"
+rm -rf "$(MAC_FRIENDS_HELPER_APP)/Contents/Resources/Friends"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(MAC_VERSION)" $(MAC_FRIENDS_HELPER_PLIST)
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(FRIENDS_HELPER_BUILD_NUMBER)" $(MAC_FRIENDS_HELPER_PLIST)
+/usr/libexec/PlistBuddy -c "Set :SZFriendsBuildNumber $(FRIENDS_HELPER_BUILD_NUMBER)" $(MAC_FRIENDS_HELPER_PLIST)
+endef
+
+# Run at the end of every app build, and on its own against dist/ by mac-friends-bundle-check: what the release
+# depends on and a stale or partial build could get wrong.
+define MAC_FRIENDS_BUNDLE_CHECK
+codesign --verify --strict --verbose=2 "$(MAC_FRIENDS_HELPER_APP)"
+codesign --verify --deep --strict --verbose=2 "$(MAC_APP)"
+test -x "$(MAC_FRIENDS_HELPER_APP)/Contents/MacOS/$(FRIENDS_HELPER_APP_NAME)"
+test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' $(MAC_FRIENDS_HELPER_PLIST))" = "$(MAC_VERSION)"
+build=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' $(MAC_FRIENDS_HELPER_PLIST)); \
+	case "$$build" in ''|*[!0-9]*) echo "Friends helper CFBundleVersion is not an integer: $$build" >&2; exit 1;; esac; \
+	test "$$build" = "$$(/usr/libexec/PlistBuddy -c 'Print :SZFriendsBuildNumber' $(MAC_FRIENDS_HELPER_PLIST))"
+test ! -e "$(MAC_FRIENDS_HELPER_APP)/Contents/Resources/Friends"
+cmp $(MAC_FRIENDS_ANIMALS)/manifest.json "$(MAC_FRIENDS_RESOURCES)/animals/manifest.json"
+test "$$(ls -A "$(MAC_FRIENDS_RESOURCES)/animals")" = "$$(printf 'manifest.json\npdf\nsvg')"
+test "$$(ls -A "$(MAC_FRIENDS_RESOURCES)/animals/svg")" = "$$(printf '%s\n' $(notdir $(MAC_FRIENDS_ANIMAL_SVGS)))"
+test "$$(ls -A "$(MAC_FRIENDS_RESOURCES)/animals/pdf")" = "$$(printf '%s\n' $(notdir $(MAC_FRIENDS_ANIMAL_PDFS)))"
+cmp $(MAC_FRIENDS_ACKNOWLEDGEMENTS) "$(MAC_FRIENDS_RESOURCES)/Acknowledgements.txt"
+cmp $(MAC_FRIENDS_ACKNOWLEDGEMENTS) "$(MAC_FRIENDS_HELPER_APP)/Contents/Resources/Acknowledgements.txt"
+nm -gU "$(MAC_BIN)" | grep -qF '_OBJC_CLASS_$$_SZFriendsDropdownController'
+release/verify-mac-artifact.sh --friends-usage-keys "$(MAC_APP)"
+endef
+
+.PHONY: mac-friends-bundle-check
+mac-friends-bundle-check:
+	$(MAC_FRIENDS_BUNDLE_CHECK)
+	@echo "mac-friends-bundle-check passed"
+
+# The acknowledgements must carry every line of each license and the word list's own attribution, so a dependency
+# upgrade that changes a copyright line, or a word list that changes its word count, fails the app build until
+# ACKNOWLEDGEMENTS.txt follows. Comment decoration (libsodium's LICENSE is a C comment) and wrapping are ignored.
+# Mbed TLS is not listed: its LICENSE also holds the GPL-2.0 text, which Friends does not take it under, so only its
+# Apache-2.0 part is in the acknowledgements.
+MAC_FRIENDS_LICENSES := ../ext/libsodium/LICENSE ../ext/cjson/LICENSE ../ext/libdatachannel/LICENSE \
+	../ext/libjuice/LICENSE ../ext/usrsctp/LICENSE.md ../ext/plog/LICENSE ../ext/miniupnpc/LICENSE
+MAC_FRIENDS_NOTICES_STAMP := $(BUILD)/friends-app/acknowledgements.stamp
+$(MAC_FRIENDS_NOTICES_STAMP): $(MAC_FRIENDS_ACKNOWLEDGEMENTS) $(MAC_FRIENDS_LICENSES) $(FRIENDS_IDENTITY_WORDS) Makefile
+	@mkdir -p "$(@D)"
+	@for license in $(MAC_FRIENDS_LICENSES); do \
+		sed -E -e 's#^[[:space:]]*(/\*|\*/|\*)?[[:space:]]*##' -e 's#[[:space:]]*$$##' "$$license" | grep -v '^$$' | \
+		while IFS= read -r line; do grep -qF -- "$$line" $(MAC_FRIENDS_ACKNOWLEDGEMENTS) || \
+			{ echo "$(MAC_FRIENDS_ACKNOWLEDGEMENTS) lacks this line of $$license: $$line" >&2; exit 1; }; \
+		done || exit 1; \
+	done
+	@test -f "$(FRIENDS_IDENTITY_WORDS)"
+	@attribution=$$(sed -n '/^# Friends ID words are a selection/,/^# Changes:/s/^# //p' "$(FRIENDS_IDENTITY_WORDS)" | \
+		tr -s '[:space:]' ' '); test -n "$$attribution" && tr -s '[:space:]' ' ' < $(MAC_FRIENDS_ACKNOWLEDGEMENTS) | \
+		grep -qF -- "$${attribution% }" || \
+		{ echo "$(MAC_FRIENDS_ACKNOWLEDGEMENTS) lacks the word list's attribution: $$attribution" >&2; exit 1; }
+	@touch "$@"
+
+$(MAC_BIN): $(MAC_FRIENDS_LINK) $(MAC_FRIENDS_ADAPTER_HDRS) $(FRIENDS_HELPER_BUNDLE_STAMP) \
+	$(MAC_FRIENDS_ANIMALS)/manifest.json $(MAC_FRIENDS_ANIMAL_SVGS) $(MAC_FRIENDS_ANIMAL_PDFS) $(MAC_FRIENDS_NOTICES_STAMP)
+
+# The reader calls the host adapter, so the binaries that link the whole reader (mac/tests/workspace-probe.mk and
+# mac/tests/ai-reader-tests.mk) link Friends too. Their link recipes read these lists when they run, after this
+# append; their prerequisite lists were read before Friends was, hence the rule below. Their frameworks already cover
+# the views' (Cocoa, ImageIO, UniformTypeIdentifiers, and QuartzCore, which re-exports CoreImage).
+MAC_WORKSPACE_PROBE_OBJS += $(MAC_FRIENDS_LINK)
+MAC_README_PROBE_OBJS += $(MAC_FRIENDS_LINK)
+MAC_AI_README_OBJS += $(MAC_FRIENDS_LINK)
+AI_READER_BASE_OBJS += $(MAC_FRIENDS_LINK)
+$(MAC_WORKSPACE_PROBE) $(MAC_README_PROBE) $(MAC_AI_README_PROBE) $(AI_CONTEXT_TEST) $(AI_ANALYSIS_TEST): \
+	$(MAC_FRIENDS_LINK)
+
+# Registered here so release discovery includes the production-linked minimap suite.
+include mac/tests/minimap-fill-tests.mk
+.PHONY: mac-minimap-fill-tests
+mac-minimap-fill-tests: mac-minimap-fill-acceptance
+
+# Registered here so release discovery includes the production-linked page-load suite.
+include mac/tests/page-load-tests.mk
+.PHONY: mac-page-load-tests
+mac-page-load-tests: mac-page-load-acceptance
+
+# Registered here so release discovery includes the production-linked page-display suite.
+include mac/tests/page-display-tests.mk
+.PHONY: mac-page-display-tests
+mac-page-display-tests: mac-page-display-acceptance
+
+# Registered here so release discovery includes the launch performance gate (this tree against the previous release).
+include mac/tests/launch/launch-performance-tests.mk
+.PHONY: mac-launch-performance-tests
+mac-launch-performance-tests: mac-launch-performance-gate
+	$(if $(LAUNCH_PERF_ROUNDS),@:,$(call spdf_test_stamp,mac-launch-performance-tests))

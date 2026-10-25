@@ -3,6 +3,7 @@
 #import "SPDFMacCollectionPalette.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacPaletteAppearance.h"
+#import "SPDFMacPaletteResults.h"
 #import "SPDFMacSidebarPresentation.h"
 static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(value,low),high); }
 
@@ -37,7 +38,9 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
         _paletteTable.action = @selector(activatePaletteSelection:);
         _paletteTable.doubleAction = @selector(activatePaletteSelection:);
         NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"result"];
-        column.width = 620;
+        // As wide as what shows of the rows, which -updatePalettePanelFramePreservingTop: keeps it to.
+        column.width = 526;
+        column.minWidth = 100;
         column.resizingMask = NSTableColumnAutoresizingMask;
         [_paletteTable addTableColumn:column];
         _palettePanel.contentView = SPDFPaletteContentView(_paletteSearchField,_paletteTable,self);
@@ -46,7 +49,7 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
 
     _palettePanel.title = title;
     _paletteSearchField.stringValue = @"";
-    _paletteSearchField.placeholderString = @"Search documents · Return on empty search to chat";
+    _paletteSearchField.placeholderString = @"Search documents, groups and commands";
     _paletteAllDocsCheckbox.hidden = YES;
     _paletteFavoritePendingDelete = nil;
     _paletteMenuCommandCandidates = [self paletteMenuCommandCandidates];
@@ -57,11 +60,7 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
     [_palettePanel makeFirstResponder:_paletteSearchField];
 }
 
-- (BOOL)isSelectablePaletteResult:(NSDictionary*)result {
-    NSString* kind = result[@"kind"];
-    return ![kind isEqualToString:@"header"] && ![kind isEqualToString:@"separator"] &&
-           ![kind isEqualToString:@"status"];
-}
+- (BOOL)isSelectablePaletteResult:(NSDictionary*)result { return spdf_palette_row_is_selectable(result); }
 
 - (void)scrollPaletteRowToVisibleWithHeader:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_paletteResults.count) return;
@@ -139,6 +138,9 @@ static CGFloat Clamp(CGFloat value, CGFloat low, CGFloat high) { return MIN(MAX(
         Clamp(frame.origin.x, NSMinX(visibleFrame) + 24.0, NSMaxX(visibleFrame) - NSWidth(frame) - 24.0);
     frame.origin.y = floor(topY - NSHeight(frame));
     [_palettePanel setFrame:frame display:_palettePanel.visible animate:NO];
+    // The column follows the palette's width: wider, it ran the menu paths at the rows' right off the edge.
+    [_palettePanel.contentView layoutSubtreeIfNeeded];
+    [_paletteTable sizeLastColumnToFit];
 }
 
 - (NSView*)workspacePaletteViewForRow:(NSInteger)row {

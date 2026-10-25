@@ -15,6 +15,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.005]];
     return predicate();
 }
+#import "SPDFMacAISignInReturnChecks.h"
 @interface FakeProtocol : NSURLProtocol @end
 @implementation FakeProtocol
 + (BOOL)canInitWithRequest:(NSURLRequest*)request { return [request.URL.host isEqual:@"openrouter.ai"]; }
@@ -22,7 +23,7 @@ static BOOL Wait(BOOL (^predicate)(void)) {
 - (void)startLoading {
     @synchronized(FakeProtocol.class) { requests++; captured=self.request; }
     if(mode==1 || (mode==13 && recoveryReplies++>0))return;
-    NSInteger status=mode==2 ? 401 : mode==5 ? 400 : 200;
+    NSInteger status=mode==2 ? 401 : mode==5 || mode==14 ? 400 : 200;
     [self.client URLProtocol:self didReceiveResponse:[[NSHTTPURLResponse alloc] initWithURL:self.request.URL
         statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type":@"application/json"}]
         cacheStoragePolicy:NSURLCacheStorageNotAllowed];
@@ -39,6 +40,10 @@ static BOOL Wait(BOOL (^predicate)(void)) {
         } else if(mode==8) response=@{@"choices":@[@{@"finish_reason":@"stop",@"message":@{@"content":NSNull.null}}]};
         else if(mode==9) response=@{@"choices":@[@{@"message":@{@"content":@[@{@"type":@"text",@"text":@"Answer "},@{@"type":@"text",@"text":@"with citation"}]}}]};
         else if(mode==10) response=@{@"error":@{@"code":@502,@"message":@"private upstream details"}};
+        else if(mode==14) response=@{@"error":@{@"code":@400,@"message":@"This endpoint's maximum context length "
+            "is 131072 tokens. However, you requested about 250000 tokens."}};
+        else if(mode==15) response=@{@"error":@{@"code":@502,@"message":@"Provider returned error",
+            @"metadata":@{@"raw":@"{\"error\":{\"message\":\"prompt is too long: 250000 tokens > 200000\"}}"}}};
         else if(mode==11) response=@{@"choices":@[@{@"finish_reason":@"content_filter",@"message":@{@"content":NSNull.null}}]};
         data=[NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
     }
@@ -130,6 +135,18 @@ int main(void) { @autoreleasepool {
         "locked field merge preserves concurrent window changes");
     parallel.language=@"ja";Check([parallel save:&error],"language saves independently across windows");
     restored.model=@"fixture/model";Check([restored save:&error] && [restored.language isEqual:@"ja"],"other settings do not overwrite a parallel language choice");
+    SPDFMacAISettings* first=[[SPDFMacAISettings alloc] initWithURL:settingsURL];[first load:&error];
+    SPDFMacAISettings* second=[[SPDFMacAISettings alloc] initWithURL:settingsURL];[second load:&error];
+    first.model=@"fixture/long";first.modelContextTokens=1000000;
+    Check([first save:&error],"model and its context window save together");
+    second.modelContextTokens=64000;Check([second save:&error] && second.modelContextTokens==1000000,
+        "a stale window's context size never lands on another window's model");
+    SPDFMacAISettings* third=[[SPDFMacAISettings alloc] initWithURL:settingsURL];[third load:&error];
+    third.model=@"fixture/other";third.modelContextTokens=200000;[third save:&error];
+    second.model=@"fixture/wide";second.modelContextTokens=1000000;[second save:&error];
+    SPDFMacAISettings* reread=[[SPDFMacAISettings alloc] initWithURL:settingsURL];
+    Check([reread load:&error] && [reread.model isEqual:@"fixture/wide"] && reread.modelContextTokens==1000000,
+        "a newly chosen model keeps its own context size even when it matches the old one");
     parallel.language=@"en\napi_key: injected";Check(![parallel save:&error],"language rejects arbitrary prompt and YAML content");
     settings.model=@"x\napi_key: secret";Check(![settings save:&error],"reject YAML injection");
     Check(![credentials storeAPIKey:@"bad" error:&error] && keychain.calls==0,"reject invalid key before Keychain");
@@ -166,8 +183,14 @@ int main(void) { @autoreleasepool {
     NSDictionary* body=RequestJSON(request);
     Check([body[@"provider"][@"data_collection"] isEqual:@"deny"] && [body[@"provider"][@"zdr"] boolValue],"privacy fail closed");
     Check([body[@"max_tokens"] integerValue]==8192 && request.timeoutInterval==90,"bounded token and timeout budget");
-    NSString* huge=[@"x" stringByPaddingToLength:1024*1024+1 withString:@"x" startingAtIndex:0];
+    NSString* large=[@"x" stringByPaddingToLength:3*1024*1024 withString:@"x" startingAtIndex:0];
+    Check(SPDFMacAIChatRequest(@[@{@"role":@"user",@"content":large}],nil,SPDFMacAIDefaultModel,key,&error),
+        "long-context request fits");
+    NSString* huge=[@"x" stringByPaddingToLength:8*1024*1024+1 withString:@"x" startingAtIndex:0];
     Check(!SPDFMacAIChatRequest(@[@{@"role":@"user",@"content":huge}],nil,SPDFMacAIDefaultModel,key,&error),"oversized request rejected");
+    NSMutableArray* many=[NSMutableArray array];
+    for(int i=0;i<600;i++)[many addObject:@{@"role":@"user",@"content":@"turn"}];
+    Check(SPDFMacAIChatRequest(many,nil,SPDFMacAIDefaultModel,key,&error),"long chats are not cut at 128 messages");
     NSString* imageURL=[@"data:image/png;base64," stringByAppendingString:[@"A" stringByPaddingToLength:2*1024*1024 withString:@"A" startingAtIndex:0]];
     NSDictionary* imagePart=@{@"type":@"image_url",@"image_url":@{@"url":imageURL}};
     NSArray* imageMessages=@[@{@"role":@"user",@"content":@[@{@"type":@"text",@"text":@"Inspect page"},imagePart]}];
@@ -208,6 +231,13 @@ int main(void) { @autoreleasepool {
         Check(Wait(^BOOL{return done;}) && failure && !result,"HTTP, oversized and malformed response safely rejected");
         Check([failure.localizedDescription rangeOfString:key].location==NSNotFound,"errors exclude credentials");
     }
+    for(int testMode=14;testMode<=15;testMode++) {
+        mode=testMode;done=NO;result=nil;failure=nil;int before=requests;
+        [transport sendMessages:messages tools:nil model:SPDFMacAIDefaultModel apiKey:key completion:completion];
+        Check(Wait(^BOOL{return done;}) && !result && failure.code==SPDFMacAIContextLengthErrorCode &&
+            requests==before+1 && [failure.localizedDescription containsString:@"no longer fits the selected model"],
+            "a provider's context-length error is recognized, whether as a status or inside the reply");
+    }
     mode=5;done=NO;failure=nil;
     [transport sendMessages:imageMessages tools:nil model:@"test/text-only" apiKey:key completion:completion];
     Check(Wait(^BOOL{return done;}) && [failure.localizedDescription containsString:@"image-capable model"] &&
@@ -223,15 +253,19 @@ int main(void) { @autoreleasepool {
     NSMutableDictionary* query=[NSMutableDictionary dictionary];
     for(NSURLQueryItem* item in [NSURLComponents componentsWithURL:authorization resolvingAgainstBaseURL:NO].queryItems)query[item.name]=item.value;
     NSURL* callback=[NSURL URLWithString:query[@"callback_url"]];
+    Check(![[SPDFMacAIOpenRouterAuth new] isAwaitingBrowser] && [auth isAwaitingBrowser],
+        "only a started sign-in waits for the browser");
     Check([Callback(callback,@"offline-code",@"wrong-state") containsString:@"400 Bad Request"],"forged callback rejected");
     Check(!done && keychain.calls==keyCalls,"forged callback does not consume sign-in or modify credentials");
     Check([Callback(callback,@"offline-code",query[@"state"]) containsString:@"200 OK"],"matching local callback accepted");
     Check(Wait(^BOOL{return done;}) && connected && !failure,"OAuth exchange and secure save complete offline");
+    Check(![auth isAwaitingBrowser],"a sign-in the browser returned to is no longer waiting");
     NSDictionary* exchange=RequestJSON(captured);
     Check([SPDFMacAIPKCEChallenge(exchange[@"code_verifier"]) isEqual:query[@"code_challenge"]],"OAuth verifier matches browser challenge");
     SPDFMacAIOpenRouterAuth* cancelled=[[SPDFMacAIOpenRouterAuth alloc] initWithConfiguration:config credentials:credentials];
     done=NO;[cancelled startWithCompletion:^(BOOL success,NSError* e){connected=success;failure=e;done=YES;} error:&error];
     [cancelled cancel];Check(Wait(^BOOL{return done;}) && !connected && failure.code==NSURLErrorCancelled,"OAuth cancellable");
+    Check(![cancelled isAwaitingBrowser],"a cancelled sign-in is not waiting, so connecting again starts fresh");
     SPDFMacAIOpenRouterAuth* denied=[[SPDFMacAIOpenRouterAuth alloc] initWithConfiguration:config credentials:credentials];
     done=NO; keyCalls=keychain.calls; NSInteger beforeRequests=requests;
     authorization=[denied startWithCompletion:^(BOOL success,NSError* e){connected=success;failure=e;done=YES;} error:&error];
@@ -239,9 +273,11 @@ int main(void) { @autoreleasepool {
     callback=[NSURL URLWithString:query[@"callback_url"]];
     NSURL* unrelated=[NSURL URLWithString:@"/favicon.ico" relativeToURL:callback].absoluteURL;
     Check([Callback(unrelated,nil,nil) containsString:@"400 Bad Request"] && !done,"unrelated empty browser probe cannot cancel sign-in");
+    Check([denied isAwaitingBrowser],"an unrelated browser request does not count as the sign-in returning");
     Check([Callback(callback,nil,nil) containsString:@"Connection cancelled"],"real provider denial returns a friendly browser response");
     Check(Wait(^BOOL{return done;}) && !connected && failure.code==NSURLErrorCancelled,"provider denial immediately completes cancellation");
     Check(keychain.calls==keyCalls && requests==beforeRequests,"denial neither exchanges a code nor touches credentials");
+    CheckSignInReturnWatch();
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     fprintf(stderr,"AI transport checks: %s (%d failures)\n",failures ? "FAIL" : "PASS",failures);return failures ? 1 : 0;
 } }
