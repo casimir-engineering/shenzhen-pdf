@@ -31,12 +31,20 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 @interface SPDFMacCollectionStore (EditableDocuments)
 - (void)recordUnavailableSourcePath:(NSString*)path documentID:(NSString*)documentID;
 - (nullable NSDictionary*)editableInfoForPath:(NSString*)path;
+// The editable copies of a document row that exist on disk (History opens a saved revision as one).
+- (NSArray<NSString*>*)editablePathsForDocument:(NSDictionary*)document;
 - (nullable NSURL*)editableVersionID:(nullable NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error;
 - (nullable NSDictionary*)captureEditablePath:(NSString*)path reason:(NSString*)reason error:(NSError**)error;
 - (nullable NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename error:(NSError**)error;
 // Explicit rename/Undo variant: atomically guard and restore the Collection title.
 - (nullable NSURL*)renameEditablePath:(NSString*)path filename:(NSString*)filename
     documentTitle:(NSString*)title expectedTitle:(nullable NSString*)expectedTitle error:(NSError**)error;
+// The name a document shows in ShenzhenPDF instead of its filename (SPDFDocumentTab.displayName), kept with its
+// history as "displayName" so it survives reopening; captures never change it. nil or "" removes it. expectedName:
+// the name it must have now, "" for none, nil to replace whatever is there (an Undo passes the name it set, so it
+// never replaces a later change).
+- (BOOL)setDisplayName:(nullable NSString*)name documentID:(NSString*)documentID
+          expectedName:(nullable NSString*)expectedName error:(NSError**)error;
 - (void)rememberGroup:(NSDictionary*)group documentID:(NSString*)documentID;
 - (void)rememberGroups:(NSDictionary<NSString*,NSDictionary*>*)groups;
 @end
@@ -128,4 +136,9 @@ FOUNDATION_EXPORT NSNotificationName const SPDFCollectionStoreDidChangeNotificat
 - (BOOL)recordUserOpenForDocumentID:(NSString*)documentID error:(NSError**)error;
 - (BOOL)recordUserOpenCount:(NSUInteger)count forDocumentID:(NSString*)documentID error:(NSError**)error;
 @end
+// What Collection and the assistant call a document: the name it was given in ShenzhenPDF, else its filename.
+static inline NSString* _Nullable SPDFCollectionDocumentTitle(NSDictionary* _Nullable document) {
+    NSString* name = [document[@"displayName"] isKindOfClass:NSString.class] ? document[@"displayName"] : nil;
+    return name.length ? name : [document[@"title"] isKindOfClass:NSString.class] ? document[@"title"] : nil;
+}
 NS_ASSUME_NONNULL_END

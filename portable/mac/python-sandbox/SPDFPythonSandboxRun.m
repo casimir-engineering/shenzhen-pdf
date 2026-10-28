@@ -204,7 +204,7 @@ static NSDictionary* SPDFPrepareAndRun(NSDictionary* request, NSString* helper, 
                          SPDFLowered(requestLimits, @"wall_seconds", SPDF_PYTHON_WALL_SECONDS),
                          (unsigned long long)SPDFLowered(requestLimits, @"memory_mb", SPDF_PYTHON_MEMORY_BYTES >> 20)
                              << 20};
-    NSMutableSet* skip = [NSMutableSet setWithObject:@"main.py"];
+    NSMutableSet* skip = [NSMutableSet setWithObjects:@"main.py", @"documents", nil];
     NSData* code = [request[@"code"] dataUsingEncoding:NSUTF8StringEncoding];
     BOOL written = SPDFPythonSandboxWriteFile(work, @"main.py", code);
     for (NSDictionary* file in request[@"files"]) {
@@ -215,6 +215,13 @@ static NSDictionary* SPDFPrepareAndRun(NSDictionary* request, NSString* helper, 
     NSString* config = [work stringByAppendingPathComponent:@".matplotlib"];
     written = written && mkdir([work stringByAppendingPathComponent:@".tmp"].fileSystemRepresentation, 0700) == 0 &&
               mkdir(config.fileSystemRepresentation, 0700) == 0;
+    // out/: what the code makes for the person to keep. documents: a link to the folder the app prepared, which
+    // the profile lets the code read and never write.
+    written = written && mkdir([work stringByAppendingPathComponent:@"out"].fileSystemRepresentation, 0700) == 0;
+    NSString* documents = [paths[@"document_subpaths"] firstObject];
+    if (documents)
+        written = written && symlink(documents.fileSystemRepresentation,
+                                     [work stringByAppendingPathComponent:@"documents"].fileSystemRepresentation) == 0;
     if (!written) return SPDFFailure(@"internal", @"Could not write the code and its files.");
     SPDFPythonSandboxSeedMatplotlib(paths[@"venv"], config);
     unsigned long long baseline = 0;
@@ -291,6 +298,12 @@ static NSString* SPDFRequestProblem(NSDictionary* request) {
     id parent = request[@"work_parent"];
     if (parent && (![parent isKindOfClass:NSString.class] || ![parent hasPrefix:@"/"]))
         return @"work_parent must be an absolute path.";
+    id writeOnly = request[@"write_only_dirs"];
+    if (writeOnly && (![writeOnly isKindOfClass:NSArray.class] || [writeOnly count] > 4))
+        return @"write_only_dirs must be a list of at most 4 absolute paths.";
+    for (id folder in writeOnly)
+        if (![folder isKindOfClass:NSString.class] || ![folder hasPrefix:@"/"])
+            return @"write_only_dirs must be a list of at most 4 absolute paths.";
     return nil;
 }
 
@@ -300,6 +313,19 @@ NSDictionary<NSString*, id>* SPDFPythonSandboxRun(NSDictionary<NSString*, id>* r
     NSString* reason = nil;
     NSDictionary* paths = SPDFPythonSandboxPathsForInterpreter(request[@"interpreter"], &reason);
     if (!paths) return SPDFFailure(@"interpreter_unavailable", reason);
+    // Folders the assistant writes to but never reads (Downloads): refused by name, before the documents of this run
+    // are allowed, so a file the chat itself saved there, given as a document, is still read by its exact path.
+    NSMutableDictionary* denied = [paths mutableCopy];
+    denied[@"deny_read_subpaths"] = SPDFPythonSandboxWriteOnlyPaths(request[@"write_only_dirs"]);
+    paths = denied;
+    if (request[@"documents_dir"]) {
+        NSDictionary* documents = SPDFPythonSandboxDocumentPaths(request[@"documents_dir"],
+                                                                 request[@"document_files"] ?: @[], &reason);
+        if (!documents) return SPDFFailure(@"bad_request", reason);
+        NSMutableDictionary* merged = [paths mutableCopy];
+        [merged addEntriesFromDictionary:documents];
+        paths = merged;
+    }
     NSString* parent = request[@"work_parent"] ?: SPDFDefaultWorkParent();
     SPDFPythonSandboxSweepStale(parent);
     NSString* work = SPDFPythonSandboxMakeWorkDirectory(parent, &reason);

@@ -1,4 +1,5 @@
 #import "SPDFMacTabGroupNamePrompt.h"
+#import "SPDFMacCollectionStyle.h"
 #import "SPDFMacGroupManagement.h"
 #import "SPDFMacTabGroups.h"
 
@@ -18,9 +19,11 @@
 @interface SPDFGroupManagementRow : NSTableRowView
 @property(nonatomic, weak) NSTableView* ownerTable;
 @property(nonatomic) NSInteger nextSectionRow;
-@property(nonatomic, strong) NSColor* groupAccent;
+@property(nonatomic, copy) NSString* groupColor;
+@property(nonatomic, readonly) NSColor* groupAccent; // from the palette in use, as it is drawn
 @end
 @implementation SPDFGroupManagementRow
+- (NSColor*)groupAccent { return spdf_tab_group_accent(self.groupColor); }
 - (NSRect)sectionConstrainedFrame:(NSRect)frame {
     // Native floating rows otherwise overlap the next heading. Clamp each
     // placement at its section boundary, including AppKit's scroll updates.
@@ -41,7 +44,7 @@
 - (void)drawBackgroundInRect:(NSRect)dirtyRect {
     // A floating section must cover documents scrolling beneath its controls.
     if (self.groupRowStyle) {
-        [NSColor.windowBackgroundColor setFill]; NSRectFill(dirtyRect);
+        [SPDFCollectionColor(@"window") setFill]; NSRectFill(dirtyRect);
         [[self.groupAccent colorWithAlphaComponent:.16] setFill];
         [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,3,1) xRadius:4 yRadius:4] fill];
     }
@@ -56,7 +59,7 @@
         CGFloat right = MIN(NSMaxX(rect),NSMaxX(viewport)-3);
         rect.origin.x = MAX(rect.origin.x,NSMinX(viewport)+3); rect.size.width = MAX(0,right-NSMinX(rect));
     }
-    [[NSColor.controlAccentColor colorWithAlphaComponent:.14] setFill];
+    [[SPDFCollectionColor(@"focus") colorWithAlphaComponent:.14] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:7 yRadius:7] fill];
 }
 @end
@@ -65,7 +68,7 @@
 static NSTextField* Label(NSString* text, CGFloat size, BOOL secondary) {
     NSTextField* label = [NSTextField labelWithString:text ?: @""];
     label.font = [NSFont systemFontOfSize:size];
-    label.textColor = secondary ? NSColor.secondaryLabelColor : NSColor.labelColor;
+    label.textColor = secondary ? SPDFCollectionColor(@"secondary") : SPDFCollectionColor(@"text");
     label.lineBreakMode = NSLineBreakByTruncatingTail;
     return label;
 }
@@ -136,12 +139,12 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
     _scroll.drawsBackground = NO; _scroll.automaticallyAdjustsContentInsets = NO; _scroll.contentInsets = NSEdgeInsetsZero; _scroll.contentView.postsBoundsChangedNotifications = YES;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(scrolled:)
         name:NSViewBoundsDidChangeNotification object:_scroll.contentView];
-    _empty = [NSTextField wrappingLabelWithString:@""]; _empty.textColor = NSColor.secondaryLabelColor;
+    _empty = [NSTextField wrappingLabelWithString:@""]; _empty.textColor = SPDFCollectionColor(@"secondary");
     _empty.alignment = NSTextAlignmentCenter; _empty.hidden = YES;
     NSString* help = @"Hidden groups stay open. Hiding removes their tabs from the tab bar without closing documents.";
     _summary.toolTip = help; [_summary setAccessibilityHelp:help];
     NSImageView* info = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"info.circle" accessibilityDescription:help]];
-    info.contentTintColor = NSColor.secondaryLabelColor; info.toolTip = help;
+    info.contentTintColor = SPDFCollectionColor(@"secondary"); info.toolTip = help;
     [info.widthAnchor constraintEqualToConstant:12].active = YES;
     [_summary setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSStackView* footer = [NSStackView stackViewWithViews:@[_summary,info]]; footer.spacing = 6;
@@ -291,7 +294,7 @@ static SPDFGroupActionButton* Icon(NSString* symbol, NSString* help, id target, 
 - (NSTableRowView*)tableView:(NSTableView*)table rowViewForRow:(NSInteger)row {
     SPDFGroupManagementRow* view = [SPDFGroupManagementRow new];
     view.ownerTable = table; view.nextSectionRow = -1;
-    view.groupAccent = spdf_tab_group_accent(_rows[row][@"group"][@"color"]);
+    view.groupColor = _rows[row][@"group"][@"color"];
     if (!_rows[row][@"document"]) for (NSUInteger index=row+1;index<_rows.count;index++) {
         if (!_rows[index][@"document"]) { view.nextSectionRow = index; break; }
     }

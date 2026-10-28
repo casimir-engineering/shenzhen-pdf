@@ -1,3 +1,4 @@
+#import "SPDFMacCollectionStyle.h"
 #import "SPDFMacTabTitleDrawing.h"
 #import "SPDFMacIconGeometry.h"
 #import "SPDFMacTabStripViewPrivate.h"
@@ -124,9 +125,9 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
             NSValue* selected = layout.tabRects[@(self.selectedIndex)];
             if (!selected) continue;
             NSRect rect = selected.rectValue;
-            CGFloat start = NSMinX(rect)-contentStart, end = NSMaxX(rect)-contentStart;
-            if (start < _tabScrollOffset) _tabScrollOffset = start;
-            if (end > _tabScrollOffset+NSWidth(viewport)) _tabScrollOffset = end-NSWidth(viewport);
+            // The whole tab, clear of the "+N" badge on either side of it.
+            _tabScrollOffset = [self tabScrollOffsetRevealingStart:NSMinX(rect)-contentStart end:NSMaxX(rect)-contentStart
+                offset:_tabScrollOffset viewportWidth:NSWidth(viewport) contentWidth:_tabContentWidth];
         }
         _revealSelectedTab = NO;
     }
@@ -215,8 +216,13 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
     for (SPDFTabGroupLayout* layout in [self groupLayouts]) {
         if (NSIsEmptyRect(layout.frame)) continue;
         NSColor* accent = spdf_tab_group_accent(layout.group.colorName);
-        [[accent colorWithAlphaComponent:0.24] setFill];
+        NSColor* label = spdf_tab_group_label(layout.group.colorName);
+        // The title tab is a solid chip of the group's colour with a label that keeps 4.5:1 on it; the outline
+        // keeps a pale chip (Amber in light) 3:1 apart from the tab bar.
+        [accent setFill];
         [[NSBezierPath bezierPathWithRoundedRect:layout.header xRadius:4 yRadius:4] fill];
+        [spdf_tab_group_edge(layout.group.colorName) setStroke];
+        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(layout.header, 0.5, 0.5) xRadius:3.5 yRadius:3.5] stroke];
         if (!layout.group.collapsed) {
             [accent setFill];
             [[NSBezierPath bezierPathWithRoundedRect:
@@ -226,16 +232,18 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
         style.alignment = NSTextAlignmentCenter;
         style.lineBreakMode = NSLineBreakByTruncatingTail;
         NSDictionary* attributes = @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium],
-            NSForegroundColorAttributeName:NSColor.labelColor, NSParagraphStyleAttributeName:style};
+            NSForegroundColorAttributeName:label, NSParagraphStyleAttributeName:style};
         if (!NSIsEmptyRect(layout.overflowFrame)) {
+            // The "+N" badge sits on the tab bar, not on the chip.
+            NSMutableDictionary* badge = [attributes mutableCopy];
+            badge[NSForegroundColorAttributeName] = SPDFCollectionColor(@"text");
             NSString* remaining = [NSString stringWithFormat:@"+%lu",(unsigned long)(layout.members.count-layout.capacity)];
-            [remaining drawInRect:NSInsetRect(layout.overflowFrame,0,4) withAttributes:attributes];
+            [remaining drawInRect:NSInsetRect(layout.overflowFrame,0,4) withAttributes:badge];
         }
         CGFloat iconSpace=layout.group.collectionBackups ? 20 : 0;
         if (iconSpace) {
-            NSImage* icon=[NSImage imageWithSystemSymbolName:@"books.vertical" accessibilityDescription:nil];
-            icon=[icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[NSColor.labelColor]]];
-            SPDFDrawVectorIcon(icon,NSMakeRect(NSMinX(layout.header)+6,NSMidY(layout.header)-6,12,12),YES);
+            SPDFDrawVectorIcon(SPDFChromeSymbol(@"books.vertical",9,NSFontWeightMedium,label),
+                               NSMakeRect(NSMinX(layout.header)+5,NSMidY(layout.header)-7,14,14),YES);
         }
         BOOL hovered=_hasLastHoverPoint && NSPointInRect(_lastHoverPoint,layout.header);
         NSRect titleRect=SPDFTabTitleRect(layout.header,7+iconSpace,7,layout.group.displayName,attributes);
@@ -264,14 +272,10 @@ static SPDFTabGroupLayout* EmptyLayout(SPDFTabGroup* group, NSInteger firstIndex
             {
                 NSRect action = [self groupHideRect:layout.header];
                 if (NSPointInRect(_lastHoverPoint,action)) {
-                    [[NSColor.labelColor colorWithAlphaComponent:.12] setFill];
+                    [[label colorWithAlphaComponent:.18] setFill];
                     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(action,1,1) xRadius:3 yRadius:3] fill];
                 }
-                NSImage* actionIcon = [NSImage imageWithSystemSymbolName:@"eye.slash"
-                    accessibilityDescription:@"Hide group"];
-                actionIcon = [actionIcon imageWithSymbolConfiguration:[NSImageSymbolConfiguration
-                    configurationWithPaletteColors:@[NSColor.labelColor]]];
-                SPDFDrawVectorIcon(actionIcon,NSInsetRect(action,4,4),YES);
+                SPDFDrawVectorIcon(SPDFChromeSymbol(@"eye.slash",9,NSFontWeightMedium,label),NSInsetRect(action,2,2),YES);
             }
             [NSGraphicsContext restoreGraphicsState];
         }

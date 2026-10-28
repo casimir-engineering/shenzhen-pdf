@@ -26,31 +26,32 @@ $(AI_ANALYSIS_TEST): $(AI_READER_BASE_OBJS) $(BUILD)/workspace-probe/mac/tests/S
 		PDFKit -framework ImageIO -framework UniformTypeIdentifiers -framework CoreServices -framework \
 		Security -framework LocalAuthentication -lm -Wl,-dead_strip -o "$@"
 AI_CHAT_VIEW_SRCS := mac/SPDFMacAIChatViewParts.mm mac/SPDFMacAIChatActivityView.mm mac/SPDFMacAIChatActivity.mm \
-	mac/SPDFMacAIChatBudget.mm \
+	mac/SPDFMacAIChatBudget.mm mac/SPDFMacAIChatAttachments.mm mac/SPDFMacAIChatViewFollow.mm \
 	$(MAC_CHAT_MARKDOWN_SRCS)
 $(AI_CHAT_VIEW_TEST): mac/tests/SPDFMacAIChatActivityViewChecks.h mac/tests/SPDFMacAIChatActivityStepChecks.h \
 		mac/friends/SPDFMacFriendsEmojiTables.h $(AI_CHAT_VIEW_SRCS) mac/tests/SPDFMacAIChatBlankRowsChecks.h \
 		mac/tests/SPDFMacAIAnswerCardViewChecks.h mac/tests/SPDFMacAIChatOrderChecks.h \
-		mac/tests/SPDFMacAIChatReopenChecks.h mac/tests/SPDFMacAIChatDockChecks.h mac/tests/SPDFMacAIChatBannerChecks.h \
+		mac/tests/SPDFMacAIChatReopenChecks.h mac/tests/SPDFMacAIChatFollowChecks.h mac/tests/SPDFMacAIChatDockChecks.h mac/tests/SPDFMacAIChatBannerChecks.h \
 		mac/tests/SPDFMacAIChatEditChecks.h mac/tests/SPDFMacAIChatLinkChecks.h mac/tests/SPDFMacAIChatWrapChecks.h \
 		mac/SPDFMacAIChatViewInternal.h \
-		mac/tests/SPDFMacAIChatRetryChecks.h \
+		mac/tests/SPDFMacAIChatRetryChecks.h mac/tests/SPDFMacAIChatAttachmentChecks.h \
 		mac/tests/SPDFMacAIChatViewTests.mm mac/SPDFMacAIChatView.mm mac/SPDFMacAIChatViewMessages.mm \
-		mac/SPDFMacAIAnswerCardView.mm \
+		mac/SPDFMacAIChatViewAnswers.mm mac/SPDFMacAISourceCardView.mm mac/SPDFMacAIAnswerCardView.mm \
 		mac/SPDFMacAIAnswerCard.mm mac/SPDFMacAICitations.mm mac/SPDFMacAIChatSearch.mm \
 		mac/SPDFMacSidebarNavigation.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacPanelSearchField.mm \
 		mac/SPDFMacAIChatDock.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacAIChatMarkdown.mm \
 		mac/SPDFMacAIChatStore.mm mac/SPDFMacAIChatStoreRequestOnly.mm \
-		mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm \
+		mac/SPDFMacGroupActionButton.mm \
 		$(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_MARKDOWN_SRCS)) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) \
 		$(CORE_RECOLOR_OBJ)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac mac/tests/SPDFMacAIChatViewTests.mm \
-		mac/SPDFMacAIChatView.mm mac/SPDFMacAIChatViewMessages.mm $(AI_CHAT_VIEW_SRCS) mac/SPDFMacAIAnswerCardView.mm \
+		mac/SPDFMacAIChatView.mm mac/SPDFMacAIChatViewMessages.mm mac/SPDFMacAIChatViewAnswers.mm \
+		mac/SPDFMacAISourceCardView.mm $(AI_CHAT_VIEW_SRCS) mac/SPDFMacAIAnswerCardView.mm \
 		mac/SPDFMacAIAnswerCard.mm mac/SPDFMacAICitations.mm mac/SPDFMacAIChatSearch.mm \
 		mac/SPDFMacSidebarNavigation.mm mac/SPDFMacSidebarModeControl.mm mac/SPDFMacPanelSearchField.mm \
 		mac/SPDFMacAIChatDock.mm mac/SPDFMacAIChatHistoryView.mm mac/SPDFMacAIChatMarkdown.mm \
 		mac/SPDFMacAIChatStore.mm mac/SPDFMacAIChatStoreRequestOnly.mm \
-		mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm \
+		mac/SPDFMacGroupActionButton.mm \
 		$(patsubst %.mm,$(BUILD)/workspace-probe/%.o,$(MAC_MARKDOWN_SRCS)) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) \
 		$(CORE_RECOLOR_OBJ) -framework Cocoa -framework QuartzCore -framework ImageIO -Wl,-dead_strip -o "$@"
 .PHONY: mac-ai-reader-acceptance

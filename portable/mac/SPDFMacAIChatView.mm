@@ -2,6 +2,7 @@
 #import "SPDFMacAIAnswerCard.h"
 #import "SPDFMacAIAnswerCardView.h"
 #import "SPDFMacAIChatSession.h"
+#import "SPDFMacAIChatSessionGrants.h"
 #import "SPDFMacCollectionStyle.h"
 #import "SPDFMacAIChatMarkdown.h"
 #import "SPDFMacChatMarkdownView.h"
@@ -86,11 +87,11 @@
     [doc addSubview:_messages]; _scroll.documentView=doc; [self addSubview:_scroll];
     _chatFind=[[SPDFMacAIChatSearch alloc] initWithScrollView:_scroll messages:_messages];
     SPDFChatInputScrollView* input=[SPDFChatInputScrollView new]; _input=input; input.translatesAutoresizingMaskIntoConstraints=NO;
-    input.borderType=NSNoBorder; input.contentInsets=NSEdgeInsetsMake(2,2,2,2); input.drawsBackground=YES; input.backgroundColor=NSColor.textBackgroundColor;
+    input.borderType=NSNoBorder; input.contentInsets=NSEdgeInsetsMake(2,2,2,2); input.drawsBackground=YES; input.backgroundColor=SPDFCollectionColor(@"window");
     input.wantsLayer=YES; input.layer.cornerRadius=8; input.hasVerticalScroller=YES; [input updateBorder];
     _composer=[[SPDFChatComposer alloc] initWithFrame:NSMakeRect(0,0,500,64)];
-    _composer.font=[NSFont systemFontOfSize:13]; _composer.textColor=NSColor.labelColor;
-    _composer.backgroundColor=NSColor.textBackgroundColor; _composer.richText=NO; _composer.allowsUndo=YES;
+    _composer.font=[NSFont systemFontOfSize:13]; _composer.textColor=SPDFCollectionColor(@"text");
+    _composer.backgroundColor=SPDFCollectionColor(@"window"); _composer.richText=NO; _composer.allowsUndo=YES;
     _composer.textContainerInset=NSMakeSize(8,8); _composer.autoresizingMask=NSViewWidthSizable;
     _composer.textContainer.widthTracksTextView=YES; _composer.horizontallyResizable=NO;
     _composer.accessibilityLabel=@"Message your document assistant. Enter sends; Shift Enter adds a line.";
@@ -160,6 +161,7 @@
         _stopTrailing,
         [_stop.centerYAnchor constraintEqualToAnchor:_send.centerYAnchor]
     ]];
+    [self setUpAttachments]; [self setUpFollowing];
     return self;
 }
 // The field grows with what is typed, a line at a time, up to its maximum; past that the text scrolls in it.
@@ -241,10 +243,12 @@
     // An answer that couldn't be used, where asking again is safe: what happened, with Retry beside it.
     BOOL retry=!_history && !_submissionError.length && [session respondsToSelector:@selector(canRetry)] &&
         session.canRetry;
-    BOOL issueVisible=!_history && (_submissionError.length>0 || retry);
-    _issue.hidden=!issueVisible;
-    if(retry) { _issueText.stringValue=session.status; _recovery.identifier=@"retry"; _recovery.title=@"Retry";
-        _recovery.accessibilityLabel=_recovery.title; _recovery.toolTip=@"Ask your last question again"; }
+    // A request that paused before finishing: what is left is in its answer; Continue picks up from there.
+    BOOL resume=!_history && !_submissionError.length && !retry && [session respondsToSelector:@selector(canContinue)] && session.canContinue;
+    BOOL issueVisible=!_history && (_submissionError.length>0 || retry || resume); _issue.hidden=!issueVisible;
+    if(retry || resume) { _issueText.stringValue=session.status; _recovery.identifier=retry ? @"retry" : @"continue";
+        _recovery.title=retry ? @"Retry" : @"Continue"; _recovery.accessibilityLabel=_recovery.title; [_recovery invalidateIntrinsicContentSize];
+        _recovery.toolTip=retry ? @"Ask your last question again" : @"Carry on from where it stopped"; }
     // One at a time, so the two are never active together.
     if(issueVisible) { _scrollAboveInput.active=NO; _scrollAboveIssue.active=YES; }
     else { _scrollAboveIssue.active=NO; _scrollAboveInput.active=YES; }
@@ -258,13 +262,13 @@
     else if(state==SPDFMacAIChatActivityPaused) title=@"Paused · Ready to continue";
     else if(state==SPDFMacAIChatActivitySummarizing) title=@"Summarizing earlier messages…";
     else if(state==SPDFMacAIChatActivityStopped) title=@"Stopped · Ready for your next message";
-    _status.stringValue=retry ? @"Not finished" : issueVisible ? @"Message not sent" : title;
+    _status.stringValue=retry || resume ? @"Not finished" : issueVisible ? @"Message not sent" : title;
     // While a tool runs, what it does in the person's words; never its identifier, and nothing for one without words.
     NSString* tool=[session respondsToSelector:@selector(runningTool)] ? session.runningTool : nil;
     NSString* detail=session.activityDetail.length ? session.activityDetail : fallback;
     NSString* progress=[session respondsToSelector:@selector(runningToolProgress)] ? session.runningToolProgress : nil;
     if(tool) detail=progress.length ? progress : SPDFChatRunningToolText(tool) ?: @"";
-    _activityDetail.stringValue=retry ? @"Your chat is saved." : issueVisible ? _submissionError : detail;
+    _activityDetail.stringValue=retry || resume ? @"Your chat is saved." : issueVisible ? _submissionError : detail;
     if(_chatSearch.stringValue.length && !issueVisible && !session.running) {
         NSUInteger matches=0;
         for(NSDictionary* message in session.chat[@"messages"]) {
@@ -293,15 +297,8 @@
     _inputHelp.stringValue=_history ? @"Select a chat above, or start a new one." : @"↵ Send · ⇧↵ New line";
     _redo.enabled=[session respondsToSelector:@selector(canRedo)] && session.canRedo && !session.running;
     _undo.enabled=!session.running && [session respondsToSelector:@selector(canUndo)] && [[session valueForKey:@"canUndo"] boolValue];
-    _status.textColor=NSColor.labelColor;
-    NSAccessibilityPostNotification(_status,NSAccessibilityValueChangedNotification);
-}
-- (void)scrollToNewest {
-    if (_chatSearch.stringValue.length) return;
-    // Rebuilt rich rows change document height. Resolve their layout before
-    // clamping the scroll origin, otherwise the first label can be half hidden.
-    [self layoutSubtreeIfNeeded]; [_scroll.documentView layoutSubtreeIfNeeded];
-    [_scroll.contentView scrollToPoint:NSMakePoint(0,MAX(0,NSHeight(_scroll.documentView.bounds)-NSHeight(_scroll.contentView.bounds)))]; [_scroll reflectScrolledClipView:_scroll.contentView];
+    _status.textColor=SPDFCollectionColor(@"text"); [self showAttachments:_history || ![session respondsToSelector:@selector(grants)] ? @[] : session.grants];
+    NSAccessibilityPostNotification(_status,NSAccessibilityValueChangedNotification); [self updateNewMessagesPill];
 }
 static NSUInteger ActivityAnchor(NSDictionary* row) {
     return [row[@"entry"][SPDFMacAIActivityAnchorKey] unsignedIntegerValue];
@@ -382,14 +379,20 @@ static BOOL StepRow(NSView* view) {
     [view.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
     [self spaceActivityRow:view];
 }
+// Rebuilding moves the transcript without the person scrolling it (SPDFMacAIChatViewFollow.mm).
 - (void)displaySession:(SPDFMacAIChatSession*)session {
+    BOOL outer=!_scrollingItself; _scrollingItself=YES; [self showSession:session]; if(outer) _scrollingItself=NO;
+}
+- (void)showSession:(SPDFMacAIChatSession*)session {
     NSPoint previousOrigin=_scroll.contentView.bounds.origin;
     BOOL differentChat=![_chatID isEqual:session.chat[@"id"]];
-    BOOL followBottom=differentChat || !_displayedMessages || NSMaxY(_scroll.contentView.bounds)>=NSHeight(_scroll.documentView.bounds)-24;
+    BOOL followBottom=differentChat || !_displayedMessages || _followNewest || [self scrolledToEnd];
     if(differentChat) { _visibleLimit=40; _submissionError=nil; _chatSearch.stringValue=@""; [self clearEdit]; }
     [self refreshActivityFromSession:session];
     NSArray* messages=session.chat[@"messages"];
-    if(messages.count>_displayedMessages.count && [messages.lastObject[@"role"] isEqual:@"user"])followBottom=YES;
+    // Sent (Return, Send, Retry, Continue): to the end, and staying there; otherwise new messages below are counted.
+    if(differentChat || (messages.count>_displayedMessages.count && [messages.lastObject[@"role"] isEqual:@"user"])) { followBottom=YES; [self followNewest]; }
+    else if(!followBottom && messages.count>_displayedMessages.count) [self noteUnseenMessages:messages from:_displayedMessages.count];
     if(!differentChat && _displayedMessages && !followBottom)
         for(NSUInteger i=_displayedMessages.count;i<messages.count;i++) {
             NSDictionary* item=messages[i];NSString* role=item[@"role"];
@@ -442,7 +445,7 @@ static BOOL StepRow(NSView* view) {
             NSDictionary* message=visibleMessages[i];
             for(;nextRow<rows.count && ActivityAnchor(rows[nextRow])<=visibleIndexes[i].unsignedIntegerValue;nextRow++)
                 [self addActivityRow:rows[nextRow] session:session];
-            NSString* role=message[@"role"];
+            NSString* role=message[@"role"]; NSUInteger rowsBefore=_messages.arrangedSubviews.count;
             if([role isEqual:@"preview"])[self addPreview:message[@"preview"]];
             else if([role isEqual:@"compaction"])[self addSummaryMarker];
             else if (SPDFMacAIValidatedAnswerCard(message[@"answerCard"],session.chat)) {
@@ -450,7 +453,8 @@ static BOOL StepRow(NSView* view) {
                 [_messages addArrangedSubview:card]; [card.widthAnchor constraintEqualToAnchor:_messages.widthAnchor].active=YES;
             } else if([role isEqual:@"user"])
                 [self addText:message[@"content"] role:@"You" messageIndex:visibleIndexes[i].unsignedIntegerValue];
-            else [self addText:message[@"content"] role:@"Assistant"];
+            else [self addAnswer:message[@"content"]];
+            [self noteRowsFrom:rowsBefore forMessage:visibleIndexes[i].unsignedIntegerValue];
         }
         for(;nextRow<rows.count;nextRow++)[self addActivityRow:rows[nextRow] session:session];
     }
@@ -476,6 +480,7 @@ static BOOL StepRow(NSView* view) {
     [self clearEdit];
     _history=YES; _send.enabled=NO; _stop.enabled=_running; _composer.editable=NO; [self clearRows]; _status.stringValue=@"Chats are saved on this Mac";
     if(_displayedSession) [self refreshActivityFromSession:_displayedSession];
+    [self showAttachments:@[]];
     [_messages addArrangedSubview:[self button:@"Return to current chat" action:@"current"]];
     NSButton* deleteAll=[self button:@"Delete all chats…" action:@"deleteAll"]; deleteAll.enabled=chats.count>0;
     [_messages addArrangedSubview:deleteAll];

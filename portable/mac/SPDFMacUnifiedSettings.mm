@@ -6,6 +6,7 @@
 #import <math.h>
 #import "friends/SPDFMacFriendsSettingsPage.h"
 #import "SPDFMacAICapabilitiesSettings.h"
+#import "SPDFMacAppearanceSettings.h"
 
 const NSInteger SPDFUnifiedSettingsExperienceVersion = 2;
 BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch, BOOL detached) {
@@ -31,12 +32,12 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     (void)dirty;
     NSBezierPath* shape=[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds,.5,.5) xRadius:5 yRadius:5];
     BOOL alternative=[@[@"revealKey",@"hideKey"] containsObject:self.identifier];
-    BOOL primary=[@[@"done",@"connect"] containsObject:self.identifier];
-    [SPDFCollectionColor(self.highlighted || self.state==NSControlStateValueOn || primary ? @"selected" : @"control") setFill];
+    BOOL chosen=self.state==NSControlStateValueOn, accent=self.enabled && [@[@"done",@"connect"] containsObject:self.identifier];
+    [SPDFCollectionColor(chosen ? @"text" : accent ? @"accentFill" : self.highlighted ? @"lineStrong" : @"control") setFill];
     if(!alternative || self.highlighted) [shape fill];
     NSMutableParagraphStyle* style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter;
-    NSDictionary* attributes=@{NSFontAttributeName:self.font,NSForegroundColorAttributeName:
-        SPDFCollectionColor(self.enabled ? (alternative ? @"accent" : @"text") : @"secondary"),NSParagraphStyleAttributeName:style};
+    NSDictionary* attributes=@{NSFontAttributeName:self.font,NSForegroundColorAttributeName:SPDFCollectionColor(!self.enabled ?
+        @"secondary" : chosen ? @"window" : accent ? @"onAccent" : alternative ? @"accent" : @"text"),NSParagraphStyleAttributeName:style};
     CGFloat h=[self.title sizeWithAttributes:attributes].height;
     [self.title drawInRect:NSMakeRect(8,floor((self.bounds.size.height-h)/2),self.bounds.size.width-16,h)
         withAttributes:attributes];
@@ -87,8 +88,8 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     NSView* root=SPDFCollectionSurface(@"window"); window.contentView=root;
     NSStackView* nav=[NSStackView stackViewWithViews:@[]]; self.navigation=nav;
     nav.spacing=8; nav.translatesAutoresizingMaskIntoConstraints=NO;
-    NSArray* keys=@[@"overview",@"ai",@"collection",@"reading",@"friends"];
-    NSArray* labels=@[@"General",@"AI settings",@"Collection",@"Reading & access",@"Friends"];
+    NSArray* keys=@[@"overview",@"ai",@"collection",@"reading",@"appearance",@"friends"];
+    NSArray* labels=@[@"General",@"AI settings",@"Collection",@"Reading & access",@"Appearance",@"Friends"];
     for (NSUInteger i=0;i<keys.count;i++) {
         NSButton* b=[self button:labels[i] action:@selector(changeSection:) key:keys[i]];
         [nav addArrangedSubview:b];
@@ -177,14 +178,13 @@ BOOL SPDFUnifiedSettingsShouldPresent(NSDictionary* settings, BOOL primaryLaunch
     self.section=section; self.secret.stringValue=@""; self.secret=nil;
     self.storageBudget=nil; self.storageLocation=nil; self.storageError=nil;
     for (NSView* view in [self.content.arrangedSubviews copy]) { [self.content removeArrangedSubview:view]; [view removeFromSuperview]; }
-    NSControl* show=self.controls[@"showSettingsOnLaunch"]; [self.controls removeAllObjects];
-    if (show) self.controls[@"showSettingsOnLaunch"]=show;
+    NSControl* show=self.controls[@"showSettingsOnLaunch"]; [self.controls removeAllObjects]; if (show) self.controls[@"showSettingsOnLaunch"]=show;
     for (NSButton* button in self.navigation.arrangedSubviews) button.state=[button.identifier isEqual:section];
     if ([section isEqual:@"ai"]) [self buildAI];
     else if ([section isEqual:@"collection"]) [self buildCollection];
     else if ([section isEqual:@"reading"]) [self buildReading];
-    else if([section isEqual:@"access"]) [self buildAccess];
-    else if([section isEqual:@"defaults"]) [self buildDefaults];
+    else if ([section isEqual:@"appearance"]) [self buildAppearance];
+    else if([section isEqual:@"access"]) [self buildAccess]; else if([section isEqual:@"defaults"]) [self buildDefaults];
     else if([section isEqual:@"friends"]) [self buildFriends];
     else [self buildOverview];
     [self.window.contentView layoutSubtreeIfNeeded];

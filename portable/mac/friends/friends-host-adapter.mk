@@ -65,10 +65,10 @@ HOST_ADAPTER_SESSION_SRCS := mac/SPDFMacAIChatSession.mm mac/SPDFMacAIAnswerCard
 	mac/SPDFMacAIChatStore.mm mac/SPDFMacAIChatStoreRequestOnly.mm \
 	mac/SPDFMacAICitations.mm mac/SPDFMacAIToolRegistry.mm mac/SPDFMacAIRequestContext.mm \
 	mac/SPDFMacAIChatActivity.mm mac/SPDFMacAIChatSessionSummaries.mm mac/SPDFMacAIChatBudget.mm \
-	mac/SPDFMacAIChatSessionCalls.mm mac/SPDFMacAIToolArguments.mm
+	mac/SPDFMacAIChatSessionCalls.mm mac/SPDFMacAIToolArguments.mm mac/SPDFMacAIChatSessionRecovery.mm mac/SPDFMacAIChatProgress.mm
 mac-friends-scope-tests:
 	$(call HOST_ADAPTER_RUN,SPDFMacFriendsScopeTests,$(HOST_ADAPTER_DIR)/tests/SPDFMacFriendsScopeTests.mm \
-		$(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) -framework Cocoa -framework ImageIO)
+		$(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) mac/SPDFMacCollectionStyle.mm -framework Cocoa -framework ImageIO)
 
 # The same enforcement through the AI tool registry, the way the reader now runs it (SPDFMacFriendsToolProvider.h),
 # with the time grant for all chats (SPDFMacFriendsGrantChecks.h) and the audit of every other path to chat content
@@ -85,13 +85,16 @@ HOST_ADAPTER_SEND_SRCS := $(addprefix $(HOST_ADAPTER_DIR)/,SPDFMacFriendsSendRul
 	SPDFMacFriendsSendProvider.mm SPDFMacFriendsSendCards.mm SPDFMacFriendsRevision.mm)
 mac-friends-send-tests:
 	$(call HOST_ADAPTER_RUN,SPDFMacFriendsSendTests,$(HOST_ADAPTER_DIR)/tests/SPDFMacFriendsSendTests.mm \
-		$(HOST_ADAPTER_SEND_SRCS) $(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) -framework Cocoa -framework ImageIO)
+		$(HOST_ADAPTER_SEND_SRCS) $(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) mac/SPDFMacCollectionStyle.mm -framework Cocoa -framework ImageIO)
 
 # The waiting card as the AI chat draws it (SPDFMacAIChatActivityView.h, with the chat's Markdown renderer and the
 # engine objects the workspace probe builds), so "every character Friends delivers is on the card" is checked on the
 # drawn row, not only on the entry. $(sort) because the session and the chat view both list the activity model.
 HOST_ADAPTER_CARD_VIEW_SRCS = $(sort $(HOST_ADAPTER_SEND_SRCS) $(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) \
-	$(AI_CHAT_VIEW_SRCS) mac/SPDFMacAIChatMarkdown.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm)
+	$(filter-out $(HOST_ADAPTER_CHAT_VIEW_CATEGORIES),$(AI_CHAT_VIEW_SRCS)) mac/SPDFMacAIChatMarkdown.mm \
+	mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm)
+# Categories of the assistant's chat view, which the card tests don't link: they need the view itself.
+HOST_ADAPTER_CHAT_VIEW_CATEGORIES := mac/SPDFMacAIChatAttachments.mm mac/SPDFMacAIChatViewFollow.mm
 mac-friends-send-card-tests: $$(MAC_CHAT_MARKDOWN_ENGINE)
 	$(call HOST_ADAPTER_RUN,SPDFMacFriendsSendCardTests,$(HOST_ADAPTER_DIR)/tests/SPDFMacFriendsSendCardTests.mm \
 		$(HOST_ADAPTER_CARD_VIEW_SRCS) $(MAC_CHAT_MARKDOWN_ENGINE) -framework Cocoa -framework ImageIO \
@@ -112,7 +115,7 @@ mac-friends-markdown-tests: $$(MAC_CHAT_MARKDOWN_ENGINE)
 mac-friends-slash-tests:
 	$(call HOST_ADAPTER_RUN,SPDFMacFriendsSlashTests,$(HOST_ADAPTER_DIR)/tests/SPDFMacFriendsSlashTests.mm \
 		$(addprefix $(HOST_ADAPTER_DIR)/,SPDFMacFriendsAssistant.mm SPDFMacFriendsSlashCommand.mm) \
-		$(HOST_ADAPTER_SEND_SRCS) $(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) $(HOST_ADAPTER_FAKES) \
+		$(HOST_ADAPTER_SEND_SRCS) $(HOST_ADAPTER_SCOPE_SRCS) $(HOST_ADAPTER_SESSION_SRCS) mac/SPDFMacCollectionStyle.mm $(HOST_ADAPTER_FAKES) \
 		-framework Cocoa -framework ImageIO)
 
 # app_controls (the reader's own file, needing no coordinator) over fixture windows holding Friends interface.

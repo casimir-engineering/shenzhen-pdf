@@ -7,6 +7,9 @@
 #import "SPDFMacAIModelCatalog.h"
 #import "SPDFMacDefaultFormats.h"
 #import "SPDFMacCollectionStore.h"
+#import "SPDFMacTabGroups.h"
+#import "SPDFMacAppearanceMode.h"
+#import "SPDFMacAppearanceSettings.h"
 #import "SPDFMacCollectionIntegration.h"
 #import <objc/runtime.h>
 #import <sys/file.h>
@@ -74,6 +77,12 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
     }
     return settings;
 }
+// The tab group palettes as the Appearance page shows them, and the one in use.
+static NSDictionary* PaletteState(void) {
+    NSMutableArray* palettes=[NSMutableArray array];
+    for (NSString* name in spdf_tab_group_palettes()) [palettes addObject:@{@"name":name,@"fills":spdf_tab_group_palette_fills(name)}];
+    return @{@"tabGroupPalettes":palettes,@"tabGroupPalette":spdf_tab_group_palette()};
+}
 @implementation ShenzhenMacDelegate (SPDFMacAISettingsIntegration)
 - (NSDictionary*)unifiedSettingsState {
     SPDFMacAISettings* ai=ReadSettings(); NSDictionary* collection=SPDFMacCollectionStore.defaultStore.settings;
@@ -92,7 +101,8 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         @"collectionChoiceMade":@([@[@"enabled",@"disabled"] containsObject:collection[@"choice"] ?: @""]),
         @"showShortcutsOnLaunch":@(_showShortcutHelpOnLaunch),@"keepImageColors":@(_darkThemePreservesImagesDefault)}
         mutableCopy];
-    [state addEntriesFromDictionary:[self aiCapabilitiesSettingsState:ai]]; return state;
+    [state addEntriesFromDictionary:[self aiCapabilitiesSettingsState:ai]];
+    [state addEntriesFromDictionary:PaletteState()]; state[@"appearanceMode"]=spdf_appearance_mode(); return state;
 }
 - (void)showUnifiedSettings:(id)sender {
     (void)sender; [self showUnifiedSettingsMode:NO];
@@ -184,6 +194,10 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
         [(SPDFMacUnifiedSettingsController*)objc_getAssociatedObject(self,&settingsControllerKey) updateState:[self unifiedSettingsState]];
     }
     if (changes[@"keepImageColors"]) { _darkThemePreservesImagesDefault=[changes[@"keepImageColors"] boolValue]; [self savePersistentState]; }
+    if (changes[@"appearanceMode"] && !spdf_appearance_mode_set(changes[@"appearanceMode"]))
+        error=[NSError errorWithDomain:@"ShenzhenPDF.Appearance" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Light or dark could not be saved. ShenzhenPDF will follow the system again when it restarts."}];
+    if (changes[@"tabGroupPalette"] && !spdf_tab_group_set_palette(changes[@"tabGroupPalette"]))
+        error=[NSError errorWithDomain:@"ShenzhenPDF.Appearance" code:1 userInfo:@{NSLocalizedDescriptionKey:@"The tab group colors could not be saved. They will go back to the previous colors when ShenzhenPDF restarts."}];
     if (changes[@"showShortcutsOnLaunch"]) { _showShortcutHelpOnLaunch=[changes[@"showShortcutsOnLaunch"] boolValue]; [self savePersistentState]; }
     [self configureAIAnalysis:AnalysisSettings(ReadSettings())];
     if (![ai allowsRequestsForSetupRevision:SPDFUnifiedSettingsExperienceVersion]) [self cancelAIChat];
@@ -280,6 +294,12 @@ static SPDFMacAISettings* AnalysisSettings(SPDFMacAISettings* settings) {
             if (![settings allowsRequestsForSetupRevision:SPDFUnifiedSettingsExperienceVersion]) [reader cancelAIChat];
         }];
     objc_setAssociatedObject(self,&settingsObserverKey,observer,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // tab-group-palettes.json changed: the Appearance page shows the palettes as they now are.
+    [NSNotificationCenter.defaultCenter addObserverForName:SPDFTabGroupPalettesChangedNotification object:nil
+        queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification* note) {
+            (void)note; SPDFMacUnifiedSettingsController* controller=objc_getAssociatedObject(weakSelf,&settingsControllerKey);
+            [controller updateState:PaletteState()]; [controller refreshAppearance];
+        }];
 }
 - (void)showUnifiedSettingsAfterFirstPaint {
     [self observeAISettingsChanges];

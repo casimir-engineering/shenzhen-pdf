@@ -24,7 +24,19 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
     NSPanel* _hoverPanel;
     NSPopover* _groupPicker;
     NSTextField* _hoverLabel;
+    NSView* _hoverBubble;
+    // The page thumbnail under a document tab's title; built on first use.
+    NSView* _hoverCard;
+    NSView* _hoverThumbnail;
     NSInteger _hoverTabIndex;
+    // The tab whose label shows and the rect the label hangs under: a label
+    // follows its tab, not its index, when tabs move, close or scroll.
+    __weak SPDFDocumentTab* _hoverTab;
+    NSRect _hoverAnchorRect;
+    BOOL _hoverRefreshScheduled;
+    // The group whose title tab shows the hover label; nil while a document's
+    // label (or none) is shown.
+    SPDFTabGroup* _hoverGroup;
     NSInteger _draggedTabIndex;
     NSInteger _dragSessionTabIndex;
     NSPoint _dragStartPoint;
@@ -65,6 +77,10 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
     CGFloat _tabContentWidth;
     NSRect _tabPinnedViewport;
     BOOL _revealSelectedTab;
+    // The trackpad gesture under way: how far the fingers have moved it on each axis, and the axis it and its
+    // momentum follow (0 not yet, 1 across, 2 up and down).
+    CGFloat _scrollGestureX, _scrollGestureY;
+    NSInteger _scrollGestureAxis;
     SPDFTabGroup* _pressedGroupAction;
     id _groupLayout;
     NSRect _groupLayoutBounds;
@@ -105,7 +121,17 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (NSString*)view:(NSView*)view stringForToolTip:(NSToolTipTag)tag point:(NSPoint)point userData:(void*)userData;
 - (void)dismissHoverPanel;
 - (void)updateHoverForPoint:(NSPoint)point;
+- (NSRect)visibleRectForTabAtIndex:(NSInteger)index;
+- (NSInteger)hoverTabIndexAtPoint:(NSPoint)point;
+- (void)refreshHoverAfterLayoutChange;
 - (void)showHoverPanelForTabAtIndex:(NSInteger)index;
+- (void)showHoverPanelForGroup:(SPDFTabGroup*)group;
+- (NSRect)hoverPanelFrameWithSize:(NSSize)size belowRect:(NSRect)tabRect;
+- (void)moveHoverPanelBelowRect:(NSRect)tabRect;
+- (BOOL)showHoverPanelWithTitle:(NSString*)title belowRect:(NSRect)rect;
+- (BOOL)showHoverPanelWithTitle:(NSString*)title belowRect:(NSRect)rect
+                        preview:(id)preview fadeIn:(BOOL)fadeIn;
+- (void)hoverPreviewReady:(id)preview forTab:(SPDFDocumentTab*)tab;
 - (void)updateHoverForEvent:(NSEvent*)event;
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs;
 - (void)setSelectedIndex:(NSInteger)selectedIndex;
@@ -179,6 +205,9 @@ static NSPasteboardType const SPDFTabDragPasteboardType = @"com.intuition.shenzh
 - (NSRect)tabScrollIndicatorRectOnLeft:(BOOL)left;
 - (NSInteger)tabScrollHiddenCountOnLeft:(BOOL)left;
 - (void)scrollTabStripBy:(CGFloat)delta;
+- (CGFloat)tabScrollIndicatorReserve;
+- (CGFloat)tabScrollOffsetRevealingStart:(CGFloat)start end:(CGFloat)end offset:(CGFloat)offset
+                           viewportWidth:(CGFloat)width contentWidth:(CGFloat)content;
 - (BOOL)handleTabScrollMouseDown:(NSEvent*)event;
 - (BOOL)isPointOnHiddenTabsIndicator:(NSPoint)point;
 - (NSMenu*)hiddenTabsMenuOnLeft:(BOOL)left;

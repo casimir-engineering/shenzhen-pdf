@@ -1,6 +1,7 @@
 /* The composer (szfriends_gtk_conversation.h; mirrors mac/SZFriendsComposerView.m): Return sends, Shift+Return breaks
  * the line, `#` opens the host's items, `@` the friends who may be mentioned, and files chosen with the paperclip
- * (Attach files) or dropped become chips that go with the next Send; nothing is sent until then.
+ * (Attach files), pasted (szfriends_gtk_composer_paste.c) or dropped become chips that go with the next Send;
+ * nothing is sent until then.
  *
  * An @ chip is a child anchor in the text, which GTK counts as U+FFFC: the message goes out with one U+FFFC per chip
  * and one `mentions` entry per chip in the same order, and the helper writes each mention itself (PROTOCOL.md
@@ -80,30 +81,32 @@ static void send_clicked(GtkButton *button, gpointer data) {
 
 /* ---- Attach files ---------------------------------------------------------------------------------------- */
 
-static void files_chosen(GSList *files, gpointer data) {
-    SZFriendsGtkComposerView *composer = data;
-    if (composer->root && files) {
-        SZFriendsGtkLink *link = composer->conversation->link;
-        SZFriendsGtkDropVerdict verdict = szfriends_gtk_drop_verdict_for_files(files);
-        if (szfriends_gtk_drop_refused(verdict)) {
-            szfriends_gtk_composer_set_error(composer, szfriends_gtk_drop_refusal(link, verdict));
-        } else if (verdict == SZFRIENDS_GTK_DROP_ACCEPT) {
-            GValue value = G_VALUE_INIT;
-            g_value_init(&value, GDK_TYPE_FILE_LIST);
-            g_value_take_boxed(&value, gdk_file_list_new_from_list(files));
-            SZFriendsGtkDropVerdict taken = SZFRIENDS_GTK_DROP_NONE;
-            GPtrArray *items = szfriends_gtk_drop_items(szfriends_gtk_link_host(link), &value, &taken);
-            szfriends_gtk_composer_set_error(composer, NULL);
-            if (items->len) {
-                szfriends_gtk_composer_add_items(composer, items);
-                szfriends_gtk_composer_save_draft(composer);
-            }
-            g_ptr_array_unref(items);
-            g_value_unset(&value);
-            gtk_widget_grab_focus(composer->text_view);
+void szfriends_gtk_composer_attach_files(SZFriendsGtkComposerView *composer, GSList *files) {
+    if (!composer->root || !files) return;
+    SZFriendsGtkLink *link = composer->conversation->link;
+    SZFriendsGtkDropVerdict verdict = szfriends_gtk_drop_verdict_for_files(files);
+    if (szfriends_gtk_drop_refused(verdict)) {
+        szfriends_gtk_composer_set_error(composer, szfriends_gtk_drop_refusal(link, verdict));
+    } else if (verdict == SZFRIENDS_GTK_DROP_ACCEPT) {
+        GValue value = G_VALUE_INIT;
+        g_value_init(&value, GDK_TYPE_FILE_LIST);
+        g_value_take_boxed(&value, gdk_file_list_new_from_list(files));
+        SZFriendsGtkDropVerdict taken = SZFRIENDS_GTK_DROP_NONE;
+        GPtrArray *items = szfriends_gtk_drop_items(szfriends_gtk_link_host(link), &value, &taken);
+        szfriends_gtk_composer_set_error(composer, NULL);
+        if (items->len) {
+            szfriends_gtk_composer_add_items(composer, items);
+            szfriends_gtk_composer_save_draft(composer);
         }
+        g_ptr_array_unref(items);
+        g_value_unset(&value);
+        gtk_widget_grab_focus(composer->text_view);
     }
-    composer_unref(composer);
+}
+
+static void files_chosen(GSList *files, gpointer data) {
+    szfriends_gtk_composer_attach_files(data, files);
+    composer_unref(data);
 }
 
 static void attach_clicked(GtkButton *button, gpointer data) {
@@ -127,6 +130,10 @@ static gboolean key_pressed(GtkEventControllerKey *keys, guint keyval, guint key
                             gpointer data) {
     (void)keys, (void)keycode;
     SZFriendsGtkComposerView *composer = data;
+    /* The `#` picker follows the composer: Up, Down and Return choose there first, unless an input method composes. */
+    if (composer->picker && !composer->preedit && !(state & GDK_SHIFT_MASK) &&
+        szfriends_gtk_picker_key(composer->picker, keyval))
+        return TRUE;
     if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_ISO_Enter) return FALSE;
     /* Return while an input method composes (pinyin, kana) commits what it composed; it never sends. */
     if (composer->preedit || (state & GDK_SHIFT_MASK)) return FALSE;
@@ -151,7 +158,6 @@ static gboolean open_picker_later(gpointer data) {
 }
 
 static void inserted(GtkTextBuffer *buffer, GtkTextIter *at, const char *text, int length, gpointer data) {
-    (void)at;
     SZFriendsGtkComposerView *composer = data;
     if (composer->restoring || !composer->enabled || length != 1 || (text[0] != '#' && text[0] != '@')) return;
     /* `@` only where the helper writes mentions: an older one would send each U+FFFC as it is (PROTOCOL.md). */
@@ -160,7 +166,20 @@ static void inserted(GtkTextBuffer *buffer, GtkTextIter *at, const char *text, i
                      szfriends_gtk_composer_mention_count(composer) >= SZFRIENDS_GTK_MAX_MENTIONS))
         return;
     if (!mentions && !szfriends_gtk_link_host(composer->conversation->link)->attachable_items) return;
-    /* The picker takes focus; that waits until the buffer finished inserting. */
+    if (!mentions) {
+        /* Where the `#` is, for the picker to follow what is typed after it. */
+        GtkTextIter hash = *at;
+        gtk_text_iter_backward_char(&hash);
+        GtkTextMark *mark = gtk_text_buffer_get_mark(buffer, SZFRIENDS_GTK_HASH_MARK);
+        if (mark) gtk_text_buffer_move_mark(buffer, mark, &hash);
+        else gtk_text_buffer_create_mark(buffer, SZFRIENDS_GTK_HASH_MARK, &hash, FALSE);
+    }
+    /* `#` opens on this frame: the composer keeps the focus, and the insertion is done (this runs after it). */
+    if (!mentions) {
+        szfriends_gtk_composer_open_attach_picker(composer);
+        return;
+    }
+    /* The `@` picker takes focus; that waits until the buffer finished inserting. */
     g_object_set_data(G_OBJECT(buffer), "szfriends-picker-kind", GINT_TO_POINTER(mentions));
     g_idle_add(open_picker_later, composer_ref(composer));
 }
@@ -169,6 +188,13 @@ static void changed(GtkTextBuffer *buffer, gpointer data) {
     SZFriendsGtkComposerView *composer = data;
     gtk_widget_set_visible(composer->placeholder, gtk_text_buffer_get_char_count(buffer) == 0);
     szfriends_gtk_composer_save_draft(composer);
+    if (composer->picker) szfriends_gtk_picker_follow(composer->picker);
+}
+
+static void cursor_moved(GObject *buffer, GParamSpec *spec, gpointer data) {
+    (void)buffer, (void)spec;
+    SZFriendsGtkComposerView *composer = data;
+    if (composer->picker) szfriends_gtk_picker_follow(composer->picker);
 }
 
 /* ---- Building and applying ------------------------------------------------------------------------- */
@@ -273,10 +299,12 @@ GtkWidget *szfriends_gtk_composer_new(SZFriendsGtkConversation *conversation) {
     szfriends_gtk_composer_restore_draft(composer);
     g_signal_connect_after(composer->buffer, "insert-text", G_CALLBACK(inserted), composer);
     g_signal_connect(composer->buffer, "changed", G_CALLBACK(changed), composer);
+    g_signal_connect(composer->buffer, "notify::cursor-position", G_CALLBACK(cursor_moved), composer);
     gtk_widget_set_visible(composer->placeholder, gtk_text_buffer_get_char_count(composer->buffer) == 0);
     szfriends_gtk_composer_add_items(composer, NULL);
 
     szfriends_gtk_composer_add_drop_target(composer, root);
+    szfriends_gtk_composer_add_paste(composer);
     conversation->composer = composer;
     return root;
 }

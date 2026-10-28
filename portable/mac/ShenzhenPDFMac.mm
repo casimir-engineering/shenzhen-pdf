@@ -2,7 +2,9 @@
 #import "SPDFMacReadOnlyCopy.h"
 #import "SPDFMacMenuText.h"
 #import "SPDFMacClipboardIntegration.h"
-#import "SPDFMacUnsavedImageClose.h"
+#import "SPDFMacQuitFinishing.h"
+#import "SPDFMacStatePrefetch.h"
+#import "SPDFMacWritableCopy.h"
 #import "SPDFMacShortcutHelpStyle.h"
 #import "SPDFMacFindContext.h"
 #import "SPDFMacFindExecution.h"
@@ -559,7 +561,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
-    spdf_launch_profile_log(@"applicationDidFinishLaunching enter");
+    spdf_mac_launch_began(); // logs "applicationDidFinishLaunching enter"
     // Quit-for-update IPC: every process (primary and restored siblings) listens
     // for the driver's distributed request so it can exit WITHOUT re-cascading
     // terminate to all other processes (the N-squared storm). Non-sandboxed only.
@@ -795,6 +797,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
       [self->_pageScrollView displayIfNeeded];
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
                      dispatch_get_main_queue(), ^{
+                       spdf_mac_first_paint_done(); // Collection's launch capture, after the first frame
                        [self resumePersistentStateSavesAfterLaunch];
                        [self showUnifiedSettingsAfterFirstPaint];
                        [self listenForDocumentsOpenedInOtherWindows];
@@ -888,19 +891,18 @@ static char kSPDFPasswordPromptClosesNewTabKey;
     return YES;
 }
 
+// Every change is saved as it is made, so a quit asks nothing: hide, then write (SPDFMacQuitFinishing.mm).
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
-    (void)sender;
-    if ([self deferUnsavedImageTermination]) return NSTerminateCancel;
-    if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
+    if (![self beginQuit]) return (void)sender, NSTerminateLater; // already finishing
     if (!_terminateOnlyThisProcess && !gSPDFTerminatingAllWindows) {
         gSPDFTerminatingAllWindows = YES;
         for (NSRunningApplication* app in [self otherRunningShenzhenApplications]) [app terminate];
     }
-    return NSTerminateNow;
+    return [self finishQuitAfterHiding];
 }
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
-    (void)notification;
+    if ((void)notification, ![self quitClaimFinalWrites]) return [self quitRelaunchIfRequested];
     [self dismissPendingPasswordPrompt];
     [SPDFPasswordCredentialStore.sharedStore removeAllCredentials];
     [self stopKeyboardScrollAnimation];
@@ -920,6 +922,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
     [_inactiveTabPreloadQueue cancelAllOperations];
     [_launchWorkCoordinator stop];
     [_findQueue cancelAllOperations];
+    [self cancelProgressiveFind];
     [self rememberActiveTabState];
     // If the app terminates before the post-first-paint resume ran, lift the
     // launch save suspension so this final save cannot be swallowed.
@@ -929,6 +932,7 @@ static char kSPDFPasswordPromptClosesNewTabKey;
     [self clearActiveMetadata];
     [self closeActiveDocumentIfUnowned];
     spdf_teardown_inactive_magnify_tap();
+    [self quitRelaunchIfRequested];
 }
 
 - (void)applicationDidResignActive:(NSNotification*)notification {
@@ -944,15 +948,13 @@ static char kSPDFPasswordPromptClosesNewTabKey;
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     if (sender != _window) return YES;
-    [self dismissTabHoverPanel];
-    [self rememberActiveTabState];
     // The red close button quits the entire app, exactly like Cmd+Q: cascade
     // terminate to every sibling window and write the normal session so the next
-    // launch restores all windows. Do not special-case other open windows.
+    // launch restores all windows. Do not special-case other open windows. The
+    // window leaves the screen now; the quit writes the session out of sight.
     _terminateOnlyThisProcess = NO;
     _suppressSessionWriteOnTerminate = NO;
-    [self resumePersistentStateSavesAfterLaunch];
-    [self savePersistentState];
+    [self hideWindowsForQuit];
     dispatch_async(dispatch_get_main_queue(), ^{
       [NSApp terminate:self];
     });
@@ -1087,13 +1089,15 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (id)stateObjectFromFile:(NSString*)name {
     double launchStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    NSData* data = [NSData dataWithContentsOfFile:[self pathForStateFile:name]];
-    if (!data) {
+    NSString* path = [self pathForStateFile:name];
+    id object = spdf_mac_take_prefetched_state(path); // parsed while AppKit started (SPDFMacStatePrefetch.mm)
+    NSData* data = object ? nil : [NSData dataWithContentsOfFile:path];
+    if (!object && !data) {
         if (launchStart > 0.0)
             spdf_launch_profile_log(@"state %@ missing %.1fms", name, spdf_zoom_profile_now_ms() - launchStart);
         return nil;
     }
-    id object = spdf_state_object_from_yaml_data(data);
+    if (!object) object = spdf_state_object_from_yaml_data(data);
     if (launchStart > 0.0) {
         spdf_launch_profile_log(@"state %@ %lu bytes %.1fms", name, (unsigned long)data.length,
                                 spdf_zoom_profile_now_ms() - launchStart);
@@ -1817,7 +1821,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (void)rememberClosedDocumentPath:(NSString*)path {
     if (path.length == 0) return;
-    [_closedDocumentPaths addObject:[path copy]];
+    [_closedDocumentPaths addObject:[path copy]]; [self activityDocumentWillClose]; // the tab in front may change
     while (_closedDocumentPaths.count > kRecentDocumentLimit) [_closedDocumentPaths removeObjectAtIndex:0];
 }
 
@@ -2121,11 +2125,9 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     // lookups). Menu-item icons are only visible once a submenu is opened,
     // which cannot happen before the first paint, so build them just after
     // launch instead of on the critical path. The menu bar itself (titles
-    // only) is identical either way.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-                     spdf_apply_system_icons_to_main_menu_contents(mainMenu);
-                   });
+    // only) is identical either way. Not a dispatch_after from here: its timer
+    // fired while launch still ran and queued the block ahead of the first frame.
+    spdf_mac_after_first_paint(^{ spdf_apply_system_icons_to_main_menu_contents(mainMenu); });
 }
 
 - (NSString*)displayVersion {
@@ -2224,7 +2226,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         NSTextField* versionLabel =
             [NSTextField labelWithString:[NSString stringWithFormat:@"Version %@", [self displayVersion]]];
         versionLabel.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightRegular];
-        versionLabel.textColor = NSColor.secondaryLabelColor;
+        versionLabel.textColor = SPDFCollectionColor(@"secondary");
         versionLabel.alignment = NSTextAlignmentCenter;
 
         NSTextField* aboutLabel =
@@ -2244,7 +2246,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
             updateLink.bezelStyle = NSBezelStyleInline;
             updateLink.bordered = NO;
             updateLink.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightRegular];
-            updateLink.contentTintColor = NSColor.linkColor;
+            updateLink.contentTintColor = SPDFCollectionColor(@"accent");
             updateLink.translatesAutoresizingMaskIntoConstraints = NO;
             updateLink.accessibilityRole = NSAccessibilityButtonRole;
             updateLink.accessibilityLabel = @"Check for Updates";
@@ -2364,7 +2366,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     button.attributedTitle = [[NSAttributedString alloc] initWithString:button.title
                                                              attributes:@{
                                                                  NSFontAttributeName : font,
-                                                                 NSForegroundColorAttributeName : NSColor.labelColor,
+                                                                 NSForegroundColorAttributeName : SPDFCollectionColor(@"text"),
                                                                  NSParagraphStyleAttributeName : style,
                                                              }];
 }
@@ -2723,9 +2725,12 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _findCountLabel = [SPDFToolbarDragLabel labelWithString:@""];
     _findCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _findCountLabel.alignment = NSTextAlignmentCenter;
-    _findCountLabel.textColor = NSColor.secondaryLabelColor;
+    _findCountLabel.textColor = SPDFCollectionColor(@"secondary");
     _findCountLabel.font = [NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
-    [_findCountLabel.widthAnchor constraintEqualToConstant:64].active = YES;
+    // Wide enough for "1,234 / 5,678" and "12,345 matches…" while a search runs.
+    [_findCountLabel.widthAnchor constraintGreaterThanOrEqualToConstant:64].active = YES;
+    [_findCountLabel setContentHuggingPriority:NSLayoutPriorityRequired
+                                forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     _ocrSeparator = [[NSBox alloc] init];
     _ocrSeparator.boxType = NSBoxSeparator;
@@ -2821,10 +2826,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     // path (same policy as the main-menu SF symbols in buildMenu). If the
     // menu is somehow opened sooner, it works identically minus icons for
     // one open.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kAfterFirstPaintDelay * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-                     spdf_apply_system_icons_to_menu(sidebarMenu);
-                   });
+    spdf_mac_after_first_paint(^{ spdf_apply_system_icons_to_menu(sidebarMenu); });
     _sidebarTable.menu = sidebarMenu;
     NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"title"];
     column.title = @"Title";
@@ -6813,7 +6815,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
 
 - (NSString*)displayNameForPathConsideringOpenTabs:(NSString*)path {
     if (!path.length) return @"";
-    for (SPDFDocumentTab* tab in _tabs) if ([tab.path isEqual:path] && tab.collectionVersionLabel.length) return tab.collectionVersionLabel;
+    for (SPDFDocumentTab* tab in _tabs) if ([tab.path isEqual:path] && (tab.collectionVersionLabel.length || spdf_tab_display_name(tab))) return tab.collectionVersionLabel.length ? tab.collectionVersionLabel : spdf_tab_display_name(tab);
     NSString* standardized = path.stringByStandardizingPath;
     NSArray<NSString*>* paths = [self openTabPaths];
     NSArray<NSString*>* names = spdf_disambiguated_display_names_for_paths(paths);
@@ -7321,7 +7323,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _commentLabel = [NSTextField wrappingLabelWithString:@""];
         _commentLabel.translatesAutoresizingMaskIntoConstraints = NO;
         _commentLabel.font = [NSFont systemFontOfSize:12];
-        _commentLabel.textColor = NSColor.labelColor;
+        _commentLabel.textColor = SPDFCollectionColor(@"text");
         [bubble addSubview:_commentLabel];
         [NSLayoutConstraint activateConstraints:@[
             [_commentLabel.leadingAnchor constraintEqualToAnchor:bubble.leadingAnchor constant:10],
@@ -7774,7 +7776,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (BOOL)ensureActivePDFCanBeModifiedForOperation:(NSString*)operationName {
-    if (SPDFMacPathIsCollectionArchive(_path)) return [self collectionProtectPath:_path operation:operationName];
+    // A Collection backup is never written: the edit goes to a writable copy, as for a read-only file.
+    if (SPDFMacPathIsCollectionArchive(_path)) return [self moveActivePDFToWritableCopyForOperation:operationName];
     if (spdf_is_password_protected(_doc)) {
         BOOL annotationOperation =
             [operationName rangeOfString:@"comment" options:NSCaseInsensitiveSearch].location != NSNotFound;
@@ -7787,30 +7790,9 @@ static BOOL spdf_page_list_cache_disabled(void) {
             return NO;
         }
     }
-    NSString* reason = nil;
-    if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason])
+    if (![self activePDFNeedsSaveAsBeforeModificationWithReason:NULL])
         return [self collectionProtectPath:_path operation:operationName];
-
-    while (YES) {
-        NSAlert* alert = [[NSAlert alloc] init];
-        alert.messageText =
-            [NSString stringWithFormat:@"Save a writable copy before %@?", operationName ?: @"modifying"];
-        alert.informativeText = [NSString
-            stringWithFormat:@"%@ Shenzhen PDF needs a normal writable PDF file for this operation.", reason ?: @""];
-        [alert addButtonWithTitle:@"Save As..."];
-        [alert addButtonWithTitle:@"Cancel"];
-        alert.alertStyle = NSAlertStyleInformational;
-        if ([alert runModal] != NSAlertFirstButtonReturn) return NO;
-
-        NSString* status = [NSString stringWithFormat:@"Writable copy saved for %@.", operationName ?: @"modification"];
-        if (![self saveActiveDocumentAsWithPanelTitle:@"Save Writable PDF As" statusMessage:status]) return NO;
-        reason = nil;
-        if (![self activePDFNeedsSaveAsBeforeModificationWithReason:&reason])
-        return [self collectionProtectPath:_path operation:operationName];
-        [self showError:@"Choose another location"
-                 detail:[NSString stringWithFormat:@"%@ Save the PDF outside temporary or read-only folders.",
-                                                   reason ?: @"The saved PDF is still not writable."]];
-    }
+    return [self moveActivePDFToWritableCopyForOperation:operationName]; // never asks (SPDFMacWritableCopy.mm)
 }
 
 - (void)activateCachedSelectedTab:(SPDFDocumentTab*)tab
@@ -8209,8 +8191,8 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self dismissPendingPasswordPrompt];
     [self cancelDocumentTransientInteraction];
     [self clearToolbarFieldFocusForTabSwitch];
-    [self.tabLifecycle recordActivationOfIdentifier:tab];
-    [_launchWorkCoordinator recordActivationOfIdentifier:tab];
+    [self.tabLifecycle recordActivationOfIdentifier:tab]; [_launchWorkCoordinator recordActivationOfIdentifier:tab];
+    [self activityTabDidLoad:tab]; // last opened, and the tab in front (SPDFMacDocumentActivityIntegration.h)
     NSInteger savedFindMatchIndex = tab.findMatchIndex;
     [_renderQueue cancelAllOperations];
     [self cancelCacheRenderOperations];
@@ -8478,7 +8460,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         // Re-clicking the active tab still plants keyboard focus on the document.
         [self focusActiveDocumentViewAfterTabSelection];
         if (_tabs[(NSUInteger)index].group) [self savePersistentState];
-        return;
+        [_tabStrip revealSelectedTab]; return;
     }
     [self clearToolbarFieldFocusForTabSwitch];
     [self rememberActiveTabState];
@@ -8487,7 +8469,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self normalizeTabGroups];
     [self loadSelectedTab];
     [self savePersistentState];
-    [self focusActiveDocumentViewAfterTabSelection];
+    [self focusActiveDocumentViewAfterTabSelection]; [_tabStrip revealSelectedTab];
 }
 
 - (void)closeTabAtIndex:(NSInteger)index {
@@ -8495,7 +8477,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
 }
 
 - (void)closeTabAtIndex:(NSInteger)index preferMostRecentActive:(BOOL)preferMostRecentActive {
-    if ([self deferClosingUnsavedImageAtIndex:index preferMostRecentActive:preferMostRecentActive]) return;
     if (index < 0 || index >= (NSInteger)_tabs.count) return;
     BOOL closingActive = index == _selectedTabIndex;
     if (closingActive) [self cancelDocumentTransientInteraction];
@@ -8543,9 +8524,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [_renderedPages removeAllObjects];
         [self rebuildSidebar];
         if (shouldCloseThisWindow) {
-            [self removeSessionStateForCurrentWindow];
             _suppressSessionWriteOnTerminate = YES;
             _terminateOnlyThisProcess = YES;
+            [self hideWindowsForQuit];
+            [self removeSessionStateForCurrentWindow];
             dispatch_async(dispatch_get_main_queue(), ^{
               [NSApp terminate:self];
             });
@@ -8917,127 +8899,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
         title = item.title && *item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
     }
     return title.length ? title : @"Document";
-}
-
-// Attributes a search match to the outline heading that precedes it in reading
-// order. `pt` is the top-left of the match rect in the app's TOP-DOWN page space
-// (origin top-left, y increases downward), i.e. the same convention search rects
-// use. Outline dest coordinates (spdf_outline_item.dest_x/dest_y) were determined
-// empirically to ALSO be top-down on this corpus (a heading visually at the top of
-// the page has the smallest dest_y, matching search rect y0), so no axis flip is
-// needed and page height is not required to compare them. When the page has no
-// outline entry with a usable dest that precedes the match, this falls back to the
-// cross-page chapter carried over from earlier pages (today's page-only behavior),
-// preserving correctness for single-heading-per-page docs and PDFs whose outline
-// lacks coordinates.
-- (NSString*)chapterTitleForMatchOnPage:(NSInteger)pageIndex atPagePoint:(NSPoint)pt {
-    if (_outline.count <= 0) return @"";
-
-    // Cross-page candidate: the last heading (document order) on the largest page
-    // strictly before matchPage. This is the chapter that carried over onto the
-    // match's page from earlier in the document. Mirrors chapterTitleForPage:'s
-    // tie-break on level for same-page entries.
-    NSString* carryTitle = @"";
-    NSInteger carryPage = -1;
-    NSInteger carryLevel = -1;
-
-    // On-page candidate: among headings on matchPage that have a usable dest and
-    // are at-or-before the match in reading order (y first with a tolerance, then
-    // x), pick the latest one in reading order.
-    const CGFloat yTol = 1.0; // small tolerance so a heading on the match's own line still counts
-    BOOL haveOnPage = NO;
-    NSString* onPageTitle = @"";
-    CGFloat bestY = -CGFLOAT_MAX;
-    CGFloat bestX = -CGFLOAT_MAX;
-
-    for (int i = 0; i < _outline.count; ++i) {
-        spdf_outline_item item = _outline.items[i];
-        if (item.page_index < 0) continue;
-        NSString* itemTitle = item.title && *item.title ? [NSString stringWithUTF8String:item.title] : @"Untitled";
-        NSInteger level = MAX(0, item.level);
-
-        if (item.page_index < pageIndex) {
-            if (item.page_index < carryPage) continue;
-            if (item.page_index == carryPage && level < carryLevel) continue;
-            carryPage = item.page_index;
-            carryLevel = level;
-            carryTitle = itemTitle;
-            continue;
-        }
-        if (item.page_index > pageIndex) continue;
-
-        // Same page as the match. Only usable if the heading carries a position.
-        if (!item.has_dest) continue;
-        CGFloat hy = (CGFloat)item.dest_y;
-        CGFloat hx = (CGFloat)item.dest_x;
-        // Heading must be at-or-before the match in reading order.
-        BOOL precedes = (hy < pt.y + yTol) && (fabs(hy - pt.y) > yTol || hx <= pt.x);
-        if (!precedes) continue;
-        // Among those, keep the latest in reading order (largest y, then x).
-        if (hy > bestY + yTol || (fabs(hy - bestY) <= yTol && hx >= bestX)) {
-            bestY = hy;
-            bestX = hx;
-            onPageTitle = itemTitle;
-            haveOnPage = YES;
-        }
-    }
-
-    if (haveOnPage && onPageTitle.length) return onPageTitle;
-    if (carryTitle.length) return carryTitle;
-    // No heading precedes the match anywhere: fall back to page-only grouping
-    // (handles PDFs whose outline lacks dest coordinates entirely).
-    NSString* fallback = [self chapterTitleForPage:pageIndex];
-    return fallback.length ? fallback : @"Document";
-}
-
-- (void)rebuildSearchSidebarItems {
-    if (!_doc || ![self hasSearchSidebar]) return;
-    NSString* query = _searchField.stringValue ?: @"";
-    if (_findSearchInProgress && _findMatches.count == 0) {
-        [_sidebarItems addObject:@{
-            @"kind" : @"findStatus",
-            @"page" : @(-1),
-            @"title" : [NSString stringWithFormat:@"Searching for \"%@\"...", query]
-        }];
-        return;
-    }
-    if (self.findFailureMessage.length) {
-        [_sidebarItems addObject:@{@"kind":@"findStatus",@"page":@(-1),@"title":self.findFailureMessage}];
-        if (!_findMatches.count) return;
-    }
-    if (_findMatches.count == 0) {
-        NSString* title =
-            query.length ? [NSString stringWithFormat:@"No matches for \"%@\"", query] : @"No search results";
-        [_sidebarItems addObject:@{@"kind" : @"findStatus", @"page" : @(-1), @"title" : title}];
-        return;
-    }
-
-    NSString* previousChapter = nil;
-    for (NSInteger i = 0; i < (NSInteger)_findMatches.count; ++i) {
-        NSDictionary* match = _findMatches[(NSUInteger)i];
-        NSInteger page = [match[@"page"] integerValue];
-        NSRect matchRect = [match[@"rect"] rectValue];
-        // Top-left of the match in top-down page space (origin top-left).
-        NSPoint matchTopLeft = NSMakePoint(NSMinX(matchRect), NSMinY(matchRect));
-        NSString* chapter = [self chapterTitleForMatchOnPage:page atPagePoint:matchTopLeft];
-        if (chapter.length > 0 && ![chapter isEqualToString:previousChapter]) {
-            [_sidebarItems addObject:@{@"kind" : @"findDivider", @"title" : chapter, @"page" : @(-1)}];
-            previousChapter = chapter;
-        }
-
-        NSString* context = match[@"context"];
-        if (![context isKindOfClass:NSString.class] || context.length == 0) context = query.length ? query : @"Match";
-        NSString* subtitle = [NSString
-            stringWithFormat:@"Page %ld - match %ld of %ld", (long)page + 1, (long)i + 1, (long)_findMatches.count];
-        [_sidebarItems addObject:@{
-            @"kind" : @"findResult",
-            @"title" : context, @"matchRanges":match[@"matchRanges"] ?: @[],
-            @"subtitle" : subtitle,
-            @"query" : query,
-            @"page" : @(page),
-            @"findIndex" : @(i)
-        }];
-    }
 }
 
 - (void)rebuildSidebar {
@@ -9825,6 +9686,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 - (void)clearFindResults {
     [self setFindFailureMessage:nil];
     [_findQueue cancelAllOperations];
+    [self cancelProgressiveFind];
     _findGeneration++;
     [_findFlashTimer invalidate];
     _findFlashTimer = nil;
@@ -11675,13 +11537,13 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     NSString* text = context ?: @"";
     NSDictionary* baseAttributes = @{
         NSFontAttributeName : [NSFont systemFontOfSize:11.0],
-        NSForegroundColorAttributeName : NSColor.secondaryLabelColor
+        NSForegroundColorAttributeName : SPDFCollectionColor(@"secondary")
     };
     NSMutableAttributedString* attributed = [[NSMutableAttributedString alloc] initWithString:text
                                                                                    attributes:baseAttributes];
     NSDictionary* matchAttributes = @{
         NSFontAttributeName : [NSFont systemFontOfSize:11.0 weight:NSFontWeightSemibold],
-        NSForegroundColorAttributeName : NSColor.labelColor
+        NSForegroundColorAttributeName : SPDFCollectionColor(@"text")
     };
     for (NSValue* value in [self rangesOfPaletteQuery:query inString:text limit:0])
         [attributed addAttributes:matchAttributes range:value.rangeValue];
@@ -11691,7 +11553,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 - (NSAttributedString*)paletteFindTitleAttributedStringForResult:(NSDictionary*)result {
     NSString* text = result[@"title"] ?: @"";
     NSDictionary* baseAttributes =
-        @{NSFontAttributeName : [NSFont systemFontOfSize:13.0], NSForegroundColorAttributeName : NSColor.labelColor};
+        @{NSFontAttributeName : [NSFont systemFontOfSize:13.0], NSForegroundColorAttributeName : SPDFCollectionColor(@"text")};
     NSMutableAttributedString* attributed = [[NSMutableAttributedString alloc] initWithString:text
                                                                                    attributes:baseAttributes];
     NSUInteger boldLength = [result[@"titleBoldLength"] respondsToSelector:@selector(unsignedIntegerValue)]
@@ -12560,7 +12422,7 @@ static NSString* SPDFLastMeaningfulOCRLine(NSString* text) {
     if (!_translationInstallLog || text.length == 0) return;
     NSTextStorage* storage = _translationInstallLog.textStorage;
     NSDictionary* attrs = @{
-        NSForegroundColorAttributeName : NSColor.labelColor,
+        NSForegroundColorAttributeName : SPDFCollectionColor(@"text"),
         NSFontAttributeName : _translationInstallLog.font
             ?: [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]
     };
@@ -12602,8 +12464,8 @@ static NSString* SPDFLastMeaningfulOCRLine(NSString* text) {
         _translationInstallLog.selectable = YES;
         _translationInstallLog.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
         _translationInstallLog.drawsBackground = YES;
-        _translationInstallLog.backgroundColor = NSColor.textBackgroundColor;
-        _translationInstallLog.textColor = NSColor.labelColor;
+        _translationInstallLog.backgroundColor = SPDFCollectionColor(@"window");
+        _translationInstallLog.textColor = SPDFCollectionColor(@"text");
         scroll.documentView = _translationInstallLog;
 
         [NSLayoutConstraint activateConstraints:@[
@@ -13193,7 +13055,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (!_ocrInstallLog || text.length == 0) return;
     NSTextStorage* storage = _ocrInstallLog.textStorage;
     NSDictionary* attrs = @{
-        NSForegroundColorAttributeName : NSColor.labelColor,
+        NSForegroundColorAttributeName : SPDFCollectionColor(@"text"),
         NSFontAttributeName : _ocrInstallLog.font ?: [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]
     };
     [storage appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:attrs]];
@@ -13234,8 +13096,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         _ocrInstallLog.selectable = YES;
         _ocrInstallLog.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
         _ocrInstallLog.drawsBackground = YES;
-        _ocrInstallLog.backgroundColor = NSColor.textBackgroundColor;
-        _ocrInstallLog.textColor = NSColor.labelColor;
+        _ocrInstallLog.backgroundColor = SPDFCollectionColor(@"window");
+        _ocrInstallLog.textColor = SPDFCollectionColor(@"text");
         scroll.documentView = _ocrInstallLog;
 
         [NSLayoutConstraint activateConstraints:@[
@@ -13962,7 +13824,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
 
     NSTextField* whyLabel = [NSTextField wrappingLabelWithString:why];
     whyLabel.font = [NSFont systemFontOfSize:11.5];
-    whyLabel.textColor = NSColor.secondaryLabelColor;
+    whyLabel.textColor = SPDFCollectionColor(@"secondary");
     whyLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
     NSButton* openButton = [NSButton buttonWithTitle:@"Open Settings" target:self action:settingsAction];
@@ -14017,7 +13879,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
             wrappingLabelWithString:@"Granting these once lets ShenzhenPDF open PDFs from any location and zoom "
                                     @"unfocused windows without repeated macOS prompts."];
         introLabel.font = [NSFont systemFontOfSize:12.0];
-        introLabel.textColor = NSColor.secondaryLabelColor;
+        introLabel.textColor = SPDFCollectionColor(@"secondary");
         introLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
         NSView* axRow = [self
@@ -14044,7 +13906,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                                     @"If a “data from other apps” prompt still appears, granting Full Disk Access "
                                     @"above resolves it."];
         noteLabel.font = [NSFont systemFontOfSize:11.0];
-        noteLabel.textColor = NSColor.tertiaryLabelColor;
+        noteLabel.textColor = SPDFCollectionColor(@"secondary");
         noteLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
         NSButton* doneButton = [NSButton buttonWithTitle:@"Done" target:self action:@selector(permissionsWizardDone:)];
@@ -14657,6 +14519,7 @@ int main(int argc, const char* argv[]) {
         // Start the document prerender before NSApplication init so the
         // background open/render overlaps AppKit startup and window build.
         [delegate startLaunchPrerender];
+        spdf_mac_prefetch_launch_state();
 
         NSApplication* app = [NSApplication sharedApplication];
         spdf_launch_profile_log(@"NSApplication sharedApplication done");

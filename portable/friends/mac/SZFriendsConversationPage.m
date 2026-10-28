@@ -3,9 +3,10 @@
 // The open_conversation subscription marks the conversation read while it exists, so it is held only while this
 // page is on screen (brief § Interface; PROTOCOL.md open_conversation) and released when the dropdown closes.
 
-#import "mac/SZFriendsConversationPage.h"
+#import "mac/SZFriendsConversationAttach.h"
 
 #import "mac/SZFriendsArming.h"
+#import "mac/SZFriendsHistoryFollow.h"
 #import "mac/SZFriendsMentionViews.h"
 #import "mac/SZFriendsPromiseCopies.h"
 
@@ -24,6 +25,7 @@ static NSString *SZFItemKey(NSString *kind, NSString *itemID) {
     SZFriendsFlippedView *_itemsView;
     NSMutableArray<SZFriendsItemView *> *_items;
     NSScrollView *_requestScroll;
+    SZFriendsHistoryFollow *_follow; // to the end on sending; the new-messages pill
     NSString *_scrolledHighlight;
     BOOL _hasRendered;
     BOOL _loadingEarlier;
@@ -76,6 +78,8 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
     _messageList.onDropItems = ^(NSArray<SZFriendsAttachableItem *> *items) { [weakSelf sendDroppedItems:items]; };
     [self addSubview:_messageList];
     _items = [NSMutableArray array];
+    _follow = [[SZFriendsHistoryFollow alloc] initWithList:_messageList host:self context:context];
+    _follow.itemViews = ^NSArray<NSView *> *{ return weakSelf.itemViews; };
     // A visible way to older history besides scrolling to the top, which not everyone discovers (or can do).
     _loadEarlierButton = [SZFriendsButton buttonWithTitle:@"" style:SZFriendsButtonStyleLink appearance:appearance];
     _loadEarlierButton.hidden = YES;
@@ -96,6 +100,11 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
 
     _composer = [[SZFriendsComposerView alloc] initWithContext:context conversationID:conversationID];
     _composer.onOpenAttachPicker = ^{ [weakSelf openAttachPicker]; };
+    _composer.onPickerKey = ^BOOL(SEL command) {
+        SZFriendsConversationPage *page = weakSelf;
+        return page && page->_attachPicker && [page->_attachPicker handleCommand:command];
+    };
+    _composer.onTextChange = ^{ [weakSelf followAttachQuery]; };
     _composer.onOpenMentionPicker = ^{ [weakSelf openMentionPicker]; };
     _composer.onHeightChange = ^{ [weakSelf composerResized]; };
     [self addSubview:_composer];
@@ -192,6 +201,7 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
     [_composer applyComposer:composer];
     _messageList.acceptsDrops = SZFBool(composer, @"accepts_drops") && SZFBool(composer, @"enabled");
 
+    BOOL sent = request == nil && [_follow noteItems:SZFArr(data, @"items") atBottom:wasAtBottom];
     [self applyItems:SZFArr(data, @"items")];
     [self refreshMentionCard];
     // Shown only with the helper's words for it (PROTOCOL.md § Static strings: never invent text).
@@ -203,7 +213,7 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
         // Earlier items were added above: keep the message under the pointer where it was.
         [self scrollListTo:previousOrigin + NSHeight(_itemsView.frame) - previousHeight];
         _loadingEarlier = NO;
-    } else if (wasAtBottom) {
+    } else if (wasAtBottom || sent) { // sending takes the person to the end, from wherever they had scrolled
         [self scrollListTo:CGFLOAT_MAX];
     } else {
         [self scrollListTo:previousOrigin];
@@ -218,6 +228,7 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
                 [self scrollListTo:NSMidY(view.frame) - NSHeight(_messageList.contentView.bounds) / 2];
     }
     _hasRendered = YES;
+    [_follow refresh];
 }
 
 - (void)applyItems:(NSArray *)items {
@@ -263,6 +274,7 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
 
 - (void)listScrolled:(NSNotification *)notification {
     (void)notification;
+    [_follow refresh];
     // Near the top with more history on the helper: the same as pressing Show earlier messages.
     if (_messageList.contentView.bounds.origin.y > 40) return;
     [self loadEarlier];
@@ -289,36 +301,6 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
                                 (void)result;
                                 if (!error) [SZFriendsPromiseCopies discardCopiesForItems:items after:0];
                             }];
-}
-
-- (void)openAttachPicker {
-    if (_attachPicker || !self.context.host) return;
-    [self closeMentionPicker];
-    _attachPicker = [[SZFriendsAttachPicker alloc] initWithContext:self.context];
-    __weak SZFriendsConversationPage *weakSelf = self;
-    _attachPicker.onChoose = ^(SZFriendsAttachableItem *item) {
-        SZFriendsConversationPage *page = weakSelf;
-        if (!page) return;
-        // The `#` typed to open the picker becomes the chip.
-        NSTextView *text = page.composer.textView;
-        NSRange selection = text.selectedRange;
-        if (selection.location > 0 && [[text.string substringWithRange:NSMakeRange(selection.location - 1, 1)]
-                                          isEqualToString:@"#"])
-            [text insertText:@"" replacementRange:NSMakeRange(selection.location - 1, 1)];
-        [page.composer addAttachments:@[ item ]];
-        [page closeAttachPicker];
-    };
-    [self addSubview:_attachPicker];
-    [_attachPicker reloadForQuery:@""];
-    [self layout];
-    [self.window makeFirstResponder:_attachPicker.searchField];
-}
-
-- (void)closeAttachPicker {
-    if (!_attachPicker) return;
-    [_attachPicker removeFromSuperview];
-    _attachPicker = nil;
-    if (self.window && !_composer.hidden) [self.window makeFirstResponder:_composer.textView];
 }
 
 - (void)closeSearchResults {
@@ -443,6 +425,7 @@ static const NSTimeInterval SZFResizeSettleDelay = 0.3;
     CGFloat cardHeight = [_requestCard heightForWidth:width];
     _requestCard.frame = NSMakeRect(0, 0, width, MAX(cardHeight, NSHeight(_requestScroll.frame)));
     _messageList.frame = body;
+    [_follow layoutOverList:body];
 
     CGFloat itemWidth = width - 28, itemsHeight = 12;
     CGFloat earlierHeight = _loadEarlierButton.hidden ? 0 : 28;

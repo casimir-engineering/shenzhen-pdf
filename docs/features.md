@@ -93,10 +93,20 @@ does not re-trigger the macOS access prompt.
 - **Open Path…** (<kbd>Cmd+Shift+O</kbd>) — type or paste a path; a file opens
   it, a folder opens the file browser there.
 - **Drag and drop** onto the window or the tab strip.
+- **Links from web pages** (`szpdf:`) **mac · linux** — a link on a website opens
+  its document in ShenzhenPDF, at a page, a chapter or a Markdown heading. On a
+  Mac a PDF shows page by page as it downloads, the first page first and any page
+  you jump to ahead of the rest; the document is then kept and opens offline.
+  Link format and a snippet for websites: [szpdf-links.md](szpdf-links.md).
 - **Recents** — the last 25 documents, on the Recently Opened menu and
   findable in the command palette. The list lives in `settings.yaml`.
 - **Reopen Last Closed** (<kbd>Cmd+Shift+T</kbd>) — brings a just-closed tab
   back with its view state.
+- **Last opened and last viewed** **mac** — every document the app keeps (tabs,
+  recents, Collection and History copies) remembers when it was last opened and
+  when you last looked at it: its tab in front, in the app in front, for at least
+  2 seconds. Kept in `activity.yaml`; dates from before this was recorded are
+  estimated once from older records and marked as estimates.
 - **Favorites** — star a page or a whole document, give it a name and optional
   search labels, and find it later from the command palette or *Manage
   Favorites*.
@@ -111,11 +121,16 @@ does not re-trigger the macOS access prompt.
 
 - **Compact tab strip** — every tab outlined, same-named files disambiguated by
   their folder. Grouped tabs scroll horizontally with mouse-wheel or two-finger
-  trackpad input. Left/right `+N` tabs overlay fading edges and open lists of
-  offscreen documents without moving the strip. Collapsed group
+  trackpad input; a diagonal or wobbly swipe moves them steadily along the way it mostly goes. Left/right `+N`
+  tabs overlay fading edges and open lists of offscreen documents without moving the strip. A tab selected
+  anywhere (its tab, a `+N` list, the sidebar) scrolls into view whole, clear of the `+N` tabs. Collapsed group
   names stay visible beside the expanded document lane when space permits;
   overflowing group names remain reachable by scrolling. Long titles keep their beginning and
   ending visible with a middle ellipsis; hovering reveals the close button without moving the title.
+- **Tab hover preview** — hovering a document tab shows its full name and, under it, the page you were on,
+  turned the way you turned it, the moment the pointer arrives: a PDF, an image, an Office document, a Markdown,
+  text or code file alike. Hovering a group's name shows the group's full name. The gaps between tabs show nothing.
+  Scroll the tab bar without moving the pointer and the preview follows each tab as it passes under it.
 - **Drag to reorder**, drag out to **detach into a new window**, drag back to
   **reattach**. A detached tab keeps its page, zoom, scroll and search.
   Dropping a tab between groups joins the existing General group, revealing it
@@ -159,9 +174,11 @@ does not re-trigger the macOS access prompt.
 ## Document assistant **mac**
 
 - Optional OpenRouter chat beside the document, opened through **Cmd+K → Return** with an empty search or the Chats sidebar. Saved conversations have searchable messages, timestamps, editable titles and folders; drag chats between folders or ask the assistant to organize them.
-- Cited answers open retrieved passages with highlights. Image-capable models can inspect pages, crops and the visible document viewport on request. Brief supported answers can use pastel cards with **View evidence**; evidence provenance checks do not certify model interpretation.
+- Cited answers open retrieved passages with highlights. Image-capable models can inspect pages, crops and the visible document viewport on request. Brief supported answers can use pastel cards with **View evidence**; evidence provenance checks do not certify model interpretation. An answer that rests on one document shows a card under it with that page's thumbnail, the title and the page; clicking it opens the document there. A citation still opens its document after the tab is closed, including a saved revision opened from History; a document that has been deleted is named without a link.
 - One cached background request supplies a summary, keywords, up to six tags and missing chapters in the selected AI language. Authored outlines remain authoritative; only eligible latest revisions are analyzed.
-- Supported group, reader, comment, rename, metadata and chat-organization actions have guarded Undo/Redo. Requested OCR, translation and PDF jobs create separate outputs. Everything the assistant makes, including charts you save, goes to Downloads under a clear name (never replacing a file) and into Collection as **Made by the assistant**. Stop cancels future work; completed changes remain until undone.
+- Drop files or folders on the chat, or attach them with the paperclip: that chat's assistant can read them, and nothing beside them; other chats can't. Its sandboxed Python reads your documents exactly, including the images a PDF embeds at native resolution and pages rendered at a chosen dpi, so it measures pixels and data itself. It saves any file you ask for to Downloads, in a folder there if you like (reports, CSV, charts, a copy of a read-only document), with a card in the chat; it can't read Downloads, except what that chat saved. Long requests keep going while they make progress; if one stops early, its answer says what is left and **Continue** picks up from there.
+- Ask by date: the assistant sees when each document was last opened and viewed, so "close any document I have not viewed since a week" closes exactly those tabs in one step, names the ones with no record, and one Undo reopens them all.
+- Supported group, reader, comment, rename, metadata and chat-organization actions have guarded Undo/Redo. The assistant can rename any open document: a file it can't rename (read-only, in a folder that can't be changed, larger than 32 MB) keeps its name, the new name shows in its tab, the window title and Collection, and the assistant says so. Requested OCR, translation and PDF jobs create separate outputs, from any open document, read-only ones included. Everything the assistant makes, including charts you save, goes to Downloads under a clear name (never replacing a file) and into Collection as **Made by the assistant**. Stop cancels future work; completed changes remain until undone.
 - Four-step setup covers file access, Collection, OpenRouter and per-format default-reader choices. Keys remain in Keychain; cloud analysis waits for completed setup and a connected account. Usage spends provider credits and can be disabled.
 - The [document assistant guide](../portable/docs/document-assistant.md) specifies privacy routing, model requirements, action limits and local job dependencies. The [CLI/MCP guide](../portable/docs/agent-interface.md) is a separate interface; chat tool names are not external MCP commands.
 
@@ -460,7 +477,7 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 - **Human-readable YAML state** you can read, diff and edit:
   `settings.yaml`, `session.yaml`, `documents.yaml`, `favorites.yaml`,
-  `bookmarks.yaml`. Existing JSON state migrates automatically, originals kept
+  `bookmarks.yaml`, `activity.yaml` (**mac**). Existing JSON state migrates automatically, originals kept
   as `.migrated-backup`.
   macOS: `~/Library/Application Support/ShenzhenPDF/` · Linux:
   `~/.config/shenzhenpdf/`

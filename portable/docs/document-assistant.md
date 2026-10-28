@@ -105,13 +105,29 @@ an unverified passage. Source links contain opaque document IDs, not local paths
 Some models write their actions carelessly, most often a long Python call: line
 breaks left raw, a stray fence or token, or the call cut off before its end.
 Slips with only one possible meaning are read as meant; anything else, a call
-cut off included, is never guessed at. The model is then asked once, within the
-same request and its step limit, to send that reply's actions again, and nothing
-in such a reply runs until all of it can be read. When an answer still can't be
-used (cut off, unreadable or empty), the panel says so above the composer with
-**Retry**, which asks your latest question again in place of the unfinished
-answer. Retry is not offered once the request has changed a document, since
-asking again would repeat the change; send a follow-up instead.
+cut off included, is never guessed at. The model is then asked again, within the
+same request, to send that reply's actions again, and nothing in such a reply
+runs until all of it can be read. A reply that can't be used at all (cut off,
+unreadable, empty, too large) is asked for again with a note saying what went
+wrong; a dropped connection is tried again after a pause, saying
+**Reconnecting…**. None of this shows an error.
+
+## Long requests
+
+A request keeps working as long as its steps get somewhere
+(`mac/SPDFMacAIChatProgress.h`, `mac/SPDFMacAIChatSessionRecovery.mm`): one reply
+may hold many actions (up to 64 run; the rest are asked for in the next reply),
+and the ceiling is 120 steps. What ends one early is a loop: the same call
+failing three times, or four steps in a row with nothing new. The first time,
+the model is told which call keeps failing and why, and changes approach or
+skips that part. If it loops again, or replies keep being unusable, or the
+connection stays down, or the ceiling is reached, the request winds up: one last
+reply without tools says what was done and what is left (if even that fails, the
+app writes it), and the chat shows **Continue** with "Not finished yet. Continue
+picks up where it stopped." Continue sends "Continue" in the same chat: nothing
+is asked again or undone, and the model carries on from its history. A part
+(run_subagents) that stops early returns what it found, shown as Partly done.
+
 
 The assistant can request `current_view` to see the visible document viewport,
 including its zoom, scroll position, selection and highlights. This is captured
@@ -162,10 +178,9 @@ source revision; page anchors must remain within the analyzed evidence. It does
 not rewrite authored headings or PDF bookmarks. Explicit chat requests can
 change generated chapter language without changing the global default. Metadata
 edits support Undo/Redo and update the reader's generated chapter list. Generated
-chapter rows use plain descriptive titles without decorative emoji. At the tool
-step limit, the model gets one response without tools to summarize confirmed
-results; if it cannot finish that response, the chat says Paused rather than
-marking successfully saved changes as failed.
+chapter rows use plain descriptive titles without decorative emoji. A request
+that winds up (see Long requests) never marks successfully saved changes as
+failed.
 
 `app_controls` discovers native app menus and visible controls and can activate
 a command or set an editable value. Use typed tools first for reversible edits.
@@ -222,22 +237,72 @@ codes and extractable text; scan-only PDFs need OCR first. Undo closes the
 generated tab and removes the output only if it is still the exact generated
 file.
 
+## Files you give a chat, and Python on your documents
+
+Drop files or folders anywhere on the chat panel, or choose them with the
+paperclip (**Attach files**) under the composer. Each one becomes a chip above
+the composer and belongs to that chat: its assistant, the parts it splits work
+into and its Python can read the file, or the folder and everything under it,
+and nothing beside them. Another chat never sees them, and removing the chip
+ends access. The chat keeps them (with a bookmark, so a moved item is still
+found) when it is reopened. The home folder itself, a folder holding it, and the
+Mac's own top-level folders (`/`, `/Users`, `/System`, `/Library`,
+`/Applications`…) are refused with a reason beside the chips. The model learns
+each item's `attachment:` id from the system prompt, and `read_attachment`
+lists a folder, reads a PDF's pages as text, shows an image to the model and
+returns text files as text (`mac/SPDFMacAIChatGrants.h`,
+`mac/SPDFMacAIAttachmentToolProvider.h`).
+
+`run_python` reads the documents the assistant can see, exactly: its
+`documents` argument names them by the ids the assistant already uses (`doc:`
+for an open document, `collection:` from `list_collection`, `attachment:` for a
+file or folder given to the chat, with `path` for a file inside an attached
+folder). For each run the app prepares a private folder the code sees as
+`./documents`, read only: a link to each document under a plain name, the images
+the listed PDF pages embed (`images_on_pages`) written at native resolution
+without resampling (PNG with the source's samples, or the original JPEG bytes),
+pages rendered whole (`render_pages`, at `dpi`), and `index.json` naming each
+file with its size, colour space and whether it is lossless. The sandbox lets
+the code read that folder and each document by its exact path; a file beside a
+document, a link leading out of an attached folder and any write there are
+refused by the sandbox itself (`mac/SPDFMacAIPythonDocuments.h`,
+`mac/python-sandbox/SPDFPythonSandbox.h`). Python still has no network.
+
+Files the code saves in `./out` (a PDF or Markdown report, CSV, PNG, any type)
+are kept: each goes to Downloads, in the same folders it had inside `./out`,
+documents also to Collection, and the chat shows a card with **Open** and **Show
+in Finder** (a PNG also as a picture). `save_file`
+(`mac/SPDFMacAISaveFileToolProvider.h`) saves text, bytes or a copy of a document
+the assistant can see (a read-only one included) the same way, in a folder
+inside Downloads if asked. Only the person's own request keeps files, not a
+part's, and not one that includes Friends chats (`mac/SPDFMacAIPythonOutputs.h`).
+
+Downloads is write-only for the assistant. The sandbox refuses Downloads by name
+(`write_only_dirs`), so the code can't list it or read a file there, and no tool
+lists or reads it. Each file saved becomes a grant of the chat that saved it
+(`attachment:saved-…`, `mac/SPDFMacAIChatSessionGrants.h`): that chat may read it
+back by that id, and no other chat can, through Python, `read_attachment` or a
+Collection id. What the person drops on or attaches to a chat stays readable as
+before, even inside Downloads.
+
 ## Where documents the assistant makes go
 
 Every document the assistant makes goes to two places:
 
 - **Downloads**, under a clear name: `Report (OCR).pdf`, `Report (French).pdf`,
   `Report (copy).pdf` for a PDF exported as a PDF, `Notes.pdf` for a Markdown
-  export, or the name you asked for. A name already taken gets ` (2)`, ` (3)`…
-  before its extension; a file already in Downloads is never replaced. The file
+  export, or the name you asked for, in a folder inside Downloads when one is
+  asked for. A name already taken gets ` 2`, ` 3`… before its extension
+  (`Report 2.pdf`); a file already in Downloads is never replaced. The file
   is made elsewhere and appears in Downloads only when complete.
 - **Collection**, captured at once with the reason **Made by the assistant**,
   the way files received through Friends are captured with **Received**. This
   follows Collection's own setting: when Collection is off, or not yet chosen,
   nothing is captured and no Collection is created.
 
-This covers document jobs (OCR, translation, export), charts from Python that
-you save with **Save** under the picture, and AI translations saved from the
+This covers document jobs (OCR, translation, export), files Python saves in
+`./out`, charts from Python that you save with **Save** under the picture, and
+AI translations saved from the
 translation panel as Markdown. The chat then shows **Saved to Downloads** with
 **Open** and **Show in Finder**; a reopened chat keeps the line without the
 buttons. If the file has since been moved or removed, either button says so.

@@ -28,6 +28,7 @@ static void attachable_items(gpointer host_data, GtkWindow *window, const char *
         if (strstr(title, wanted)) {
             char *path = g_build_filename(g_get_tmp_dir(), titles[i][0], NULL);
             g_ptr_array_add(items, szfriends_gtk_host_item_new(titles[i][0], titles[i][1], titles[i][2], path, NULL));
+            if (i == 0) ((SZFriendsGtkHostItem *)g_ptr_array_index(items, items->len - 1))->badge = g_strdup("Current");
             g_free(path);
         }
         g_free(title);
@@ -71,7 +72,7 @@ SZFGHarness *szfg_conv_harness(const char *label, const char *capabilities_json)
     harness->host.app_name = "Shenzhen Files";
     harness->host.app_version = "26.10.13";
     harness->host.reveal_in_name = "Shenzhen Files";
-    harness->host.attach_placeholder = "Search the selection and this folder";
+    harness->host.attach_empty = "No matching files";
     harness->host.attachable_items = attachable_items;
     harness->host.reveal_file = reveal_file;
     harness->host.animals_manifest_path = szfg_manifest;
@@ -334,6 +335,7 @@ int main(int argc, char **argv) {
     szfg_run_conversation_route_probes();
     szfg_run_conversation_online_probes();
     szfg_run_conversation_device_probes();
+    szfg_run_conversation_follow_probes();
     szfg_clock_uninstall();
     g_unsetenv(SZFRIENDS_ENV_STATE_DIR);
     EXPECT(szfg_unexpected_warnings() == 0, "no GLib, GTK or libadwaita warnings (%d)", szfg_unexpected_warnings());

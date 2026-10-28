@@ -11,6 +11,7 @@
 #import "SPDFMacMarkdownPrinting.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacMarkdownSidebarModel.h"
+#import "SPDFMacTabHoverPreviewIntegration.h"
 #import "SPDFMacViewportCheckpoint.h"
 #import "SPDFMacCollectionIntegration.h"
 #import "SPDFMacSupport.h"
@@ -166,6 +167,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 - (void)configureMarkdownSession:(SPDFMacMarkdownSession*)session forTab:(SPDFDocumentTab*)tab {
     session.reader = (id<SPDFMacUIReader>)self;
     [self configureAIAnalysisForMarkdownSession:session path:tab.path];
+    [self rebuildChaptersWhenSidebarModelReplacedInSession:session];
     __weak ShenzhenMacDelegate* weakSelf = self;
     __weak SPDFMacMarkdownSession* weakSession = session;
     session.statusHandler = ^(NSString* status) {
@@ -211,6 +213,8 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
       tab.zoom = zoom;
       tab.customZoom = fitMode == SPDFMacMarkdownPageFitCustom ? zoom : tab.customZoom;
       tab.fitMode = (SPDFFitMode)fitMode;
+      // Its hover thumbnail follows the page shown, once the page settles.
+      [strongSelf spdf_noteTabHoverPreviewSourcesChanged];
       // Capture the live scroll origin and checkpoint session.yaml after
       // movement settles; the helper is born here, never on ordinary launch.
       SPDFMacMarkdownDelegateState* state = strongSelf.markdownState;

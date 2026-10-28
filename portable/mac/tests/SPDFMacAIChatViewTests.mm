@@ -7,11 +7,9 @@
 #import "../SPDFMacAIChatActivity.h"
 #import "../SPDFMacChatMarkdownView.h"
 #import "../SPDFMacAIChatViewParts.h"
+#import "../SPDFMacIconGeometry.h"
 static int failures;
 static NSEvent* pendingUp;
-@interface NSButton (AIChatSymbolProbe)
-- (NSRect)rectForSymbol:(NSImage*)image;
-@end
 @interface NSWindow (AIChatProbe)
 - (NSEvent*)chatProbeEvent:(NSEventMask)mask;
 @end
@@ -25,7 +23,7 @@ static NSEvent* pendingUp;
 @property(nonatomic) BOOL canUndo;
 @property(nonatomic) BOOL canRedo;
 @property(nonatomic) BOOL canCompact;
-@property(nonatomic) BOOL canRetry;
+@property(nonatomic) BOOL canRetry, canContinue;
 @property(nonatomic) SPDFMacAIChatActivityState activityState;
 @property(nonatomic) NSString* activityDetail;
 @end
@@ -239,13 +237,15 @@ static void CheckLiteralCard(NSView* card, NSTextView* body, NSString* message, 
 #import "SPDFMacAIChatLinkChecks.h"
 #import "SPDFMacAIChatWrapChecks.h"
 #import "SPDFMacAIChatRetryChecks.h"
+#import "SPDFMacAIChatAttachmentChecks.h"
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     NSDate* started=[NSDate date];
     CheckNoConstraintConflicts();
     RunChatBannerChecks();
+    RunChatAttachmentChecks();
     RunChatReopenChecks();
-    RunChatOrderChecks();
+    RunChatOrderChecks(); RunChatFollowChecks();
     RunBlankChatRowsChecks();
     RunAnswerCardViewChecks();
     RunChatActivityViewChecks();
@@ -257,7 +257,7 @@ int main(void) { @autoreleasepool {
     SPDFMacAIChatView* view=[[SPDFMacAIChatView alloc] initWithFrame:window.contentView.bounds]; window.contentView=view;
     ChatFixture* fixture=[ChatFixture new]; fixture.chat=@{@"id":@"test",@"messages":@[
         @{@"role":@"user",@"content":@"What is the board’s power requirement?"},
-        @{@"role":@"assistant",@"content":@"## Power requirements\nThe board uses **5 V input**. See [the schematic, page 2](spdf-ai://document?path=board.pdf&page=2).\n\n- Peak current: **2 A**\n- Check connector polarity before connecting.\n\n```c\nconst float voltage = 5.0f;\n```\n\nI checked the schematic and assembly notes. The values agree; the assembly guide also recommends a regulated supply. The test fixture intentionally includes a longer paragraph describing evidence quality, connector assumptions, polarity and voltage tolerance. These words must wrap over additional lines in a narrow chat panel while remaining fully selectable and never covering the next message."}
+        @{@"role":@"assistant",@"content":@"## Power requirements\nThe board uses **5 V input**. See [the schematic, page 2](spdf-ai://document?path=doc:board&page=2).\n\n- Peak current: **2 A**\n- Check connector polarity before connecting.\n\n```c\nconst float voltage = 5.0f;\n```\n\nI checked the schematic and assembly notes. The values agree; the assembly guide also recommends a regulated supply. The test fixture intentionally includes a longer paragraph describing evidence quality, connector assumptions, polarity and voltage tolerance. These words must wrap over additional lines in a narrow chat panel while remaining fully selectable and never covering the next message."}
     ]};
     [view displaySession:(id)fixture]; [window.contentView layoutSubtreeIfNeeded];
     NSStackView* messages=[view valueForKey:@"messages"];
@@ -293,7 +293,7 @@ int main(void) { @autoreleasepool {
         usingBlock:^(id value,NSRange range,BOOL* stop) {
             if([[value description] hasPrefix:@"spdf-ai://"]) { citation=value; citationRange=range; *stop=YES; }
         }];
-    Check([citation.absoluteString isEqual:@"spdf-ai://document?path=board.pdf&page=2"],@"rendered citation preserves the exact custom URL");
+    Check([citation.absoluteString isEqual:@"spdf-ai://document?path=doc:board&page=2"],@"rendered citation preserves the exact custom URL");
     if(citationRange.location!=NSNotFound) {
         NSRange glyph=[answer.layoutManager glyphRangeForCharacterRange:NSMakeRange(citationRange.location,1) actualCharacterRange:nil];
         NSRect rect=[answer.layoutManager boundingRectForGlyphRange:glyph inTextContainer:answer.textContainer];
@@ -328,9 +328,10 @@ int main(void) { @autoreleasepool {
     for(NSString* key in @[@"close",@"new",@"undo",@"redo",@"settings"]) {
         NSButton* button=(id)Find(view,key);
         Check(button.image && button.toolTip.length,@"panel actions have vector symbols and hover help");
-        NSRect icon=[button rectForSymbol:button.image];
-        Check(NSContainsRect(NSInsetRect(button.bounds,6,6),icon) &&
-            fabs(NSWidth(icon)/NSHeight(icon)-button.image.size.width/button.image.size.height)<.0001,@"symbols keep fixed aspect ratio");
+        NSImage* symbol=SPDFChromeSymbolImage(button.image,SPDFToolbarSymbolPointSize,NSFontWeightMedium,nil);
+        NSRect icon=SPDFIconAspectFitRect(symbol,NSInsetRect(button.bounds,3,3));
+        Check(NSContainsRect(NSInsetRect(button.bounds,3,3),icon) && NSEqualSizes(icon.size,symbol.size),
+            @"symbols are drawn at their natural size and aspect ratio");
         Click(window,button,NSMakePoint(2,2));
         Click(window,button,NSMakePoint(NSWidth(button.bounds)-2,NSHeight(button.bounds)-2));
     }
@@ -342,7 +343,7 @@ int main(void) { @autoreleasepool {
     Check([view.composer performKeyEquivalent:redoKey] && [actions.lastObject isEqual:@"redo"] && actions.count==11,@"uppercase Cmd Shift Z reaches agent Redo from empty composer");
     NSSearchField* chatSearch=[view valueForKey:@"chatSearch"]; chatSearch.stringValue=@"polarity";
     [(id<NSSearchFieldDelegate>)view controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:chatSearch]];
-    Check([chatSearch.placeholderString isEqual:@"Search this chat"] && messages.arrangedSubviews.count==2,@"chat search filters only matching messages in this conversation");
+    Check([chatSearch.placeholderString isEqual:@"Search this chat"] && messages.arrangedSubviews.count==3,@"chat search filters only matching messages in this conversation (label, answer, its source card)");
     NSTextView* match=(id)messages.arrangedSubviews[1];
     NSRange hit=[match.string rangeOfString:@"polarity"];
     Check(hit.location!=NSNotFound && [match.layoutManager temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:hit.location effectiveRange:nil],@"matching term is highlighted in rendered message");
@@ -373,7 +374,9 @@ int main(void) { @autoreleasepool {
     [view setChatSearchQuery:@"nonexistent"];
     Check(!messages.arrangedSubviews.count && [[(NSTextField*)Find(view,@"chatActivityDetail") stringValue] isEqual:@"No matches in this chat"],@"no-match feedback remains local to current chat");
     [view setChatSearchQuery:@""];
-    Check(messages.arrangedSubviews.count==4 && !Find(view,@"history"),@"clearing local search restores both speakers; duplicate history action removed");
+    // Both speakers' labels and messages, and the source card under the answer, which cites one document.
+    Check(messages.arrangedSubviews.count==5 && Find(view,@"answerSourceCard") && !Find(view,@"history"),
+        @"clearing local search restores both speakers; duplicate history action removed");
     NSRect hideRect=[Find(view,@"close") convertRect:Find(view,@"close").bounds toView:view];
     Check(NSMinY(hideRect)==4 && NSHeight(hideRect)==28 && NSMinX(hideRect)<NSMinX([Find(view,@"new") convertRect:Find(view,@"new").bounds toView:view]),@"Hide is first in the aligned36point toolbar");
     Capture(view,@"docked-compact");

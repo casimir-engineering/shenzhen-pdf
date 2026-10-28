@@ -54,21 +54,19 @@ static NSString* Symbol(NSInteger mode) {
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
     BOOL selected = self.navigationSelected;
-    NSRect bounds = NSInsetRect(self.bounds,.5,.5);
-    NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:bounds xRadius:7 yRadius:7];
+    // The row is on device pixels, so its rounded rectangle has crisp edges at 1x and 2x.
+    NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:7 yRadius:7];
     if (self.mode != -1 && (selected || self.highlighted || _hovered)) {
-        BOOL dark = [[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
-        NSColor* fill = selected ? (dark ? [NSColor colorWithSRGBRed:.216 green:.294 blue:.380 alpha:1] : [NSColor colorWithSRGBRed:.859 green:.898 blue:.941 alpha:1]) : [NSColor.labelColor colorWithAlphaComponent:self.highlighted ? .065 : .035];
+        NSColor* fill = selected ? SPDFCollectionColor(@"selected") : [SPDFCollectionColor(@"text") colorWithAlphaComponent:self.highlighted ? .065 : .035];
         [fill setFill]; [shape fill];
     }
     if (selected && self.window.firstResponder == self.superview) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
     NSColor* color = SPDFChromeIconColor(self.enabled);
-    NSImage* icon = [NSImage imageWithSystemSymbolName:Symbol(self.mode) accessibilityDescription:nil];
-    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]];
-    icon = [icon imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[color]]];
-    SPDFDrawVectorIcon(icon,NSMakeRect(floor((NSWidth(self.bounds)-16)/2),6,16,16),YES);
+    // Every icon in the row at the same point size, drawn at its natural size in the middle of the row.
+    SPDFDrawVectorIcon(SPDFChromeSymbol(Symbol(self.mode),SPDFToolbarSymbolPointSize,NSFontWeightRegular,color),
+                       NSInsetRect(self.bounds,1,1),YES);
 
 }
 - (void)updateTrackingAreas {
@@ -192,8 +190,8 @@ static NSString* Symbol(NSInteger mode) {
     CGFloat right = NSWidth(self.bounds)-(_chats ? 68 : 36);
     CGFloat width = MIN(28, floor(MAX(0,right-left)/MAX(1,toolCount)));
     CGFloat x = left + (right-left-width*toolCount)/2;
-    _collapse.frame = NSMakeRect(0,4,28,RowHeight);
-    _chats.frame=NSMakeRect(NSWidth(self.bounds)-60,4,28,RowHeight);
+    _collapse.frame = [self backingAlignedRect:NSMakeRect(0,4,28,RowHeight) options:NSAlignAllEdgesNearest];
+    _chats.frame=[self backingAlignedRect:NSMakeRect(NSWidth(self.bounds)-60,4,28,RowHeight) options:NSAlignAllEdgesNearest];
     for (SPDFSidebarNavigationRow* row in rows) {
         NSRect frame;
         if (row.mode == SPDFSidebarModeGroups) {
@@ -203,11 +201,15 @@ static NSString* Symbol(NSInteger mode) {
         }
         // Keep the complete target on device pixels. Fractional panel widths
         // otherwise place cached glyphs between pixels (especially at 1x).
-        row.frame = [self backingAlignedRect:frame options:NSAlignAllEdgesNearest];
+        // At 1x, rounding Groups' trailing edge to the nearest pixel can put it
+        // half a point past the strip; such an edge moves in to the pixel inside.
+        NSRect aligned = [self backingAlignedRect:frame options:NSAlignAllEdgesNearest];
+        row.frame = NSContainsRect(self.bounds, aligned) ? aligned
+            : [self backingAlignedRect:NSIntersectionRect(aligned, self.bounds) options:NSAlignAllEdgesInward];
     }
 }
 - (void)drawRect:(NSRect)dirty {
-    (void)dirty; [[NSColor.labelColor colorWithAlphaComponent:.13] setFill];
+    (void)dirty; [[SPDFCollectionColor(@"text") colorWithAlphaComponent:.13] setFill];
     NSRectFill(NSMakeRect(-8,35,NSWidth(self.bounds)+16,.5));
     SPDFSidebarNavigationRow* group = [self visualRows].firstObject;
     NSRectFill(NSMakeRect((_chats ? NSMinX(_chats.frame) : NSMinX(group.frame))-8,10,.5,16));
@@ -216,7 +218,7 @@ static NSString* Symbol(NSInteger mode) {
         NSMutableParagraphStyle* style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingMiddle;
         [_documentTitle ?: @"No document" drawInRect:NSMakeRect(4,45,MAX(0,NSWidth(self.bounds)-8),16)
             withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11],
-                NSForegroundColorAttributeName:NSColor.secondaryLabelColor,NSParagraphStyleAttributeName:style}];
+                NSForegroundColorAttributeName:SPDFCollectionColor(@"secondary"),NSParagraphStyleAttributeName:style}];
     }
 }
 

@@ -35,6 +35,16 @@ static NSURL* CopyURL(NSURL* root, NSString* documentID, NSString* copyID, NSStr
     NSDictionary* version=[self versionID:copy[@"currentVersionID"] document:doc] ?: [doc[@"versions"] lastObject];
     return @{@"document":doc,@"version":version ?: @{},@"copyID":parts[1],@"editable":@YES};
 }
+- (NSArray<NSString*>*)editablePathsForDocument:(NSDictionary*)document {
+    NSMutableArray* paths=[NSMutableArray array];
+    NSDictionary* copies=[document[@"editableCopies"] isKindOfClass:NSDictionary.class] ? document[@"editableCopies"] : nil;
+    for (NSString* key in copies) {
+        id filename=[copies[key] isKindOfClass:NSDictionary.class] ? copies[key][@"filename"] : nil;
+        NSURL* URL=[filename isKindOfClass:NSString.class] ? CopyURL(self.rootURL,document[@"id"],key,filename) : nil;
+        if (URL && [NSFileManager.defaultManager fileExistsAtPath:URL.path]) [paths addObject:URL.path];
+    }
+    return paths;
+}
 - (NSURL*)editableVersionID:(NSString*)versionID documentID:(NSString*)documentID error:(NSError**)error {
     __block NSURL* result;
     __block NSURL* createdDirectory;
@@ -164,6 +174,24 @@ static NSURL* CopyURL(NSURL* root, NSString* documentID, NSString* copyID, NSStr
     } error:error];
     if (installed) unlink((ok ? path : renamed.path).fileSystemRepresentation);
     return ok ? renamed : nil;
+}
+- (BOOL)setDisplayName:(NSString*)name documentID:(NSString*)documentID
+          expectedName:(NSString*)expectedName error:(NSError**)error {
+    name=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (name.length>240 || [name rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location!=NSNotFound) {
+        if(error)*error=SPDFCollectionError(9,@"Enter a name on one line, up to 240 characters."); return NO;
+    }
+    if (!documentID.length) { if(error)*error=SPDFCollectionError(8,@"Document history no longer exists."); return NO; }
+    return [self transaction:^BOOL(NSMutableDictionary* manifest,NSError** failure) {
+        NSMutableDictionary* doc=manifest[@"documents"][documentID];
+        if (!doc) { if(failure)*failure=SPDFCollectionError(8,@"Document history no longer exists."); return NO; }
+        NSString* current=[doc[@"displayName"] isKindOfClass:NSString.class] ? doc[@"displayName"] : @"";
+        if (expectedName && ![current isEqual:expectedName]) {
+            if(failure)*failure=SPDFCollectionError(9,@"The document's name changed since. Read it again before renaming it."); return NO;
+        }
+        if (name.length) doc[@"displayName"]=name; else [doc removeObjectForKey:@"displayName"];
+        return YES;
+    } error:error];
 }
 - (void)rememberGroup:(NSDictionary*)group documentID:(NSString*)documentID {
     if (group.count && documentID.length) [self rememberGroups:@{documentID:group}];

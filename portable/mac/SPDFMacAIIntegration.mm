@@ -4,6 +4,7 @@
 #import "SPDFMacAIChatSession.h"
 #import "SPDFMacAICitations.h"
 #import "SPDFMacAIDocumentLinks.h"
+#import "SPDFMacAIDocumentAvailability.h"
 #import "SPDFMacDocumentOpening.h"
 #import "SPDFMacAIChatStore.h"
 #import "SPDFMacAIChatView.h"
@@ -18,6 +19,7 @@
 #import "SPDFMacAIWebPDF.h"
 #import "SPDFMacAIToolRegistry.h"
 #import "SPDFMacAIOutputs.h"
+#import "SPDFMacAIChatSessionGrants.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacPalettePresentation.h"
 #import "SPDFMacUnifiedSettings.h"
@@ -89,7 +91,19 @@ static char stateKey;
             return [owner aiResendMessageAtIndex:index text:text authorizedKey:nil];
         };
         state.view.action=^(NSString* action) { [owner aiChatAction:action]; };
+        // Dropped or chosen files and folders: this chat's grants, its own and no other chat's.
+        state.view.attachFiles=^NSString*(NSArray<NSURL*>* URLs) {
+            NSArray* problems=[weakState.session addGrantsForURLs:URLs];
+            return problems.count ? [problems componentsJoinedByString:@"\n"] : nil;
+        };
+        state.view.removeAttachment=^(NSString* identifier) { [weakState.session removeGrantWithIdentifier:identifier]; };
         state.view.openLink=^(NSURL* URL) { [owner aiOpenCitation:URL]; };
+        // Answers link only documents that can still be opened, and show a source card (SPDFMacAIDocumentAvailability.h).
+        state.view.documentLinkAvailable=^BOOL(NSURL* URL) { return !owner || [owner aiDocumentLinkAvailable:URL]; };
+        state.view.sourceThumbnail=^(NSURL* URL,NSInteger page,void (^done)(NSImage*)) {
+            if (owner) [owner aiSourceThumbnailForLink:URL page:page completion:done];
+        };
+        [self aiSetDocumentIndexChanged:^{ [weakState.view redisplayAnswers]; }];
         // A chart the person saves is a document the assistant made: Downloads and Collection (SPDFMacAIOutputs.h).
         state.view.saveImage=^(NSString* path,NSString* caption) {
             SPDFMacAIOutputSaveChatImage(weakState.session.activity,path,caption,SPDFMacCollectionStore.defaultStore,
@@ -251,7 +265,9 @@ static char stateKey;
     if(!key) return NO;
     NSUInteger before=[state.session.chat[@"messages"] count];
     // The request as the person sent it: chips read from the composer, which still holds them until this returns.
-    NSArray* chips=[state.registry requestChipsInComposerText:state.view.composer.textStorage];
+    // Plus the files and folders given to this chat: its requests alone carry them (SPDFMacAIChatGrants.h).
+    NSArray* chips=[[state.registry requestChipsInComposerText:state.view.composer.textStorage]
+        arrayByAddingObjectsFromArray:[state.session grantChips]];
     SPDFMacAIRequestContext* context=[[SPDFMacAIRequestContext alloc] initWithText:text chips:chips
         origin:SPDFMacAIRequestOriginChat friendConversation:nil settings:settings.snapshot budget:nil
         activity:state.session.activity];
@@ -265,7 +281,7 @@ static char stateKey;
     NSString* key=[self aiKeyForRequest:authorizedKey summarizing:NO settings:&settings];
     if(!key) return NO;
     state.pendingEdit=nil;
-    SPDFMacAIRequestContext* context=[[SPDFMacAIRequestContext alloc] initWithText:text chips:nil
+    SPDFMacAIRequestContext* context=[[SPDFMacAIRequestContext alloc] initWithText:text chips:[state.session grantChips]
         origin:SPDFMacAIRequestOriginChat friendConversation:nil settings:settings.snapshot budget:nil
         activity:state.session.activity];
     return [state.session resendFromMessageAtIndex:index context:context model:settings.model apiKey:key];
@@ -281,6 +297,14 @@ static char stateKey;
     SPDFReaderAIState* state=[self readerAIState];
     if ([action isEqual:@"close"]) { [self closeAIChat]; return; }
     if ([action isEqual:@"compact"]) { [self aiCompactChat]; return; }
+    if ([action isEqual:@"continue"]) { // the same work carried on, with this chat's files as any request has them
+        SPDFMacAIChatSession* session=state.session; SPDFMacAISettings* settings=nil;
+        NSString* key=session.canContinue ? [self aiKeyForRequest:nil summarizing:NO settings:&settings] : nil;
+        if (key) [session continueWithContext:[[SPDFMacAIRequestContext alloc] initWithText:@"Continue"
+            chips:[session grantChips] origin:SPDFMacAIRequestOriginChat friendConversation:nil
+            settings:settings.snapshot budget:nil activity:session.activity] model:settings.model apiKey:key];
+        return;
+    }
     if ([action isEqual:@"retry"]) { // the latest question again, in place of the answer that couldn't be used
         SPDFMacAIChatSession* session=state.session; NSUInteger index=session.retryMessageIndex;
         if (session.canRetry && index!=NSNotFound)
@@ -398,9 +422,11 @@ static char stateKey;
     // or one it named by file name) still opens what it names, without a highlight.
     if (!args) { if (![self aiOpenDocumentLink:link]) [self aiShowMissingDocumentLink]; return; }
     // Bring the cited tab forward first, in its own group, so the highlight that
-    // follows is published to the tab the reader is looking at.
+    // follows is published to the tab the reader is looking at. A cited document whose
+    // tab has closed opens again by its exact ID (SPDFMacAIDocumentIndex), at the page.
     NSString* open=[self aiOpenTabPathForDocumentLink:link];
-    if (open) [self showDocumentsAtPaths:@[open]];
+    if (!open) { if (![self aiOpenDocumentLink:link]) [self aiShowMissingDocumentLink]; return; }
+    [self showDocumentsAtPaths:@[open]];
     [state.tools performTool:@"show_document" arguments:args completion:^(NSDictionary* result) {
         [state.view refreshActivityFromSession:state.session];
         if (!result[@"error"]) { [self->_window makeKeyAndOrderFront:nil]; return; }

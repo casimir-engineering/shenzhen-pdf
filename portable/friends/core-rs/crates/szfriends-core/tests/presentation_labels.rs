@@ -101,7 +101,13 @@ fn the_catalog_is_the_helpers() {
     }
     // Words only the portable helper says: no Mac has a Windows firewall (ADR 0015 § 15).
     const PORTABLE_ONLY: &[&str] = &[
-        "nearby_inbound_blocked",
+        "nearby_inbound.no_rule",
+        "nearby_inbound.allow",
+        "nearby_inbound.public",
+        "nearby_inbound.open_network",
+        "nearby_inbound.blocked_all",
+        "nearby_inbound.block_rule",
+        "nearby_inbound.open_firewall",
         "visibility.unavailable.firewall",
         "visibility.unavailable.access.phone",
         "alert.network_denied.body.phone",
@@ -289,12 +295,12 @@ fn small_words() {
 fn static_strings() {
     let s = strings();
     let strings = s.static_strings();
-    assert_eq!(strings.len(), 38);
+    assert_eq!(strings.len(), 40);
     let welcome = presentation::fixture("frames/welcome.json");
     let built: Map<String, Value> = strings.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
     assert_eq!(Value::Object(built), welcome["strings"], "welcome.strings");
-    // The views fill only the drag strings, the link warning and the saved name, and hosts the queued note; {apps}
-    // reaches nobody.
+    // The views fill only the drag strings, the link warning, the saved name and the new-messages pill, and hosts the
+    // queued note; {apps} reaches nobody.
     let filled: BTreeMap<&str, &[&str]> = BTreeMap::from([
         ("drop_send_many", &["{count}"][..]),
         ("drop_send_file", &["{name}"][..]),
@@ -302,6 +308,7 @@ fn static_strings() {
         ("link_elsewhere", &["{host}", "{shown}"][..]),
         ("queued_note", &["{first}"][..]),
         ("name_saved", &["{name}"][..]),
+        ("new_messages", &["{count}"][..]),
     ]);
     for (key, text) in &strings {
         let mut rest = text.clone();

@@ -12,18 +12,43 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) CGFloat placeholderIndent; // the `/` tag's room at the start of the first line
 @property(nonatomic, copy, nullable) void (^onReturn)(void);
 @property(nonatomic, copy, nullable) void (^onHash)(void);
+// Up, Down and Return (without Shift) as moveUp:, moveDown: and insertNewline:, offered first to an open `#` picker:
+// YES when it took the key.
+@property(nonatomic, copy, nullable) BOOL (^onPickerKey)(SEL command);
 @property(nonatomic, copy, nullable) void (^onAt)(void); // `@` where a word starts, as `#`
 // `/` typed into an empty field: YES when it opened the command field, and the `/` is then not inserted.
 @property(nonatomic, copy, nullable) BOOL (^onSlash)(void);
 // Delete with nothing before the insertion point: YES when it was handled (it closes an empty command field).
 @property(nonatomic, copy, nullable) BOOL (^onDeleteAtStart)(void);
+// Paste (Cmd+V, Edit > Paste) reads `pasteboard`: the context's, the general pasteboard unless a test gives its own.
+// `onPaste` answers YES when the composer took what it holds as attachments; NO pastes it as text.
+// `canPasteAttachments` keeps Paste enabled for a pasteboard holding only an image or files.
+@property(nonatomic, strong, nullable) NSPasteboard *pasteboard;
+@property(nonatomic, copy, nullable) BOOL (^onPaste)(NSPasteboard *pasteboard);
+@property(nonatomic, copy, nullable) BOOL (^canPasteAttachments)(NSPasteboard *pasteboard);
 @end
 
-// What the command controller needs of the composer it lives in.
+// What the command controller and the attachment pickers (SZFriendsComposerAttach.m) need of the composer.
 @interface SZFriendsComposerView ()
 - (void)showError:(nullable NSString *)message;
 - (void)saveDraft;
 - (void)changedHeight;
+@property(nonatomic, readonly) SZFriendsContext *composerContext;
+// Enabled, not sending, and the helper takes files in this conversation (composer.accepts_drops).
+@property(nonatomic, readonly) BOOL takesAttachments;
+@end
+
+// Attach files and Paste: chips, never an immediate send (SZFriendsComposerAttach.m).
+@interface SZFriendsComposerView (SZFriendsAttach)
+- (void)connectPickers; // the text view's `#`, `@` and picker keys, at init
+- (void)chooseFilesToAttach; // the paperclip: the context's chooseFiles, then chips
+// Files chosen, pasted or dropped, judged by `verdict`: a refusal shows in the helper's words (drop_folders_refused,
+// drop_not_a_file) and attaches nothing; otherwise the items not attached yet become chips.
+- (void)attachItems:(NSArray<SZFriendsAttachableItem *> *)items verdict:(SZFriendsDropVerdict)verdict;
+// Paste from `pasteboard`: YES when it holds files, an image or the host's items, which become chips (or a refusal
+// shows); NO when it is text for the field.
+- (BOOL)pasteAttachmentsFromPasteboard:(NSPasteboard *)pasteboard;
+- (BOOL)canPasteAttachmentsFromPasteboard:(NSPasteboard *)pasteboard;
 @end
 
 // An item the assistant may hand back: one of the person's chips, or cut from one (pages of the same document).

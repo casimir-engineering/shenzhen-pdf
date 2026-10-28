@@ -57,9 +57,8 @@ static char chromeKey;
 - (void)drawWithFrame:(NSRect)frame inView:(NSView*)view {
     NSBezierPath* shape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(frame,1,1) xRadius:6 yRadius:6];
     if (self.highlighted) { [SPDFCollectionColor(@"selected") setFill]; [shape fill]; }
-    NSImage* image = [self.image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightRegular]] ?: self.image;
-    image = [image imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[SPDFChromeIconColor(self.enabled)]]] ?: image;
-    SPDFDrawVectorIcon(image,NSMakeRect(floor(NSMidX(frame)-8),floor(NSMidY(frame)-8),16,16),view.isFlipped);
+    NSImage* image = SPDFChromeSymbolImage(self.image,SPDFToolbarSymbolPointSize,NSFontWeightRegular,SPDFChromeIconColor(self.enabled));
+    SPDFDrawVectorIcon(image,NSInsetRect(frame,1,1),view.isFlipped);
     if (view.window.firstResponder == view) {
         [NSGraphicsContext saveGraphicsState]; NSSetFocusRingStyle(NSFocusRingOnly); [shape fill]; [NSGraphicsContext restoreGraphicsState];
     }
@@ -137,7 +136,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
         [sidebarHeader.topAnchor constraintEqualToAnchor:_sidebarContainer.topAnchor],
         [sidebarHeader.bottomAnchor constraintEqualToAnchor:_sidebarModeControl.bottomAnchor]]];
     for (NSView* host in @[_sidebarContainer,_toolbar]) {
-        NSView* surface = SPDFCollectionSurface(@"window"); surface.translatesAutoresizingMaskIntoConstraints = NO;
+        NSView* surface = SPDFCollectionSurface(host == _sidebarContainer ? @"sidebar" : @"window"); surface.translatesAutoresizingMaskIntoConstraints = NO;
         [host addSubview:surface positioned:NSWindowBelow relativeTo:nil];
         [NSLayoutConstraint activateConstraints:@[[surface.leadingAnchor constraintEqualToAnchor:host.leadingAnchor],
             [surface.trailingAnchor constraintEqualToAnchor:host.trailingAnchor],
@@ -287,7 +286,7 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
 }
 - (void)syncWorkspaceChrome {
     SPDFWorkspaceChromeState* state = objc_getAssociatedObject(self,&chromeKey); if (!state) return;
-    ((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle = [self selectedTab].path.lastPathComponent ?: _path.lastPathComponent ?: @"No document";
+    ((SPDFSidebarNavigationControl*)_sidebarModeControl).documentTitle = spdf_tab_display_name([self selectedTab]) ?: [self selectedTab].path.lastPathComponent ?: _path.lastPathComponent ?: @"No document";
     BOOL chapters = _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters;
     SPDFDocumentTab* tab = [self selectedTab];
     BOOL saved = [self collectionTabIsSavedVersion:tab];
@@ -329,9 +328,11 @@ static NSButton* Icon(NSString* symbol, NSString* title, id target, SEL action) 
     _sidebarToggleButton.hidden = _sidebarVisible;
     _minimapToggleButton.hidden = _presentationMode;
     _toolbarOverflowButton.hidden = YES;
-    CGFloat pageWidth = ceil([_pageField.stringValue sizeWithAttributes:@{NSFontAttributeName:_pageField.font}].width)+4;
+    // Sized by the total, not the current number, so typing a page number of
+    // the total's length shows every digit and nothing beside it moves.
+    CGFloat pageWidth = spdf_page_field_width_for_total(_pageField,_pageCountLabel.stringValue);
     for (NSLayoutConstraint* c in _pageField.constraints)
-        if (c.firstAttribute==NSLayoutAttributeWidth && !c.secondItem) c.constant=MAX(12,pageWidth);
+        if (c.firstAttribute==NSLayoutAttributeWidth && !c.secondItem) c.constant=pageWidth;
     state.previous.enabled = [_pageSegments isEnabledForSegment:0];
     state.next.enabled = [_pageSegments isEnabledForSegment:1];
     state.print.enabled = [self hasActiveDocument];

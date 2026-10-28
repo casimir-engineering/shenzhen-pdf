@@ -23,7 +23,26 @@
 @end
 
 NSArray<NSString*>* spdf_tab_group_colors(void);
+// The palettes the colours can be drawn from (Settings › Appearance › Tab group colors), and the one in use: read
+// from appearance.yaml in the reader's state the first time a group is drawn, Pastel but vibrant when none was
+// chosen. The built-in palettes, as replaced or added to by tab-group-palettes.json in the same folder; when that file changes, every
+// window of this process is recoloured and SPDFTabGroupPalettesChangedNotification is posted (default center).
+extern NSString* const SPDFTabGroupPalettesChangedNotification;
+NSArray<NSString*>* spdf_tab_group_palettes(void);
+NSString* spdf_tab_group_palette(void);
+// A palette's chip colours in hue order, red to pink, as 0xRRGGBB numbers: for previews.
+NSArray<NSNumber*>* spdf_tab_group_palette_fills(NSString* palette);
+// Saves the choice and recolours every window at once, this process's and the reader's other windows. NO for an
+// unknown palette, or when the choice could not be saved (it is still shown until the reader quits).
+BOOL spdf_tab_group_set_palette(NSString* palette);
+// The group's colour: its title tab, the bar under an open group, swatches.
 NSColor* spdf_tab_group_accent(NSString* color);
+// Text and icons drawn on the accent: white or near-black, 4.5:1 or more.
+NSColor* spdf_tab_group_label(NSString* color);
+// The title tab's outline in the current drawing appearance, 3:1 or more against the tab bar.
+NSColor* spdf_tab_group_edge(NSString* color);
+// For tests: part 0 fill, 1 label, 2 edge, as 0xRRGGBB.
+unsigned spdf_tab_group_hex(NSString* color, int part, BOOL dark);
 NSColor* spdf_tab_group_selected_fill(NSString* color, BOOL dark);
 NSImage* spdf_tab_group_swatch_image(NSString* color);
 NSString* spdf_tab_group_unused_color(NSArray<SPDFDocumentTab*>* tabs);

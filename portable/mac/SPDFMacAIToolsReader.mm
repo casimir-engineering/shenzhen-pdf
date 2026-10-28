@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 #import "SPDFMacAIIntegration.h"
 #import "SPDFMacFindExecution.h"
+#import "SPDFMacDocumentActivity.h"
 static char analysisMetadataKey, citationNavigationKey;
 static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
     if (text.length<=limit) return text;
@@ -34,23 +35,30 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
 - (NSDictionary*)aiDocumentMetadataForPath:(NSString*)path {
     for (SPDFDocumentTab* tab in _tabs) if ([tab.path isEqual:path]) {
         NSDictionary* analysis=[self aiAnalysisForPath:path];
-        return @{@"path":path,@"title":tab.title ?: path.lastPathComponent,
+        return @{@"path":path,@"title":spdf_tab_display_name(tab) ?: tab.title ?: path.lastPathComponent,
             @"analysisAvailable":@(analysis!=nil),@"analysis":analysis ?: @{}};
     }
     return @{@"error":@"Document is no longer open."};
 }
 - (NSDictionary*)aiCurrentDocumentContext {
     SPDFDocumentTab* tab=[self selectedTab];if(!tab.path.length)return @{};
-    return @{@"path":tab.path,@"title":WorkspaceLabel(tab.title ?: tab.path.lastPathComponent,200),
+    return @{@"path":tab.path,@"title":WorkspaceLabel(spdf_tab_display_name(tab) ?: tab.title ?: tab.path.lastPathComponent,200),
         @"page":@([self isMarkdownActive] ? [self activeMarkdownSession].currentPageIndex+1 : _pageIndex+1)};
 }
 - (NSDictionary*)aiWorkspaceContext { return [self aiWorkspaceContextWithArguments:@{}]; }
 - (NSDictionary*)aiWorkspaceContextWithArguments:(NSDictionary*)arguments {
+    return [self aiWorkspaceContextWithArguments:arguments activity:nil];
+}
+- (NSDictionary*)aiWorkspaceContextWithArguments:(NSDictionary*)arguments activity:(NSDictionary*)activity {
     NSUInteger first=MAX((NSUInteger)1,[arguments[@"first"] unsignedIntegerValue]);
     NSUInteger groupFirst=MAX((NSUInteger)1,[arguments[@"groupFirst"] unsignedIntegerValue]);
     NSUInteger count=arguments[@"count"] ? [arguments[@"count"] unsignedIntegerValue] : 50;
     if (!count || count>100) return @{@"error":@"Workspace page size must be 1–100."};
     NSString* filter=arguments[@"groupID"];
+    NSTimeZone* zone=NSTimeZone.localTimeZone; NSDictionary* entries=activity[@"entries"];
+    double recorded=[activity[@"recordedSince"] doubleValue];
+    double cutoff=activity && arguments[@"notViewedSince"] ? SPDFDocumentActivityParseTime(arguments[@"notViewedSince"],zone) : NAN;
+    NSMutableArray* unrecorded=[NSMutableArray array]; NSUInteger unrecordedCount=0;
     NSMutableArray* tabs=[NSMutableArray array],*groups=[NSMutableArray array];
     NSMutableDictionary* byID=[NSMutableDictionary dictionary]; NSUInteger matched=0,tabBytes=0; BOOL tabPageFull=NO;
     for (NSUInteger index=0;index<_tabs.count;index++) {
@@ -66,13 +74,24 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
         }
         row[@"documentCount"]=@([row[@"documentCount"] unsignedIntegerValue]+1);
         if (filter && ![filter isEqual:identifier]) continue;
+        NSDictionary* entry=tab.path.length ? entries[tab.path.stringByStandardizingPath] : nil;
+        if (!isnan(cutoff)) {
+            // Only documents known not to have been viewed since; those no record tells about are listed apart.
+            NSInteger state=SPDFDocumentActivityNotViewedSince(entry,cutoff,recorded);
+            if (state<0 && unrecordedCount++<100 && tab.path.length) [unrecorded addObject:tab.path];
+            if (state!=1) continue;
+        }
         matched++;
         if (matched<first || tabs.count>=count || tabPageFull) continue;
-        NSString* title=tab.title ?: tab.path.lastPathComponent ?: @"";
+        NSString* title=spdf_tab_display_name(tab) ?: tab.title ?: tab.path.lastPathComponent ?: @"";
         if (title.isAbsolutePath) title=title.lastPathComponent;
         NSDictionary* item=@{@"path":tab.path ?: @"",@"title":WorkspaceLabel(title,200),
             @"index":@(index+1),@"groupID":identifier,@"selected":@(index==(NSUInteger)_selectedTabIndex),
             @"readOnly":@(tab.readOnly),@"missingFile":@(tab.missingFile)};
+        // A name given in ShenzhenPDF: the file keeps its own, which the assistant may need to say.
+        if (spdf_tab_display_name(tab)) { NSMutableDictionary* named=[item mutableCopy];
+            named[@"filename"]=WorkspaceLabel(tab.path.lastPathComponent ?: @"",200); item=named; }
+        if (activity) { NSMutableDictionary* dated=[item mutableCopy]; [dated addEntriesFromDictionary:SPDFDocumentActivityFields(entry,zone)]; item=dated; }
         NSUInteger bytes=[NSJSONSerialization dataWithJSONObject:item options:0 error:nil].length;
         if (tabs.count && tabBytes+bytes>40000) { tabPageFull=YES; continue; }
         [tabs addObject:item]; tabBytes+=bytes;
@@ -98,6 +117,13 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
         @"currentPage":@([self isMarkdownActive] ? [self activeMarkdownSession].currentPageIndex+1 : _pageIndex+1),
         @"colors":spdf_tab_group_colors()} mutableCopy];
     result[@"currentDocument"]=[self aiCurrentDocumentContext];
+    if (activity) {
+        double now=NSDate.date.timeIntervalSince1970;
+        result[@"now"]=SPDFDocumentActivityISO(now,zone); result[@"timeZone"]=zone.name;
+        result[@"viewsRecordedSince"]=recorded>0 ? SPDFDocumentActivityISO(recorded,zone) : (id)NSNull.null;
+        if (!isnan(cutoff)) result[@"notViewedSince"]=@{@"since":SPDFDocumentActivityISO(cutoff,zone),
+            @"noViewRecord":@{@"count":@(unrecordedCount),@"paths":unrecorded}};
+    }
     result[@"capabilities"]=@{@"available":@[@"document_metadata",@"read_pages",@"search_documents",@"render_page",@"show_document",@"organize_groups",@"list_chats",@"organize_chats",@"read_comments",@"edit_comment",@"reader_state",@"reader_control",@"list_collection",@"open_collection",@"close_document",@"reopen_document",@"rename_document",@"document_job",@"undo_action"],
         @"documentJobs":@{@"kinds":@[@"ocr",@"translate",@"export-pdf"],@"requires":@"OCR and translation need installed local tools; no silent installation."},
         @"unavailable":@{@"delete_files":@"No reversible file deletion adapter."}};
@@ -106,7 +132,7 @@ static NSString* WorkspaceLabel(NSString* text, NSUInteger limit) {
 - (NSDictionary*)aiDocumentCandidateForTab:(SPDFDocumentTab*)tab {
     if (!tab.path.length) return nil;
     NSMutableDictionary* candidate=[@{@"path":tab.path,@"readPath":tab.workingPath ?: tab.path,
-        @"title":tab.title ?: tab.path.lastPathComponent,@"landscape":@(tab.markdownLandscape),
+        @"title":spdf_tab_display_name(tab) ?: tab.title ?: tab.path.lastPathComponent,@"landscape":@(tab.markdownLandscape),
         @"revision":SPDFSearchFileStamp(tab.workingPath ?: tab.path) ?: @"missing"} mutableCopy];
     SPDFMacMarkdownSession* session=[tab.path isEqual:_path] && [self isMarkdownActive] ?
         [self activeMarkdownSession] : tab.cachedMarkdownSession;

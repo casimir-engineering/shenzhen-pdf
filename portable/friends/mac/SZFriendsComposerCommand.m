@@ -7,8 +7,14 @@
 @implementation SZFriendsComposerTextView
 - (void)keyDown:(NSEvent *)event {
     BOOL returnKey = event.keyCode == 36 || event.keyCode == 76;
+    BOOL shift = (event.modifierFlags & NSEventModifierFlagShift) != 0;
+    SEL pickerCommand = event.keyCode == 125 ? @selector(moveDown:)
+                        : event.keyCode == 126 ? @selector(moveUp:)
+                        : returnKey && !shift  ? @selector(insertNewline:)
+                                               : NULL;
+    if (pickerCommand && !self.hasMarkedText && self.onPickerKey && self.onPickerKey(pickerCommand)) return;
     if (returnKey && !self.hasMarkedText) {
-        if (event.modifierFlags & NSEventModifierFlagShift) {
+        if (shift) {
             [self insertText:@"\n" replacementRange:self.selectedRange];
         } else if (self.onReturn) {
             self.onReturn();
@@ -40,6 +46,22 @@
                                              characterIsMember:[before characterAtIndex:location - 1]]);
     if ([typed isEqualToString:@"#"] && atWordStart && self.onHash) self.onHash();
     if ([typed isEqualToString:@"@"] && atWordStart && !self.hasMarkedText && self.onAt) self.onAt();
+}
+- (void)paste:(id)sender {
+    NSPasteboard *pasteboard = self.pasteboard ?: NSPasteboard.generalPasteboard;
+    if (self.isEditable && self.onPaste && self.onPaste(pasteboard)) return;
+    if (pasteboard == NSPasteboard.generalPasteboard) [super paste:sender];
+    else if (self.isEditable) [self readSelectionFromPasteboard:pasteboard];
+}
+- (BOOL)pastesAttachments:(SEL)action {
+    return action == @selector(paste:) && self.isEditable && self.canPasteAttachments &&
+           self.canPasteAttachments(self.pasteboard ?: NSPasteboard.generalPasteboard);
+}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    return [self pastesAttachments:item.action] || [super validateMenuItem:item];
+}
+- (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item {
+    return [self pastesAttachments:item.action] || [super validateUserInterfaceItem:item];
 }
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];

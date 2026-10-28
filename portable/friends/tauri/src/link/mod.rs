@@ -12,10 +12,15 @@ pub mod desktop;
 pub mod embedded;
 #[cfg(target_os = "macos")]
 pub mod mac;
+mod watch;
 
+pub use watch::Patience;
+use watch::WATCHED;
+
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 use szfriends_contract::framing::encode;
@@ -33,6 +38,9 @@ pub enum LinkState {
     Ready,
     Waiting,
     Incompatible,
+    /// Not ready for [`STUCK_AFTER`], or stopped by something that will not pass by itself ([`Trouble`]). The link
+    /// keeps trying; the panel says why and what to do instead of "Starting Friends…" without end.
+    Unavailable,
 }
 
 impl LinkState {
@@ -44,21 +52,58 @@ impl LinkState {
             Self::Ready => "ready",
             Self::Waiting => "waiting",
             Self::Incompatible => "incompatible",
+            Self::Unavailable => "unavailable",
         }
     }
 }
 
+/// Why Friends is unavailable, as far as the link can tell.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))] // only the desktop connector finds them
+pub enum Trouble {
+    /// Nothing more specific: the helper did not start or did not answer.
+    #[default]
+    Other,
+    /// Security software removed or refused the helper (`szfriends_helper::copy::is_blocked`).
+    Blocked,
+    /// The app runs as administrator and the helper does not, so the app will not talk to it (Windows integrity).
+    Elevated,
+}
+
+/// How long the link may go without a working helper before the panel stops saying "Starting Friends…" (or showing
+/// "Loading…") and says it did not start. A first start copies the helper and checks in; it is ready in a second or
+/// two, ten on a slow disk. Working means the helper answered an intent, not only its hello: a helper that welcomes
+/// and then stops answering, or leaves again at once, does not count.
+pub const STUCK_AFTER: Duration = Duration::from_secs(20);
+
 /// What the person who opened Friends reads while it is not answering. They wonder whether it works and whether
-/// they must do something; only an incompatible helper asks anything of them: another app runs a newer Friends,
-/// which hands over only to newer builds, so updating this app is the remedy.
-pub fn state_text(state: LinkState, app_name: &str) -> String {
+/// they must do something. An incompatible helper asks them to update this app: another app runs a newer Friends,
+/// which hands over only to newer builds. One that is unavailable says what stopped it, where the link knows, and
+/// what to do; the link keeps trying meanwhile, so Friends appears by itself once the cause is gone.
+pub fn state_text(state: LinkState, app_name: &str, trouble: Trouble) -> String {
+    let computer = if cfg!(target_os = "macos") { "this Mac" } else { "this computer" };
     match state {
         LinkState::Connecting | LinkState::Handshaking => "Starting Friends…".into(),
         LinkState::Waiting => "Reconnecting to Friends…".into(),
         LinkState::Incompatible => {
-            let computer = if cfg!(target_os = "macos") { "this Mac" } else { "this computer" };
             format!("Another app on {computer} uses a newer version of Friends. Update {app_name} to use Friends.")
         }
+        LinkState::Unavailable => match trouble {
+            Trouble::Blocked if cfg!(windows) => "Security software on this computer stopped Friends from starting. \
+                Allow szfriends-helper.exe in it (in Windows Security: Virus & threat protection, Protection history) \
+                and Friends starts by itself."
+                .into(),
+            Trouble::Blocked => format!(
+                "Security software on {computer} stopped Friends from starting. Allow szfriends-helper in it and \
+                 Friends starts by itself."
+            ),
+            Trouble::Elevated => {
+                format!(
+                    "Friends can't start while {app_name} runs as administrator. Quit {app_name} and open it normally."
+                )
+            }
+            Trouble::Other => format!("Friends didn't start. Quit {app_name} and open it again."),
+        },
         LinkState::Idle | LinkState::Ready => String::new(),
     }
 }
@@ -72,9 +117,16 @@ pub enum LinkEvent {
 
 pub type Sink = Arc<dyn Fn(LinkEvent) + Send + Sync>;
 
-/// Why a connection was not made this time. Either way the link retries with backoff until stopped.
+/// Why a connection was not made this time, and what kind of trouble that is. Either way the link retries with
+/// backoff until stopped.
 #[derive(Debug)]
-pub struct NotConnected(pub String);
+pub struct NotConnected(pub String, pub Trouble);
+
+impl NotConnected {
+    pub fn because(why: impl Into<String>) -> Self {
+        Self(why.into(), Trouble::Other)
+    }
+}
 
 /// Makes one connection, ready for its hello.
 pub trait Connector: Send + Sync + 'static {
@@ -86,12 +138,48 @@ pub trait Connector: Send + Sync + 'static {
     /// The app came to the foreground or left it (phones; a desktop helper does not follow one app).
     #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
     fn foreground(&self, _in_front: bool) {}
+    /// The helper stopped answering: end it so the next connect starts a new one. Whether one was ended.
+    fn end_unresponsive(&self) -> bool {
+        false
+    }
 }
 
-#[derive(Default)]
 struct Shared {
     state: Option<LinkState>,
     stream: Option<Arc<dyn Duplex>>,
+    trouble: Trouble,
+    /// Since when no helper has worked (answered an intent); reset by an answer.
+    since: Instant,
+    /// When the current hello was sent, while handshaking.
+    hello_at: Option<Instant>,
+    /// Watched intents not answered yet, by id, with when they were sent.
+    outstanding: std::collections::HashMap<String, Instant>,
+    /// When the last heartbeat went out.
+    pinged_at: Option<Instant>,
+    /// When this connection became ready.
+    ready_at: Option<Instant>,
+    /// How long a connection must stay ready before its answers count as a working helper (a helper that crashes
+    /// right after each welcome is not one).
+    settle: Duration,
+    /// The watchdog dropped this connection because the helper stopped answering.
+    stalled: bool,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            state: None,
+            stream: None,
+            trouble: Trouble::Other,
+            since: Instant::now(),
+            hello_at: None,
+            outstanding: std::collections::HashMap::new(),
+            pinged_at: None,
+            ready_at: None,
+            settle: Patience::DEFAULT.hello,
+            stalled: false,
+        }
+    }
 }
 
 struct Inner {
@@ -141,6 +229,11 @@ impl Link {
         self.0.shared.lock().unwrap_or_else(|e| e.into_inner()).state.unwrap_or(LinkState::Idle)
     }
 
+    /// What stopped Friends, while [`LinkState::Unavailable`].
+    pub fn trouble(&self) -> Trouble {
+        self.0.shared.lock().unwrap_or_else(|e| e.into_inner()).trouble
+    }
+
     /// Sends one intent; its id, or None unless the link is ready (the service owns every queue, so nothing waits
     /// here).
     pub fn send(&self, kind: &str, fields: &Map<String, Value>) -> Option<String> {
@@ -156,6 +249,9 @@ impl Link {
         frame.insert("type".into(), Value::from(kind));
         frame.insert("id".into(), Value::from(id.clone()));
         let bytes = encode(&Value::Object(frame)).ok()?;
+        if WATCHED.contains(&kind) {
+            self.0.shared.lock().unwrap_or_else(|e| e.into_inner()).outstanding.insert(id.clone(), Instant::now());
+        }
         let _writing = self.0.write.lock().unwrap_or_else(|e| e.into_inner());
         stream.write_all(&bytes).ok()?;
         Some(id)
@@ -185,9 +281,27 @@ impl Link {
             if shared.state == Some(state) {
                 return;
             }
+            // Unavailable holds through the retries' own states until the link is ready, so the panel's line does
+            // not flicker back to "Starting Friends…" every few seconds.
+            let retrying = matches!(state, LinkState::Connecting | LinkState::Handshaking | LinkState::Waiting);
+            if shared.state == Some(LinkState::Unavailable) && retrying {
+                return;
+            }
             shared.state = Some(state);
         }
         (self.0.sink)(LinkEvent::State(state));
+    }
+
+    /// Ready: the one state that ends Unavailable from inside the loop.
+    fn set_ready(&self) {
+        {
+            let mut shared = self.0.shared.lock().unwrap_or_else(|e| e.into_inner());
+            if shared.state == Some(LinkState::Ready) {
+                return;
+            }
+            shared.state = Some(LinkState::Ready);
+        }
+        (self.0.sink)(LinkEvent::State(LinkState::Ready));
     }
 
     /// Sleeps `delay` unless stopped first.
@@ -197,21 +311,81 @@ impl Link {
     }
 
     fn run(&self) {
+        self.run_with(Patience::DEFAULT)
+    }
+
+    /// Since when no helper has worked.
+    fn not_working_for(&self) -> Duration {
+        self.0.shared.lock().unwrap_or_else(|e| e.into_inner()).since.elapsed()
+    }
+
+    /// Unavailable, announced again when the reason changed (the panel reads the reason with the state).
+    fn set_unavailable(&self, trouble: Trouble, why: &str) {
+        let changed = {
+            let mut shared = self.0.shared.lock().unwrap_or_else(|e| e.into_inner());
+            let changed = shared.state != Some(LinkState::Unavailable) || shared.trouble != trouble;
+            shared.trouble = trouble;
+            if changed {
+                shared.state = None;
+            }
+            changed
+        };
+        if changed {
+            log(&format!("Friends is unavailable ({trouble:?}) after {} s: {why}", self.not_working_for().as_secs()));
+        }
+        self.set_state(LinkState::Unavailable);
+    }
+
+    /// The connection loop with its watchdog; `patience` is [`Patience::DEFAULT`] except in tests.
+    fn run_with(&self, patience: Patience) {
+        self.0.shared.lock().unwrap_or_else(|e| e.into_inner()).settle = patience.hello;
+        let watching = self.clone();
+        let _ = std::thread::Builder::new().name("szfriends-link-watch".into()).spawn(move || watching.watch(patience));
+        self.connect_loop(patience.stuck_after)
+    }
+
+    fn connect_loop(&self, stuck_after: Duration) {
         let mut base = RETRY_FIRST;
+        let mut logged = String::new(); // the last reason logged: each new one once, not every retry
         while !self.stopped() {
             self.set_state(LinkState::Connecting);
-            let quick = match self.0.connector.connect() {
-                Ok(connection) => self.serve(connection, &mut base),
-                Err(NotConnected(why)) => {
-                    log(&format!("Friends is not connected: {why}"));
-                    false
+            let (quick, trouble) = match self.0.connector.connect() {
+                Ok(connection) => (self.serve(connection, &mut base), Trouble::Other),
+                Err(NotConnected(why, trouble)) => {
+                    if why != logged {
+                        log(&format!("Friends is not connected: {why}"));
+                        logged = why;
+                    }
+                    (false, trouble)
                 }
             };
             if self.stopped() {
                 break;
             }
-            if self.state() != LinkState::Incompatible {
-                self.set_state(LinkState::Waiting);
+            let stalled = {
+                let mut shared = self.0.shared.lock().unwrap_or_else(|e| e.into_inner());
+                shared.outstanding.clear();
+                shared.hello_at = None;
+                shared.pinged_at = None;
+                shared.ready_at = None;
+                std::mem::take(&mut shared.stalled)
+            };
+            if stalled {
+                // A helper that took the connection and then stopped answering: end it, so the next connect starts
+                // a new one instead of reaching the same silent one again.
+                if self.0.connector.end_unresponsive() {
+                    log("ended the helper that stopped answering; starting a new one");
+                }
+            }
+            let state = self.state();
+            if state != LinkState::Incompatible {
+                let stuck = trouble != Trouble::Other || self.not_working_for() >= stuck_after;
+                if stuck {
+                    let why = if logged.is_empty() { "the helper did not answer".to_owned() } else { logged.clone() };
+                    self.set_unavailable(trouble, &why);
+                } else {
+                    self.set_state(LinkState::Waiting);
+                }
             }
             let mut random = [0u8; 4];
             szfriends_crypto::random_bytes(&mut random);
@@ -231,6 +405,7 @@ impl Link {
             connection.close();
             return false;
         }
+        self.0.shared.lock().unwrap_or_else(|e| e.into_inner()).hello_at = Some(Instant::now());
         self.set_state(LinkState::Handshaking);
         let embedded = self.0.connector.embedded();
         let answer = match connection.hello(&self.0.app, embedded.as_ref()) {
@@ -247,13 +422,41 @@ impl Link {
             connection.close();
             return false;
         }
+        if answer["service"] == "not_started" {
+            // The helper runs, but its Friends service could not open the identity or the store (its log says why);
+            // it tries again as apps connect. Not a working helper: the panel says Friends didn't start meanwhile.
+            log("the helper's Friends service has not started; connecting again");
+            connection.close();
+            return false;
+        }
         *base = RETRY_FIRST;
         (self.0.sink)(LinkEvent::Frame(answer));
-        self.set_state(LinkState::Ready);
+        {
+            let mut shared = self.0.shared.lock().unwrap_or_else(|e| e.into_inner());
+            shared.trouble = Trouble::Other;
+            shared.hello_at = None;
+        }
+        self.set_ready();
+        {
+            let mut shared = self.0.shared.lock().unwrap_or_else(|e| e.into_inner());
+            shared.ready_at = Some(Instant::now());
+            shared.pinged_at = Some(Instant::now());
+        }
         let mut handover = false;
         while let Ok(Some(frame)) = connection.next_frame() {
             if frame["type"] == "goodbye" {
                 handover = frame["reason"] == "handover";
+            }
+            if frame["type"] == "reply" {
+                // An answer from a connection that stayed up: this helper works. (The heartbeat's reply names no
+                // request of the app's: dropped there.)
+                let mut shared = self.0.shared.lock().unwrap_or_else(|e| e.into_inner());
+                if shared.ready_at.is_some_and(|at| at.elapsed() >= shared.settle) {
+                    shared.since = Instant::now();
+                }
+                if let Some(re) = frame["re"].as_str() {
+                    shared.outstanding.remove(re);
+                }
             }
             (self.0.sink)(LinkEvent::Frame(frame));
         }
@@ -263,9 +466,33 @@ impl Link {
     }
 }
 
-/// The plugin's log line (stderr; the helper keeps its own log).
+/// Where the plugin's log lines also go: the app's own log directory, set once Friends is located. A Windows app has
+/// no console, so stderr alone would lose them; the helper keeps its own log (`helper.log` in the Friends home).
+static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
+/// A log file past this size starts again, the old one kept as `.1`.
+const LOG_LIMIT: u64 = 1024 * 1024;
+
+/// Sends the plugin's log lines to `path` too (`<app log dir>/friends.log`); the first call wins.
+pub fn log_to(path: PathBuf) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_LIMIT) {
+        let _ = std::fs::rename(&path, path.with_extension("log.1"));
+    }
+    let _ = LOG_FILE.set(path);
+}
+
+/// The plugin's log line: stderr, and the log file once there is one.
 pub fn log(line: &str) {
     eprintln!("szfriends: {line}");
+    if let Some(path) = LOG_FILE.get() {
+        use std::io::Write;
+        let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{seconds} [{}] {line}", std::process::id());
+        }
+    }
 }
 
 #[cfg(test)]

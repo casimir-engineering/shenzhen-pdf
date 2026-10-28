@@ -29,15 +29,21 @@ NSString* const SPDFMacAIChipKindAttachment = @"attachment";
     return [[self alloc] initWithKind:SPDFMacAIChipKindAttachment name:name scope:nil file:fileURL identifier:nil
                              revision:nil];
 }
++ (instancetype)attachmentChipWithFileURL:(NSURL*)fileURL identifier:(NSString*)identifier displayName:(NSString*)name {
+    return [[self alloc] initWithKind:SPDFMacAIChipKindAttachment name:name scope:nil file:fileURL identifier:identifier
+                             revision:nil];
+}
 - (id)copyWithZone:(NSZone*)zone { (void)zone; return self; }
 @end
 
+const NSUInteger SPDFMacAIRequestStepCeiling=120;
 @implementation SPDFMacAIRequestBudget {
     SPDFMacAIRequestBudget* _parent;
     NSUInteger _steps, _tokens, _toolCalls;
     NSUInteger _usedSteps, _usedTokens, _usedToolCalls;
 }
-+ (instancetype)defaultRequestBudget { return [[self alloc] initWithSteps:12 tokens:2000000 toolCalls:NSUIntegerMax]; }
++ (instancetype)defaultRequestBudget { return [[self alloc] initWithSteps:SPDFMacAIRequestStepCeiling tokens:8000000
+    toolCalls:NSUIntegerMax]; }
 - (instancetype)initWithSteps:(NSUInteger)steps tokens:(NSUInteger)tokens toolCalls:(NSUInteger)toolCalls {
     if (!(self = [super init])) return nil;
     _steps = steps;

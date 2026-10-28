@@ -142,7 +142,7 @@ static void CheckEscapes(SandboxSuite* suite) {
         if (!blocked) fprintf(stderr, "  escape attempt not blocked: %s\n", name.UTF8String);
         CHECK(blocked, "every escape attempt fails inside the sandbox");
     }
-    CHECK(![out containsString:@"ESCAPED"] && [out containsString:@"CONTROL ['.matplotlib', '.tmp', 'main.py']"],
+    CHECK(![out containsString:@"ESCAPED"] && [out containsString:@"CONTROL ['.matplotlib', '.tmp', 'main.py', 'out']"],
           "nothing escaped, and the script itself ran to the end");
     NSData* everything = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
     CHECK(![[[NSString alloc] initWithData:everything encoding:NSUTF8StringEncoding] containsString:suite.token],
@@ -226,7 +226,13 @@ static void CheckBoobyTraps(SandboxSuite* suite) {
          "print('planted')\n", suite.secret, suite.secret];
     NSDictionary* result = SuiteRun(suite, code, nil);
     NSData* everything = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
-    CHECK([result[@"stdout"] isEqual:@"planted\n"] &&
-          ![[[NSString alloc] initWithData:everything encoding:NSUTF8StringEncoding] containsString:suite.token],
-          "planted links, FIFOs, locks and deep trees neither leak nor stop the cleanup");
+    NSString* returned = [[NSString alloc] initWithData:everything encoding:NSUTF8StringEncoding] ?: @"";
+    // The locked directory hides disk from the helper's 25 ms measurement, which ends the run as over the files
+    // limit when a measurement lands before the code exits: on a slow CI runner it often does, here almost never.
+    BOOL planted = [result[@"stdout"] isEqual:@"planted\n"] || [result[@"limit"] isEqual:@"files"];
+    BOOL leaked = [returned containsString:suite.token];
+    CHECK(planted && !leaked, "planted links, FIFOs, locks and deep trees neither leak nor stop the cleanup");
+    if (!planted || leaked)
+        fprintf(stderr, "  planted %d, leaked %d: %s\n", planted, leaked,
+                [returned substringToIndex:MIN((NSUInteger)2000, returned.length)].UTF8String);
 }

@@ -16,6 +16,8 @@
 mod commands;
 mod drops;
 mod files;
+#[cfg(windows)]
+mod firewall;
 mod host;
 mod link;
 #[cfg(target_os = "macos")]
@@ -191,6 +193,10 @@ fn test_home<R: Runtime>(config: &Config<R>) -> Option<PathBuf> {
 /// Where Friends' pieces are for this run, or None when Friends is not offered.
 #[allow(unused_variables)]
 fn locate<R: Runtime>(app: &AppHandle<R>, config: &Config<R>) -> Option<Located> {
+    // The plugin's log lines in the app's own log folder: a Windows app has no console for them.
+    if let Ok(logs) = app.path().app_log_dir() {
+        link::log_to(logs.join("friends.log"));
+    }
     #[cfg(any(target_os = "linux", windows))]
     {
         let helper = match &config.helper {
@@ -202,9 +208,13 @@ fn locate<R: Runtime>(app: &AppHandle<R>, config: &Config<R>) -> Option<Located>
             }
         };
         if !helper.is_file() {
+            link::log(&format!("no helper at {}: this build offers no Friends", helper.display()));
             return None;
         }
-        let connector = link::desktop::HelperConnector::new(Some(helper), test_home(config))?;
+        let Some(connector) = link::desktop::HelperConnector::new(Some(helper), test_home(config)) else {
+            link::log("no Friends home: the environment names no local application data folder");
+            return None;
+        };
         let state_dir = connector.state_dir().to_path_buf();
         let animals = bundled_animals(app, config);
         return Some(Located { connector: Arc::new(connector), state_dir, animals, data_dir: None });
@@ -337,6 +347,7 @@ pub fn init<R: Runtime>(config: Config<R>) -> TauriPlugin<R> {
             commands::choose_files,
             commands::shared_files,
             drops::drop_paths,
+            drops::clipboard_files,
             drops::drag_over,
         ])
         .setup(move |app, _api| {

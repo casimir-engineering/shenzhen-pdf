@@ -1,4 +1,5 @@
 #import "SPDFMacAIIntegration.h"
+#import "SPDFMacCollectionStyle.h"
 #import "SPDFMacSidebarWorkspace.h"
 #import "SPDFMacGroupManagement.h"
 #import "SPDFMacTabGroupIntegration.h"
@@ -108,7 +109,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
             lookup[identifier] = row; [groups addObject:row];
         }
         BOOL selected = tab == [self selectedTab]; if (selected) row[@"selected"] = @YES;
-        [row[@"documents"] addObject:@{@"path":tab.path ?: @"",@"title":tab.title ?: tab.path.lastPathComponent ?: @"Document",@"selected":@(selected)}];
+        [row[@"documents"] addObject:@{@"path":tab.path ?: @"",@"title":spdf_tab_display_name(tab) ?: tab.title ?: tab.path.lastPathComponent ?: @"Document",@"selected":@(selected)}];
     }
     for (SPDFTabGroup* group in [self emptyTabGroups]) if (!lookup[group.identifier])
         [groups addObject:@{@"id":group.identifier,@"name":group.displayName,@"color":group.colorName,
@@ -213,7 +214,7 @@ static char stateKey, groupsControllerKey, emptySearchKey, saveGenerationKey, ta
         NSTextField* title = [NSTextField labelWithString:@"Find in this document"];
         title.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
         NSTextField* help = [NSTextField wrappingLabelWithString:@"Type above to find text in this document. Results will appear here."];
-        help.textColor = NSColor.secondaryLabelColor;
+        help.textColor = SPDFCollectionColor(@"secondary");
         NSStackView* stack = [NSStackView stackViewWithViews:@[title,help]];
         stack.orientation = NSUserInterfaceLayoutOrientationVertical; stack.alignment = NSLayoutAttributeLeading; stack.spacing = 10;
         searchView = [NSView new]; [self attachSidebarWorkspaceView:searchView];

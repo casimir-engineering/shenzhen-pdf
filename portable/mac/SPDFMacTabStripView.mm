@@ -1,6 +1,7 @@
 #import "SPDFMacTabStripViewPrivate.h"
 
 #import "SPDFMacSupport.h"
+#import "SPDFMacTabHoverPreview.h"
 #import "SPDFMacTabStripGeometry.h"
 #import "SPDFMacTabStripStyle.h"
 #import "SPDFMacTabAccessibility.h"
@@ -82,6 +83,7 @@
 - (void)setTabScrollOffset:(CGFloat)offset {
     _tabScrollOffset=isfinite(offset) ? MAX(0,offset) : 0;
     _groupLayout=nil; _revealSelectedTab=NO; [self setNeedsDisplay:YES];
+    [self refreshHoverAfterLayoutChange];
 }
 - (void)setEmptyGroups:(NSArray<SPDFTabGroup*>*)groups {
     if (!_emptyGroups.count && !groups.count) return;
@@ -90,6 +92,7 @@
     _accessibilityChildrenSnapshot = nil;
     NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
     [self setNeedsDisplay:YES];
+    [self refreshHoverAfterLayoutChange];
 }
 
 - (void)setTabs:(NSArray<SPDFDocumentTab*>*)tabs {
@@ -102,13 +105,12 @@
     NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
     [self setNeedsDisplay:YES];
     [self rebuildReadOnlyTooltips];
-    if (_hasLastHoverPoint && NSPointInRect(_lastHoverPoint, self.bounds)) [self updateHoverForPoint:_lastHoverPoint];
-    else [self dismissHoverPanel];
+    [self refreshHoverAfterLayoutChange];
 }
 
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
     _groupLayout = nil;
-    _revealSelectedTab = _selectedIndex != selectedIndex || !_tabs.count;
+    _revealSelectedTab = _revealSelectedTab || _selectedIndex != selectedIndex || !_tabs.count; // a pending one stays
     _selectedIndex = selectedIndex;
     _preferredTabWidths = nil;
     _ungroupedVisibleIndexes = nil;
@@ -116,6 +118,8 @@
     NSAccessibilityPostNotification(self, NSAccessibilitySelectedChildrenChangedNotification);
     [self setNeedsDisplay:YES];
     [self rebuildReadOnlyTooltips];
+    // Selecting a tab can scroll the tab bar to it.
+    [self refreshHoverAfterLayoutChange];
 }
 
 - (BOOL)isAccessibilityElement { return NO; }
@@ -133,8 +137,10 @@
 }
 
 - (void)setFrameSize:(NSSize)newSize {
+    BOOL resized = !NSEqualSizes(newSize, self.frame.size);
     [super setFrameSize:newSize];
     _accessibilityChildrenSnapshot = nil;
+    if (resized) [self refreshHoverAfterLayoutChange];
 }
 
 - (NSRect)closeCircleRectForTabRect:(NSRect)tabRect {
@@ -449,6 +455,9 @@
 }
 
 - (void)mouseEntered:(NSEvent*)event {
+    // The pointer is on its way to a tab: have every tab's thumbnail ready.
+    if ([self.reader respondsToSelector:@selector(tabHoverPreviewsWillBeNeeded)])
+        [(id)self.reader tabHoverPreviewsWillBeNeeded];
     [self updateHoverForEvent:event];
 }
 
