@@ -21,6 +21,7 @@ them is a bug; decide which and fix it in the same change.
 - [Links](#links)
 - [Devices](#devices)
 - [Notifications](#notifications)
+- [Fast transfers](#fast-transfers)
 - [Static strings](#static-strings)
 - [Limits](#limits)
 - [Schemas](#schemas)
@@ -239,6 +240,7 @@ Lowercase dotted strings. Unknown ones are ignored on both sides.
 | `notifications.focus` | The host sends `set_focus` (§ Notifications) |
 | `notifications.ask` | The host shows the list's `notifications` banner with its `dismiss` action (macOS, iOS) |
 | `background.reachable` | An Android host that can keep Friends running in the background: Settings carries `notifications.background` |
+| `transfers.boost` | The host shows the Wi-Fi Direct boost's question on a transfer: its `route_note` and the actions Go faster (`boost_transfer`) and Not now (`skip_boost`) (§ Fast transfers). Without it no view of that device asks, and the device never leaves its Wi-Fi network |
 
 | Helper capability | Meaning |
 |---|---|
@@ -304,6 +306,8 @@ composer on the reply already shows the sent message. Field types are in § Sche
 | `rename_device` | `name` | The name this computer has in Your computers on every computer of the profile (§ Devices) |
 | `fetch_from_device` | `transfer_id` | Copy here a file another of the person's computers holds (Get, § Devices) |
 | `fetch_from_friend` | `transfer_id` | Get a file a friend sent again, from that friend, when none of the person's computers has it anymore (Get again, § Getting a file again; helper capability `files.again`) |
+| `boost_transfer` | `transfer_id` | Go faster on a transfer's Wi-Fi Direct question (§ Fast transfers; client capability `transfers.boost`). `stale` once the question is gone |
+| `skip_boost` | `transfer_id` | Not now on that question: it goes, and is never asked again for that transfer. `stale` once the question is gone |
 | `set_focus` | `conversation_id` | The conversation this client's focused window shows, or `null`; no notification for it (§ Notifications) |
 | `set_notifications` | `enabled?`, `preview?`, `background?` | This device's notification switches (§ Notifications) |
 | `allow_notifications` | — | Ask the system for permission to show notifications (macOS, iOS, Android) |
@@ -495,10 +499,12 @@ acceptance). There is no separate inbox; requests and offers are rows.
 
 - `rows[].waiting` is set when the row waits for this person's answer; views show `waiting.label` in place of the
   route icon and emphasise the subtitle. `subtitle` says what is waiting ("Wants to be friends", "Answered your
-  request for tulip‑canyon" for an Add by ID answer no host confirmed, "Sent you Site photos.pdf") or previews the
-  last message or transfer. A preview with a status leads with it ("Sends when Priya is nearby · Supplier contract
-  v3.pdf", "Accepted automatically · Enclosure assembly guide.pdf"), so truncating a narrow row cuts the file name,
-  never whether it went; views truncate at the end.
+  request for tulip‑canyon" for an Add by ID answer no host confirmed, "Sent you Site photos.pdf") or shows the
+  latest message or file, never an event: "You: Sent the drawings", "Mei: Can you check pages 3–5?", a file as
+  "You: 📎 report.pdf", several sent together (a minute apart at most) as "Mei: 3 files", and "No messages yet" when
+  there is none. Only a status saying it did not arrive shows, and leads ("Not sent · You: hello"), so truncating a
+  narrow row never cuts it; the route icon already says whether the friend is reachable. Views truncate at the end
+  and draw the line of a row with `unread` in the text colour (or heavier) rather than the secondary one.
 - `rows[].id_confirmed` is true when the Friends host confirmed that this person holds the Friends ID (ADR 0005,
   attestation): several people may answer one Add by ID, and only the holder's answer carries it. Views mark the
   row (a small check beside the title) with `id_confirmed_label` as its tooltip and accessible name; it is `null`
@@ -596,7 +602,8 @@ The Nearby tab: the visibility action, then people as each method reports them.
   route icon per method (the same icons as `route`, § Shared objects) and the label on the row. It is `null` when
   no method sees the person, and the row's `accessibility_label` then ends without it; otherwise it ends "Found over
   Local network and Bluetooth". A friend's `list` row carries the same `found` while they are nearby, and `null`
-  otherwise, as every other row does. Without `nearby.found` neither carries the key.
+  otherwise, as every other row does; there views draw the icons alone before the subtitle, with `label` as their
+  tooltip, so the latest message keeps the line. Without `nearby.found` neither carries the key.
 
 ### `conversation`
 
@@ -793,9 +800,11 @@ The new computer's side of joining a person's existing profile, with the helper 
   the globe), the globe in the offline colour for `connecting`, a hollow dot crossed out for `offline` and nothing for
   `none` or a kind they do not know, with `label` as its tooltip; both views draw the same shapes.
 - **Route order.** Helpers dial and keep routes in one order: `lan`, `p2p_wifi`, `internet`, `bluetooth`, `relay`.
-  A transfer never costs the device its Internet connection: `p2p_wifi` is used only where the device stays on its
-  Wi-Fi network at the same time (AWDL on Macs and iPhones). Anywhere else, or when unsure, it is skipped and the next
-  route carries the session; friends' files and a profile's own devices alike.
+  A transfer never costs the device its Internet connection without the person's word: `p2p_wifi` is used only where
+  the device stays on its Wi-Fi network at the same time (AWDL on Macs and iPhones). Anywhere else, or when unsure, it
+  is skipped and the next route carries the session; friends' files and a profile's own devices alike. The one
+  exception is the Wi-Fi Direct boost (§ Fast transfers): the person says Go faster on the transfer, the device leaves
+  its Wi-Fi for that transfer only and rejoins it by itself afterwards.
 - **Route, online (M2).** Only a helper that announces `online` says anything about the Internet; an M1 helper's
   words say nearby, whatever happens. With `online`:
   - a session over the Internet is kind `online`, never `local`: method `internet` reads "Online, direct", `relay`
@@ -1453,6 +1462,42 @@ appends each request, withdrawal, ask and routed click as JSON lines to `<state 
 permission from `SZFRIENDS_NOTIFY_PERMISSION`, and accepts `test_notification_response`. Elsewhere that intent fails
 with `unknown_intent`. ADR 0017 gives the request's fields.
 
+## Fast transfers
+
+Proposed in [ADR 0018](docs/adr/0018-fast-transfers.md) and not built yet: until a helper ships it, nothing here
+appears. Between two devices whose helpers both have it, files move in checked blocks over several connections and
+routes at once and resume from exactly what arrived; with anyone else, files move as they do today. Views need no
+change for what follows: it adds no intent, view, field or capability, only these rules on fields that exist. The
+Wi-Fi Direct boost (last item) adds two intents and a client capability.
+
+- **Progress.** A transfer's `progress` counts the blocks that arrived and were checked, so it only ever goes up, and
+  it keeps its value through a route change, sleep or a restart of either computer: a transfer that stops and starts
+  again carries on from where it was, and after a route change only what was on the way is sent again. Blocks may arrive out of order; `progress` is still a fraction of the file.
+- **Several routes.** `route_note` keeps its rule (only when the file moves slowly enough that the time left helps
+  the person decide) and names the routes that carry the file. When Bluetooth helps a slow network, "Over your network
+  and Bluetooth, about 2 min" (catalog `estimate.network_and_bluetooth`, through `estimate.with_time`). When Bluetooth
+  drops out, the words go back to the ones for the network alone and nothing else changes: the file does not pause.
+- **Finishing.** After the last block, the receiving helper checks the whole file before it is saved. When that takes
+  more than a second (large files), the item stays `receiving` with `progress` 1 and `status_label` "Finishing…"
+  (catalog `transfer.finishing`); its `accessibility_label` ends ", finishing". Then it is `received` as today.
+- **Nothing to choose.** There is no setting for routes, connections or compression. A file that fails a check is
+  fetched again block by block by the helpers; the person sees `failed` only when the file cannot be completed at all
+  (the sender no longer has it, or it changed), with today's words and Try again.
+- **Getting a file again and copies from the person's own computers** (§ Getting a file again, § Devices) resume from
+  the blocks they already have in the same way: "Copying from Mei Lin · 90%" carries on at 90 %.
+- **Wi-Fi Direct boost** ([ADR 0019](docs/adr/0019-wifi-direct-boost.md)). When the two devices met only over
+  Bluetooth, are not on the same network and the file would take at least 20 s longer over Bluetooth, an Android phone
+  can host a direct Wi-Fi link that the other device joins. A device that would leave the Wi-Fi network that is its only
+  way online asks first, on the transfer, and only in views that declared `transfers.boost`: `route_note` is the
+  question ("Go faster? Mei isn’t on your Wi-Fi, so this is going over Bluetooth (about 12 min). Leave “HomeWiFi” for
+  about 1 min to connect to Mei directly. Your computer rejoins it by itself when it’s done.", catalog `transfer.boost.ask`;
+  phones that ask again with a system prompt add "Then choose Join.") and `actions` start with Go faster
+  (`boost_transfer`, primary) and Not now (`skip_boost`, secondary) before Cancel. Views show them as any action and
+  note. Not now is final for that transfer. Afterwards `route_note` says what happens: "Connecting directly to Mei…",
+  "Going directly over Wi-Fi. Your computer rejoins “HomeWiFi” when it’s done." (or, on a device that stays online another
+  way, that it does), "Rejoining “HomeWiFi”…", and if it did not get back by itself "Your computer didn’t get back on
+  “HomeWiFi” by itself. Choose it in the Wi-Fi menu." A device that keeps its Wi-Fi on the link is never asked.
+
 ## Static strings
 
 `welcome.strings` holds the labels that do not depend on state, keyed as below, so the catalog stays in the
@@ -1722,7 +1767,7 @@ label: string|null
 ```
 
 ```schema type.action
-action: enum(accept_request,decline_request,cancel_request,block,unblock,remove_friend,send_request,add_from_mention,accept_offer,decline_offer,cancel_transfer,cancel_message,retry_item,mark_verified,accept_key_change,dismiss_banner,start_visibility,stop_visibility,activate,reset_friends,delete_history,open_file,show_file,open_settings,add_from_link,receive_link,reset_friend_link,revoke_link,revoke_device,fetch_from_device,fetch_from_friend,join_profile,cancel_join,approve_join,deny_join,choose_received_folder,open_join,allow_notifications)
+action: enum(accept_request,decline_request,cancel_request,block,unblock,remove_friend,send_request,add_from_mention,accept_offer,decline_offer,cancel_transfer,cancel_message,retry_item,mark_verified,accept_key_change,dismiss_banner,start_visibility,stop_visibility,activate,reset_friends,delete_history,open_file,show_file,open_settings,add_from_link,receive_link,reset_friend_link,revoke_link,revoke_device,fetch_from_device,fetch_from_friend,boost_transfer,skip_boost,join_profile,cancel_join,approve_join,deny_join,choose_received_folder,open_join,allow_notifications)
 label: string
 style: enum(primary,secondary,link,destructive)
 note?: string|null
@@ -2522,6 +2567,14 @@ transfer_id: string
 ```
 
 ```schema intent.fetch_from_friend
+transfer_id: string
+```
+
+```schema intent.boost_transfer
+transfer_id: string
+```
+
+```schema intent.skip_boost
 transfer_id: string
 ```
 

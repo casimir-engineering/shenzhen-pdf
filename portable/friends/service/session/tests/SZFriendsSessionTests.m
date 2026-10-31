@@ -33,6 +33,8 @@ int main(int argc, char **argv) {
             @[ @"policy", ^{ SZFRunChannelPolicyTests(); } ],
             @[ @"faults", ^{ SZFRunChannelFaultTests(); } ],
             @[ @"lifetime", ^{ SZFRunChannelLifetimeTests(); } ],
+            @[ @"liveness", ^{ SZFRunChannelLivenessTests(); } ],
+            @[ @"fast transfers", ^{ SZFRunFastTransferTests(); } ],
             @[ @"refusals", ^{ SZFRunChannelRefusalTests(); } ],
             @[ @"peer identity", ^{ SZFRunChannelIdentityTests(); } ],
             @[ @"scripted peer", ^{ SZFRunScriptedPeerTests(); } ],

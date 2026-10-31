@@ -93,8 +93,36 @@ extern const NSTimeInterval SZFriendsRefusalDelay;      // 1.5 s
 // How long a responder remembers the initiator ephemeral keys of IK and NN message 1 (SZFriendsReplayCache).
 extern const NSTimeInterval SZFriendsReplayWindow;      // 600 s
 // The highest minor version this build speaks; it accepts peers whose range overlaps 0...this. Minor 1 adds THUMBNAIL,
-// minor 2 adds CHAIN, JOIN and SYNC, minor 3 adds AGAIN.
-extern const uint16_t SZFriendsSessionMinor;            // 3
+// minor 2 adds CHAIN, JOIN and SYNC, minor 3 adds AGAIN, minor 4 fast transfers (HASHES, WANT, PART, HAVE; ADR 0018),
+// used only when both sides also set SZFriendsCapabilityFastTransfers.
+extern const uint16_t SZFriendsSessionMinor;            // 4
+extern const uint16_t SZFriendsFastTransfersMinor;      // 4
+// Handshake capability bits (SZFriendsFieldCapabilities). A side uses what a bit names only when both set it and the
+// negotiated minor knows it; unknown bits are ignored.
+typedef NS_OPTIONS(uint32_t, SZFriendsCapabilities) {
+    SZFriendsCapabilityFastTransfers = 1u << 0, // blocks, the tree, WANT and HAVE (ADR 0018)
+    SZFriendsCapabilityAESLanes = 1u << 1,      // reserved for AES-GCM lanes (ADR 0018 § 9.2): never sent yet
+    SZFriendsCapabilityCompressedParts = 1u << 2, // compressed PARTs (ADR 0018 § 9.4): never sent yet
+    // Pieces (field 47) in WANT and HAVE (ADR 0018 § 3): sent only to a peer that sets it; to one that does not, a
+    // partly received block is wanted whole and the sender schedules whole blocks.
+    SZFriendsCapabilityPieces = 1u << 3,
+    // Bit 4 is the Rust core's LZ4 parts, never set here. Bit 5: the Wi-Fi Direct boost (ADR 0019): BOOST may go to a
+    // peer that sets it, on a fast session; the helper sets it where it can join a direct link (a Mac).
+    SZFriendsCapabilityDirectWiFiBoost = 1u << 5,
+};
+// What a new channel sets: fast transfers, unless the helper switched them off (settings key transfers.fast, read as
+// it starts) or SZFRIENDS_TEST_FAST_TRANSFERS=0 plays a released helper in a test home.
+SZFriendsCapabilities SZFriendsDefaultCapabilities(void);
+void SZFriendsSetFastTransfersEnabled(BOOL enabled);
+// ADR 0019: new channels also set SZFriendsCapabilityDirectWiFiBoost (with fast transfers) once the helper can join a
+// link (a person's own home on a Mac, with CoreWLAN); off at first, and in every test home.
+void SZFriendsSetDirectWiFiBoostEnabled(BOOL enabled);
+// Liveness while a transfer runs (ADR 0018 § 7, -setLivenessKeepalive:watch:): PING after this long without sending
+// anything, and a session that heard nothing for the silence limit closes (SZFriendsSessionErrorSilent) and is
+// redialed. A route that goes out of range stays open to TCP and L2CAP for minutes; this is what notices it.
+extern const NSTimeInterval SZFriendsKeepaliveInterval;      // 1 s
+extern const NSTimeInterval SZFriendsSilenceLimit;           // 8 s
+extern const NSTimeInterval SZFriendsSilenceLimitBluetooth;  // 12 s, when the initiator declared Bluetooth
 // Largest Attestation field (SZFriendsFieldAttestation) a handshake payload or PROFILE may carry.
 extern const NSUInteger SZFriendsAttestationMax;        // 512 bytes
 // Longest handshake message a responder reads (IK and NN message 1, XX messages 1 and 3). The largest honest one, IK
@@ -120,6 +148,7 @@ typedef NS_ERROR_ENUM(SZFriendsSessionErrorDomain, SZFriendsSessionError) {
     SZFriendsSessionErrorCodeMismatch = 9,    // the comparison-code commitment did not verify
     SZFriendsSessionErrorTimedOut = 10,       // the handshake did not go live within SZFriendsHandshakeTimeout
     SZFriendsSessionErrorReplayed = 11,       // message 1 repeated an initiator ephemeral key seen within the window
+    SZFriendsSessionErrorSilent = 12,         // while a transfer ran, nothing arrived for the silence limit: redial
 };
 extern NSString *const SZFriendsSessionCloseReasonKey; // NSNumber (SZFriendsCloseReason) in PeerClosed errors
 
@@ -131,136 +160,14 @@ typedef NS_ENUM(uint8_t, SZFriendsCloseReason) {
     SZFriendsCloseReasonExpired = 3,       // SZFriendsSessionMaxAge reached; the helper redials
     SZFriendsCloseReasonShuttingDown = 4,  // helper exit, handover or Friends turned off
     SZFriendsCloseReasonCodeMismatch = 5,  // comparison-code commitment failed
+    SZFriendsCloseReasonLaneRefused = 6,   // a lane the responder would not admit (ADR 0018 § 6)
 };
 
 #pragma mark - Frames (pure codec)
 
-// Transport frame types. Numbers are wire values: never renumber once M1 ships; until then this header is where
-// the session area changes them, by agreement with the helper. Unknown type: close with CLOSE (senders use only
-// types the peer's minor version knows). Frames marked (channel) are handled inside SZFriendsSecureChannel and
-// never reach onFrame.
-typedef NS_ENUM(uint8_t, SZFriendsFrameType) {
-    SZFriendsFrameTypeHello = 1,          // (channel) initiator's first transport frame: the session is live
-    SZFriendsFrameTypeProfile = 2,        // Name, FriendsID, PictureSet+PictureIndex or Data (own picture)
-    SZFriendsFrameTypePresenceSecret = 3, // ID, Secret: the sender's current presence secret (acceptance, rotation)
-    SZFriendsFrameTypeRequest = 4,        // ID, SentAt, Text (optional note): friend request in an XX session
-    SZFriendsFrameTypeAccept = 5,         // ID (of the request)
-    SZFriendsFrameTypeDecline = 6,        // ID (of the request)
-    SZFriendsFrameTypeRequestByID = 7,    // NN only: FriendsID, Token, CallbackSecret, Certificate, StaticKey,
-                                          // Signature over the NN handshake hash (ADR 0004 step 1)
-    SZFriendsFrameTypeReceived = 8,       // NN only: the fixed-size reply every device sends, before any lookup
-    SZFriendsFrameTypeCodeCommit = 9,     // (channel) Commitment
-    SZFriendsFrameTypeCodeNonce = 10,     // (channel) Nonce: the initiator's
-    SZFriendsFrameTypeCodeReveal = 11,    // (channel) Nonce: the responder's
-    SZFriendsFrameTypeMessage = 12,       // ID, SentAt, Text, OfferIDs (optional), ViaAssistant (optional)
-    SZFriendsFrameTypeAck = 13,           // ID: durable acknowledgement after the recipient's commit
-    SZFriendsFrameTypeOffer = 14,         // ID (offer id), Name, FileType, Size, Digest, ViaAssistant (optional)
-    SZFriendsFrameTypeOfferReply = 15,    // ID, Accept, Offset (resume point when accepting)
-    SZFriendsFrameTypeCancel = 16,        // ID: withdraw an unanswered request or offer, or stop a transfer
-    SZFriendsFrameTypeChunk = 17,         // ID, Offset, Data
-    SZFriendsFrameTypeProgress = 18,      // ID, Offset: bytes written, fsynced and committed
-    SZFriendsFrameTypeDone = 19,          // ID, Digest
-    SZFriendsFrameTypeRekey = 20,         // (channel)
-    SZFriendsFrameTypePing = 21,          // (channel)
-    SZFriendsFrameTypeClose = 22,         // (channel) Reason
-    // Minor 1: ID (of an offer), Width, Height, Data (QOI, at most SZFriendsFrameThumbnailMax bytes): the file's
-    // preview, after its OFFER. Sent only to a peer that negotiated minor 1 or later, and only while the offer waits
-    // for an answer. It travels in the CHUNK queue, so messages overtake it, and it is acknowledged like a message.
-    SZFriendsFrameTypeThumbnail = 23,
-    // Minor 2: Chain (an encoded SZFriendsDeviceChain, opaque here): which devices speak for the sender's person
-    // (ADR 0012). Sent once on every XX and IK session that negotiated minor 2, right after it goes live, so friends
-    // and the person's own devices always hold the newest chain. Never in NN, which names nobody.
-    SZFriendsFrameTypeChain = 24,
-    // Join (one message of joining a profile, SZFriendsJoin.h, opaque here): NN only, either way and as often as the
-    // exchange needs, because a computer asking to join a profile is known to nobody yet (PROTOCOL.md § Joining).
-    // Never in IK or XX. A device that does not know it closes the session, which reads as "not here".
-    SZFriendsFrameTypeJoin = 25,
-    // Minor 2: Sync (one message of the sync exchange, service/sync/SZFriendsSync.h, opaque here): between two devices
-    // of the same person only, IK or XX, as often as the exchange needs (friends-multi-device.md § Sync). The helper
-    // sends it only on a session whose peer our own device chain authorizes; never in NN.
-    SZFriendsFrameTypeSync = 26,
-    // Minor 3: Again (one message of getting a file again, ADR 0016, opaque here): between a person and a friend who
-    // sent them a file, IK or XX, as often as the exchange needs; never in NN. It travels in the CHUNK queue.
-    SZFriendsFrameTypeAgain = 27,
-};
-
-// Field tags, one namespace for every type so a value means the same thing wherever it appears. Unknown tag:
-// ignored. Duplicate tag, or a value over its per-type limit: close.
-typedef NS_ENUM(uint8_t, SZFriendsFieldTag) {
-    SZFriendsFieldID = 1,             // 16 bytes: msg_id, offer_id or request id; random, reused on every retry
-    SZFriendsFieldSentAt = 2,         // u64be milliseconds since 1970 UTC, the sender's clock
-    SZFriendsFieldText = 3,           // UTF-8, at most SZFriendsFrameTextMax bytes
-    SZFriendsFieldName = 4,           // UTF-8: display name (PROFILE) or file name (OFFER)
-    SZFriendsFieldFileType = 5,       // UTF-8 uniform type identifier, or the extension
-    SZFriendsFieldSize = 6,           // u64be bytes
-    SZFriendsFieldDigest = 7,         // 32 bytes: BLAKE2b-256 of the whole file
-    SZFriendsFieldOffset = 8,         // u64be byte offset
-    SZFriendsFieldData = 9,           // raw bytes: chunk data, or the own picture (JPEG)
-    SZFriendsFieldPictureSet = 10,    // u16be animal set version
-    SZFriendsFieldPictureIndex = 11,  // u16be animal index
-    SZFriendsFieldAccept = 12,        // u8: 1 accept, 0 decline
-    SZFriendsFieldSecret = 13,        // 32 bytes
-    SZFriendsFieldNonce = 14,         // 32 bytes
-    SZFriendsFieldCommitment = 15,    // 32 bytes
-    SZFriendsFieldOfferIDs = 16,      // n x 16 bytes: the offers attached to a message
-    SZFriendsFieldFriendsID = 17,     // UTF-8, canonical "word-word"
-    SZFriendsFieldToken = 18,         // 16 bytes: Add by ID request token
-    SZFriendsFieldCallbackSecret = 19, // 32 bytes
-    SZFriendsFieldCertificate = 20,   // 96 bytes: identity key || signature (SZFriendsIdentity staticCertificate)
-    SZFriendsFieldStaticKey = 21,     // 32 bytes X25519
-    SZFriendsFieldSignature = 22,     // 64 bytes Ed25519
-    SZFriendsFieldReason = 23,        // u8 close or decline reason, for logs
-    // Handshake payloads only (never in a transport frame), handled inside SZFriendsSecureChannel:
-    SZFriendsFieldMinorMin = 24,      // u16be lowest minor version the sender speaks
-    SZFriendsFieldMinorMax = 25,      // u16be highest
-    SZFriendsFieldCapabilities = 26,  // u32be capability bits; none defined in M1, unknown bits ignored
-    SZFriendsFieldRouteClass = 27,    // u8 SZFriendsRouteMethod the initiator dialed over
-    // Handshake payloads and PROFILE: 1 to SZFriendsAttestationMax bytes, a host-issued Friends ID attestation (the
-    // host's signature binding a Friends ID to this identity key; its layout is the host area's, opaque here). It
-    // travels only beside the certificate, never in NN, because it names the identity. Nothing here verifies it:
-    // the helper checks it against the pinned host keys and the certificate's identity key before believing the ID.
-    SZFriendsFieldAttestation = 28,
-    // MSG and OFFER: u8 1 when the sender's assistant sent this for them (PROTOCOL.md via_assistant), so the recipient
-    // sees it too. Absent means the person sent it; an older peer ignores the unknown tag and shows nothing.
-    SZFriendsFieldViaAssistant = 29,
-    SZFriendsFieldWidth = 30,         // u16be pixels (THUMBNAIL)
-    SZFriendsFieldHeight = 31,        // u16be pixels (THUMBNAIL)
-    // REQUEST_BY_ID, optional: 32 bytes, SZFriendsInviteProof over this NN session's handshake hash, from a request
-    // made through a friend link (friends-links.md). The holder accepts such a request at once while the invite it
-    // proves is valid; an older holder ignores the unknown tag and the request waits for an answer as any other.
-    SZFriendsFieldInviteProof = 32,
-    // CHAIN: 3 to SZFriendsFrameChainMax bytes, the sender's encoded device chain (SZFriendsDeviceChain encodedData).
-    SZFriendsFieldChain = 33,
-    // JOIN: 1 to SZFriendsFrameJoinMax bytes, one join message (service/identity/SZFriendsJoin.h).
-    SZFriendsFieldJoin = 34,
-    // SYNC: 1 to SZFriendsFrameSyncMax bytes, one sync message (SZFriendsSyncExchange).
-    SZFriendsFieldSync = 35,
-    // AGAIN: 1 to SZFriendsFrameAgainMax bytes, one again message (SZFriendsAgainExchange).
-    SZFriendsFieldAgain = 36,
-};
-
-// One decoded frame: its type and raw field values. Typed accessors return nil / NO for an absent or
-// wrong-length field, so callers never parse lengths themselves.
-@interface SZFriendsFrame : NSObject
-@property(nonatomic, readonly) SZFriendsFrameType type;
-@property(nonatomic, readonly) NSDictionary<NSNumber *, NSData *> *fields; // tag -> value
-+ (instancetype)frameWithType:(SZFriendsFrameType)type fields:(NSDictionary<NSNumber *, NSData *> *)fields;
-- (nullable NSData *)dataForTag:(SZFriendsFieldTag)tag;
-- (nullable NSString *)stringForTag:(SZFriendsFieldTag)tag; // nil for invalid UTF-8
-// Integer fields (SentAt, Size, Offset: u64; PictureSet, PictureIndex, Width, Height: u16; Accept, Reason: u8) at
-// their width.
-- (BOOL)getUInt64:(uint64_t *)value forTag:(SZFriendsFieldTag)tag;
-// The big-endian bytes of `value` at the tag's width; nil for a tag that is not an integer or a value too wide.
-+ (nullable NSData *)fieldWithUInt64:(uint64_t)value tag:(SZFriendsFieldTag)tag;
-@end
-
-// Pure: plaintext of one transport message <-> frame. Enforces SZFriendsFramePlaintextMax, the per-type limits,
-// duplicate and unknown tags, and unknown types, before allocating anything sized by the peer.
-// Decoding: an unknown type, a duplicate tag (known or not), a known field outside its length limits or a missing
-// required field fails; a tag the type does not define is ignored and left out of `fields`. Encoding is strict:
-// every field must belong to the type. Per-type rules: SZFriendsFrameSchema.m beside this header.
-NSData *_Nullable SZFriendsEncodeFrame(SZFriendsFrame *frame, NSError **error);
-SZFriendsFrame *_Nullable SZFriendsDecodeFrame(NSData *plaintext, NSError **error);
+NS_ASSUME_NONNULL_END
+#import "service/session/SZFriendsFrames.h"
+NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Secure channel
 
@@ -281,7 +188,14 @@ SZFriendsFrame *_Nullable SZFriendsDecodeFrame(NSData *plaintext, NSError **erro
 // XX against a public entry: stop after message 2 (the responder's profile) without revealing ourselves, unless
 // the person sends a request; then message 3 completes the handshake.
 @property(nonatomic) BOOL browseOnly;
+// IK: a lane of a live session with the same device (ADR 0018 § 6): SZFriendsLaneToken of that session's handshake
+// hash and the lane's index, carried in message 1's encrypted payload. Nil for an ordinary session.
+@property(nonatomic, copy, nullable) NSData *lane;
 @end
+
+// A lane's token: keyed BLAKE2b-128, the first session's handshake hash h (64 bytes) as the key, over
+// "SZFriends lane v1" || u8 index (1 to 15). Nil for a hash that is not 64 bytes.
+NSData *_Nullable SZFriendsLaneToken(NSData *handshakeHash, uint8_t index);
 
 // The responder's view of message 1 (IK and NN) or message 3 (XX), before any reply or application frame: whether
 // this remote may continue. Unknown keys pass only for XX on a public entry or with a pending request token;
@@ -362,6 +276,21 @@ typedef BOOL (^SZFriendsRemoteKeyPolicy)(NSData *_Nullable remoteIdentityKey, SZ
 - (void)close;
 - (void)closeWithReason:(SZFriendsCloseReason)reason;
 
+// Liveness while a transfer runs (ADR 0018 § 7). `keepalive`: a transfer runs on this session, so PING whenever this
+// side sent nothing for SZFriendsKeepaliveInterval, and the peer always hears something. `watch`: something from the
+// peer is due (SZFriendsTransferLiveness), so hearing nothing for the silence limit, counted from when watching
+// starts, closes the session without CLOSE (SZFriendsSessionErrorSilent) and the helper redials. Every minor knows
+// PING and ignores it, so a released peer simply receives it; against one, which never pings, watching is on only
+// while its own traffic is due. A gap of more than two keepalives between this side's timer runs (a busy queue,
+// sleep) is this side's stall, not the peer's silence: the count starts again. Call it whenever either changes;
+// repeating the same values changes nothing.
+- (void)setLivenessKeepalive:(BOOL)keepalive watch:(BOOL)watch;
+@property(nonatomic, readonly) BOOL watchingLiveness;
+// File data (CHUNK, DONE, THUMBNAIL, AGAIN, HASHES, PART) queued and not yet encrypted: how far a sender may run ahead.
+@property(nonatomic, readonly) NSUInteger queuedBulkFrames;
+// After each write the link completed (bytes left this side): the session is moving, and room opened.
+@property(nonatomic, copy, nullable) void (^onWritten)(void);
+
 // Runs CODE_COMMIT / CODE_NONCE / CODE_REVEAL once, in the session that creates the friendship; both sides call
 // it, in either order, before or after the session is live. Completion gets six ASCII digits ("418270"), or an
 // error when the commitment does not verify (which closes the channel), when the channel closes first, for NN, or
@@ -389,6 +318,18 @@ typedef BOOL (^SZFriendsRemoteKeyPolicy)(NSData *_Nullable remoteIdentityKey, SZ
 @property(nonatomic, readonly, nullable) NSData *presentedRequestToken; // responder: the IK callback's token
 @property(nonatomic, readonly, nullable) NSData *handshakeHash;         // h, 64 bytes
 @property(nonatomic, readonly) NSUInteger negotiatedMinor;
+// The capability bits this side sets in its handshake, set before -start; SZFriendsDefaultCapabilities() at first.
+@property(nonatomic) SZFriendsCapabilities localCapabilities;
+@property(nonatomic, readonly) SZFriendsCapabilities remoteCapabilities; // valid once established
+// ADR 0018 § 1: minor 4 or more negotiated and both sides set SZFriendsCapabilityFastTransfers. Otherwise nothing of
+// fast transfers is sent (frames refused, OFFER fields stripped) and nothing of them is accepted.
+@property(nonatomic, readonly) BOOL fastTransfers;
+// Both sides set capability bit 3 on a fast session: Pieces go to this peer (ADR 0018 § 3).
+@property(nonatomic, readonly) BOOL pieces;
+// Both sides set capability bit 5 on a fast session: BOOST may go either way (ADR 0019).
+@property(nonatomic, readonly) BOOL directWiFiBoost;
+// Responder: the Lane field of IK message 1, unchecked (the helper checks it against its live sessions); nil when none.
+@property(nonatomic, readonly, nullable) NSData *presentedLane;
 @end
 
 #pragma mark - Comparison codes (pure, ADR 0001 § Comparison codes)
@@ -472,6 +413,8 @@ uint64_t SZFriendsSendWindowForRoute(SZFriendsRouteMethod route);
 @property(nonatomic, readonly) uint64_t receivedOffset; // bytes accepted from CHUNKs
 @property(nonatomic, readonly) uint64_t reportedOffset; // the last PROGRESS sent
 @property(nonatomic, readonly) BOOL complete;           // every byte received
+// Chunks arrived on this session and more are due: the sender is sending (its PROGRESS-driven window included).
+@property(nonatomic, readonly) BOOL arriving;
 - (SZFriendsFrame *)resumeProgressFrame;
 // Checks a CHUNK against this transfer: same offer, offset exactly receivedOffset, 1 to chunkBytes bytes, inside
 // the declared size and inside the window past the last PROGRESS. Returns the data and advances; nil with an
@@ -484,5 +427,13 @@ uint64_t SZFriendsSendWindowForRoute(SZFriendsRouteMethod route);
 // error for an early DONE or another offer: close the session.
 - (nullable NSData *)acceptDoneFrame:(SZFriendsFrame *)frame error:(NSError **)error;
 @end
+
+// What a session carrying these transfers asks of -setLivenessKeepalive:watch: (ADR 0018 § 7): keepalive while any
+// runs, and watching while the peer owes this side something it sends anyway, even a released peer that never pings:
+// PROGRESS for bytes sent and not yet confirmed, or the rest of a file whose chunks are arriving. Not while an offer
+// waits for its answer, before a released sender's first chunk (it may hash the snapshot first), nor between DONE and
+// its ACK, when a released receiver checks the whole file in silence.
+void SZFriendsTransferLiveness(NSArray<SZFriendsChunkSender *> *senders, NSArray<SZFriendsChunkReceiver *> *receivers,
+                               BOOL *keepalive, BOOL *watch);
 
 NS_ASSUME_NONNULL_END

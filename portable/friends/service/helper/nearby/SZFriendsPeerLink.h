@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class SZFriendsSyncExchange;
 @class SZFriendsAgainExchange;
 @class SZFriendsDeviceChain;
+@class SZFriendsBlockExchange;
 
 // Why a link exists. A responder link starts as Incoming and is classified by its handshake.
 typedef NS_ENUM(NSInteger, SZFriendsLinkPurpose) {
@@ -69,6 +70,13 @@ NSData *_Nullable SZFriendsLinkBytesFromHex(NSString *_Nullable hex); // nil unl
 @property(nonatomic, copy, nullable) NSString *syncDeviceHex;
 // A session with a friend at session minor 3 or later (+Again): files asked for again, either way.
 @property(nonatomic, strong, nullable) SZFriendsAgainExchange *againExchange;
+// Files this computer serves by blocks on this session (ADR 0018 § 4): Get again for a friend, or a copy for one of
+// our own devices, by transfer id (SZFriendsNearbyService+Copies.m).
+@property(nonatomic, strong, nullable) NSMutableDictionary<NSString *, id> *servedCopies;
+@property(nonatomic) BOOL servedCopiesTickScheduled;
+// Downloads this session accepted by blocks (our OFFER_REPLY with Blocks went on it): the sender starts with every
+// block on that reply, so they begin here without a WANT.
+@property(nonatomic, strong, nullable) NSMutableSet<NSString *> *answeredByBlocks;
 // Responder of an IK callback presenting our Add by ID token: the Friends ID that request asked for, and whether the
 // answer showed the host's attestation for it. An ACCEPT the host did not vouch for becomes a request the person
 // accepts (+Inbound), never a friendship by itself (wave-4 security re-check).
@@ -101,6 +109,9 @@ NSData *_Nullable SZFriendsLinkBytesFromHex(NSString *_Nullable hex); // nil unl
 // transfer id prefixed "done:" for the ACK that follows DONE. The peer acknowledges in the order it processes
 // frames, so the oldest token for an ID is the one an ACK answers.
 - (void)expectAckForID:(NSString *)wireID token:(NSString *)token;
+// The ACKs of files sent by blocks this link awaits ("done:" tokens), handed to the lane that carries its group on
+// (ADR 0018 § 6): the friend acknowledges them there.
+- (void)moveFileAcksTo:(SZFriendsPeerLink *)other;
 - (nullable NSString *)takeAckForID:(NSString *)wireID;
 // Whether an ACK for this wire ID would acknowledge something this link sent (without taking it).
 - (BOOL)expectsAckForID:(NSString *)wireID;
@@ -118,6 +129,17 @@ NSData *_Nullable SZFriendsLinkBytesFromHex(NSString *_Nullable hex); // nil unl
 // Open snapshots of outgoing files being sent on this link, by transfer id.
 @property(nonatomic, readonly) NSMutableDictionary<NSString *, NSFileHandle *> *sources;
 @property(nonatomic, nullable) dispatch_source_t progressTimer;
+// Files by blocks on this session (ADR 0018), when it negotiated fast transfers with a friend (+Blocks).
+@property(nonatomic, strong, nullable) SZFriendsBlockExchange *blocks;
+@property(nonatomic) BOOL blockFlushScheduled;
+// A lane (ADR 0018 § 6): another session with the same device, admitted by its token into the group of `laneHead`,
+// the first session. A lane never races and carries no conversation of its own: its frames count as the head's.
+@property(nonatomic, weak, nullable) SZFriendsPeerLink *laneHead;
+@property(nonatomic) uint64_t laneSerial; // its id in the head's exchange
+@property(nonatomic) BOOL blockTickScheduled;
+@property(nonatomic) BOOL lane;
+// The head's admitted lanes.
+@property(nonatomic, readonly) NSHashTable<SZFriendsPeerLink *> *lanes;
 @property(nonatomic) BOOL pumpScheduled;
 // Chunk pacing (SZFriendsHelperTestHooks.chunkBytesPerSecond): bytes handed out since paceStart.
 @property(nonatomic) CFAbsoluteTime paceStart;

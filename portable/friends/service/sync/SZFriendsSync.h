@@ -19,6 +19,8 @@
 
 #import <Foundation/Foundation.h>
 
+@class SZFriendsFrame;
+
 #import "service/store/SZFriendsStoreSync.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -281,8 +283,42 @@ extern const NSUInteger SZFriendsSyncWindow; // 4 EVENTS messages in flight
 // The file the peer is copying from this side (its latest WANT), and how far that copy has got; nil once done.
 @property(nonatomic, readonly, nullable) NSString *servingTransferID;
 @property(nonatomic, readonly) double servingFraction;
+// Copies from several holders at once (ADR 0018 § 9.6, the helper's pulls): when set, this side's own requester starts
+// no copy on this session, and the answers to a pull's asks go to `pullAnswer` first: BLOCKS FOLLOW with the holder's
+// tree (`root` set), or NONE (`root` nil; `gone` for "not here"). YES when it was the pull's.
+@property(nonatomic) BOOL pulls;
+@property(nonatomic, copy, nullable) BOOL (^pullAnswer)(NSString *transferID, NSData *_Nullable root, uint8_t shift,
+                                                       BOOL gone);
+// Requester by blocks (ADR 0018 § 4): set on a session that negotiated fast transfers, so this side's copies go by
+// blocks (7 WANT BLOCKS, resumed from the map beside the partial copy); otherwise by offset (4 WANT).
+@property(nonatomic) BOOL fast;
+// Session frames for a copy by blocks (HAVE), sent in order after the SYNC messages.
+@property(nonatomic, copy, nullable) void (^sendFrame)(SZFriendsFrame *frame);
+// The file copying by blocks now, whose HASHES and PARTs on this session are its own.
+@property(nonatomic, readonly, nullable) NSString *copyingByBlocks;
+// HASHES or a PART of the copy by blocks: NO when this exchange is not copying that file by blocks.
+- (BOOL)receiveHashes:(NSData *)hashes index:(uint32_t)index forTransfer:(NSString *)transferID;
+- (BOOL)receivePart:(NSData *)data offset:(uint64_t)offset forTransfer:(NSString *)transferID;
+// The peer asks for a file by blocks (7 WANT BLOCKS, ADR 0018 § 4, on sessions with fast transfers): the file held
+// here at `path`, its size, the block shift and the blocks wanted (packed (first, count) pairs). The owner serves it
+// (8 BLOCKS FOLLOW, then HASHES and PARTs on the session), or answers -sendNone:. A file not held here is answered
+// NONE before this is called.
+@property(nonatomic, copy, nullable) void (^wantBlocks)(NSString *transferID, NSString *path, uint64_t size,
+                                                         uint8_t shift, NSData *ranges);
+// 6 NONE for that file: this side cannot give its bytes.
+- (void)sendNone:(NSString *)transferID;
+// Sends a message the owner built (8 BLOCKS FOLLOW), marking that file as served.
+- (void)sendServing:(NSString *)transferID message:(NSData *)message;
+// That file's serve by blocks is done or given up: it is no longer shown as being copied from here.
+- (void)finishedServing:(NSString *)transferID;
+// How much of that file the other computer has acknowledged so far (a copy by blocks): the You row's percentage.
+- (void)servingProgress:(NSString *)transferID fraction:(double)fraction;
 // The session ended: partial copies stay for the next one.
 - (void)stop;
 @end
+
+// The ranges of a WANT BLOCKS (u32be pairs, first and count, none empty) as packed host-order pairs; nil when
+// malformed.
+NSData *_Nullable SZFriendsCopyRangesDecode(const uint8_t *bytes, NSUInteger length);
 
 NS_ASSUME_NONNULL_END

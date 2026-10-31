@@ -126,7 +126,7 @@ MAC_APP_OBJ_DIR := $(BUILD)/mac-app
 MAC_APP_OBJS := $(patsubst %.mm,$(MAC_APP_OBJ_DIR)/%.o,$(MAC_SRCS))
 MAC_APP_COMPILE_FLAGS = $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include
 MAC_APP_FLAGS_FILE := $(MAC_APP_OBJ_DIR)/compile-flags
-MAC_VERSION ?= 26.10.29
+MAC_VERSION ?= 26.10.31
 MAC_BUILD ?= 1
 # The release this app is, as people see it and the updater compares it (mac/Info.plist SZFReleaseTag, which
 # cut-release.sh sets). MAC_BUILD alone is not it: Friends changes raise MAC_BUILD between releases.
@@ -162,7 +162,8 @@ mupdf-libs:
 $(BUILD):
 	mkdir -p "$(BUILD)"
 
-$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h core/spdf_render_bitmap.h core/spdf_document_info.h \
+$(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h core/spdf_render_bitmap.h core/spdf_document_info.h core/spdf_translate_redact.h core/spdf_translate_write.h core/spdf_outline_write.h \
+		core/spdf_outline_read.h core/spdf_outline.h \
 		core/spdf_core_document.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
 

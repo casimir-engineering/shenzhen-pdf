@@ -3,7 +3,7 @@
 
 use serde_json::{json, Map, Value};
 
-use super::facts::{failure, ItemFacts, PersonFacts, Relation, TransferState};
+use super::facts::{failure, BoostDevice, BoostStage, ItemFacts, PersonFacts, Relation, StaysOnline, TransferState};
 use super::items::without_final_period;
 use super::mentions::{key_string, mention_name};
 use super::strings::path_extension;
@@ -49,6 +49,61 @@ impl SnapshotBuilder {
         actions
     }
 
+    /// ADR 0019: the question is shown only by views that declared `transfers.boost`, which know its two actions.
+    pub(crate) fn asks_boost(&self, item: &ItemFacts) -> bool {
+        item.boost.stage == BoostStage::Asking && self.audience().has("transfers.boost")
+    }
+
+    /// The Wi-Fi Direct boost's words for the transfer's note (ADR 0019 § 3 and § 4), or `None` to keep the usual note.
+    fn boost_note(&self, item: &ItemFacts, first: &str) -> Option<String> {
+        let s = &self.strings;
+        let boost = &item.boost;
+        // A computer is a computer, never "Mac", in words every app shares (the catalog's rule).
+        let device = s.text(match boost.device {
+            BoostDevice::Phone => "transfer.boost.device.phone",
+            BoostDevice::Mac | BoostDevice::Computer => "transfer.boost.device.computer",
+        });
+        let network = match boost.network.as_deref().filter(|n| !n.is_empty()) {
+            Some(name) => s.text_with("transfer.boost.network", &[("name", name)]),
+            None => s.text("transfer.boost.your_wifi"),
+        };
+        let values = [("first", first), ("device", device.as_str()), ("network", network.as_str())];
+        match boost.stage {
+            BoostStage::None => None,
+            BoostStage::Asking if self.asks_boost(item) => {
+                let slow = s.duration_label(boost.bluetooth_seconds);
+                let fast = s.duration_label(boost.direct_seconds);
+                let mut with_times = values.to_vec();
+                with_times.extend([("slow", slow.as_str()), ("fast", fast.as_str())]);
+                let text = s.text_with("transfer.boost.ask", &with_times);
+                Some(if boost.system_asks_too {
+                    s.text_with("transfer.boost.ask.join", &[("text", &text)])
+                } else {
+                    text
+                })
+            }
+            BoostStage::Asking => None,
+            BoostStage::Connecting => Some(s.text_with("transfer.boost.connecting", &values)),
+            BoostStage::Direct => Some(match (boost.leaves_wifi, boost.stays_online) {
+                (false, _) => s.text("transfer.boost.direct"),
+                (true, Some(StaysOnline::Mobile)) => s.text_with("transfer.boost.direct.mobile", &values),
+                (true, Some(StaysOnline::Ethernet)) => s.text_with("transfer.boost.direct.ethernet", &values),
+                (true, None) => s.text_with("transfer.boost.direct.away", &values),
+            }),
+            BoostStage::Rejoining => Some(s.text_with("transfer.boost.rejoining", &values)),
+            BoostStage::RejoinFailed => {
+                let place = s.text(if boost.device == BoostDevice::Mac {
+                    "transfer.boost.place.menu"
+                } else {
+                    "transfer.boost.place.computer"
+                });
+                let mut with_place = values.to_vec();
+                with_place.push(("place", place.as_str()));
+                Some(s.text_with("transfer.boost.rejoin_failed", &with_place))
+            }
+        }
+    }
+
     fn transfer_actions(&self, item: &ItemFacts, person: &PersonFacts) -> Vec<Value> {
         let s = &self.strings;
         // A file this person sent from another of their computers, copied here: here to open, nothing to send.
@@ -62,6 +117,14 @@ impl SnapshotBuilder {
                 actions.push(Value::Object(self.action("decline_offer", s.text("action.decline"), "secondary")));
             }
             TransferState::Queued | TransferState::Offered | TransferState::Sending | TransferState::Receiving => {
+                if self.asks_boost(item) {
+                    actions.push(Value::Object(self.action("boost_transfer", s.text("transfer.boost.go"), "primary")));
+                    actions.push(Value::Object(self.action(
+                        "skip_boost",
+                        s.text("transfer.boost.not_now"),
+                        "secondary",
+                    )));
+                }
                 actions.push(Value::Object(self.action("cancel_transfer", s.text("static.cancel"), "link")));
             }
             TransferState::Received if non_empty(item.local_path.as_deref()).is_some() => {
@@ -124,9 +187,12 @@ impl SnapshotBuilder {
         let rate = s.estimate_bytes_per_second(item.bytes_per_second, item.transfer_route);
         let verb = if state == TransferState::Sending { "sending" } else { "receiving" };
         let direction = if item.outgoing { "out" } else { "in" };
-        let note = (waiting || moving)
-            .then(|| s.transfer_estimate(remaining, item.bytes_per_second, item.transfer_route))
-            .flatten();
+        let first_name = self.first_name_for_person(person);
+        let note = self.boost_note(item, &first_name).or_else(|| {
+            (waiting || moving)
+                .then(|| s.transfer_estimate(remaining, item.bytes_per_second, item.transfer_route))
+                .flatten()
+        });
         let note_spoken = waiting
             .then(|| s.transfer_estimate_accessibility(remaining, item.bytes_per_second, item.transfer_route))
             .flatten();
@@ -143,7 +209,10 @@ impl SnapshotBuilder {
         }
         let mut extra = String::new();
         let mut status_key = format!("transfer.status.{}", transfer_state_name(state));
-        if moving {
+        let finishing = item.finishing && state == TransferState::Receiving;
+        if finishing {
+            status_key = "transfer.finishing".into();
+        } else if moving {
             status_key = format!("transfer.status.{verb}{}", if timed { "_timed" } else { "" });
         } else if state == TransferState::WaitingForYou && item.asked_because_disk_low {
             status_key = "transfer.status.disk_low".into();
@@ -196,6 +265,9 @@ impl SnapshotBuilder {
         if folder.is_some() {
             spoken_key = "transfer.spoken.in.received.saved".into();
         }
+        if finishing {
+            spoken_key = "transfer.spoken.in.finishing".into();
+        }
         let assistant = self.assistant_label(item, person);
         // Every spoken template lists "{file}, {kind}, {size}", so the assistant is said right after the file's facts.
         let said_size = assistant.as_ref().map(|a| format!("{size}, {}", s.spoken_fragment(a)));
@@ -209,7 +281,9 @@ impl SnapshotBuilder {
         if automatic {
             meta = s.text_with("preview.with_status", &[("text", &meta), ("status", &s.text("transfer.auto"))]);
         }
-        let progress = if moving {
+        let progress = if finishing {
+            json!({"fraction": 1.0, "determinate": true, "accessibility_label": s.text("transfer.progress.finishing")})
+        } else if moving {
             json!({
                 "fraction": percent as f64 / 100.0,
                 "determinate": item.file_size > 0,

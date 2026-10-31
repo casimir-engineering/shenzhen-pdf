@@ -12,6 +12,15 @@
 
 @implementation SZFNFakeChannel (Session)
 static char SZFNHashKey, SZFNSentKey, SZFNAttestationKey;
+- (void)setLivenessKeepalive:(BOOL)keepalive watch:(BOOL)watch {
+    (void)keepalive, (void)watch;
+}
+- (BOOL)fastTransfers {
+    return NO;
+}
+- (NSData *)presentedLane {
+    return nil;
+}
 - (NSData *)remoteAttestation {
     return objc_getAssociatedObject(self, &SZFNAttestationKey);
 }

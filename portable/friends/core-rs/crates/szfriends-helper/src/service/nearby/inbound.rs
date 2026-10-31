@@ -40,6 +40,13 @@ impl State {
                 return;
             }
         }
+        // Copies by blocks between our own devices (ADR 0018 § 4) travel in HASHES, PART and HAVE on their session.
+        if matches!(frame.frame_type, FrameType::Hashes | FrameType::Have)
+            && self.devices.exchanges.contains_key(&id)
+            && self.again_block_frame(id, &frame)
+        {
+            return;
+        }
         // Joining on NN sessions, the chain and sync between our own devices (join.rs, own.rs); a friend's chain, or
         // a stranger's before their request (chain.rs).
         let devices = match frame.frame_type {
@@ -97,6 +104,12 @@ impl State {
             FrameType::Chunk => self.chunk(id, &frame, &conversation, wire),
             FrameType::Progress => self.progress(id, &frame, wire),
             FrameType::Done => self.done(id, &frame, &conversation, wire),
+            FrameType::Hashes | FrameType::Want | FrameType::Part | FrameType::Have
+                if person.relation == Relation::Friend =>
+            {
+                self.block_frame(id, &frame, &conversation)
+            }
+            FrameType::Boost if person.relation == Relation::Friend => self.boost_frame(id, &frame),
             _ => {}
         }
     }

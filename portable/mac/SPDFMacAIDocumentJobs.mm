@@ -2,6 +2,8 @@
 #import "SPDFMacOCRCommand.h"
 #import "SPDFMacOCRValidation.h"
 #import "SPDFMacAIOutputFiles.h"
+#import "SPDFMacAIJobTranslator.h"
+#import "SPDFMacTranslateChapters.h"
 #include "shenzhen_pdf_core.h"
 #include <vector>
 
@@ -30,11 +32,56 @@ static NSArray<NSString*>* TranslationLines(NSString* output) {
     while (kept.count && ![kept.lastObject length]) [kept removeLastObject];
     return kept;
 }
+// The model's translations of `items`, in order: batches of lines run a few at a time, since each waits on the model.
+static NSArray<NSString*>* TranslateWithModel(SPDFMacAIJobTranslator* translator, NSArray<NSDictionary*>* items,
+    NSProgress* progress, NSError** error) {
+    NSMutableArray<NSValue*>* batches=[NSMutableArray array];
+    for (NSUInteger start=0,characters=0,i=0;i<=items.count;i++) {
+        if (i==items.count || i-start==80 || characters>6000) {
+            if (i>start) [batches addObject:[NSValue valueWithRange:NSMakeRange(start,i-start)]];
+            start=i; characters=0;
+        }
+        if (i<items.count) characters+=[items[i][@"text"] length];
+    }
+    NSMutableArray* results=[NSMutableArray array];
+    for (NSUInteger i=0;i<batches.count;i++) [results addObject:NSNull.null];
+    __block NSError* failure=nil; NSObject* lock=[NSObject new];
+    NSOperationQueue* queue=[NSOperationQueue new]; queue.maxConcurrentOperationCount=4;
+    for (NSUInteger b=0;b<batches.count;b++) [queue addOperationWithBlock:^{
+        @synchronized (lock) { if (failure) return; }
+        NSRange range=batches[b].rangeValue; NSMutableArray* texts=[NSMutableArray array];
+        for (NSUInteger i=range.location;i<NSMaxRange(range);i++) [texts addObject:items[i][@"text"]];
+        NSError* problem=nil; NSArray* lines=[translator translateLines:texts progress:progress error:&problem];
+        @synchronized (lock) {
+            if (!lines) { if (!failure) failure=problem; return; }
+            results[b]=lines; progress.completedUnitCount+=(int64_t)lines.count;
+        }
+    }];
+    [queue waitUntilAllOperationsAreFinished];
+    if (failure || progress.cancelled) {
+        if (error) *error=failure ?: [NSError errorWithDomain:@"ShenzhenPDF.AI.Job" code:1
+            userInfo:@{NSLocalizedDescriptionKey:@"Cancelled."}];
+        return nil;
+    }
+    NSMutableArray* translated=[NSMutableArray arrayWithCapacity:items.count];
+    for (NSArray* lines in results) [translated addObjectsFromArray:lines];
+    return translated;
+}
+static BOOL HasLetters(NSString* text) {
+    return [text rangeOfCharacterFromSet:NSCharacterSet.letterCharacterSet].location!=NSNotFound;
+}
 static BOOL Translate(spdf_document* doc, NSString* output, NSString* executable, NSDictionary* environment,
     NSDictionary* options, NSString* scratch, NSProgress* progress, NSError** error) {
     NSString* source=options[@"sourceLanguage"], *target=options[@"targetLanguage"];
+    // The model's translator when the assistant asks (SPDFMacAIJobTranslator.h); otherwise Argos, as the suites run it.
+    SPDFMacAIJobTranslator* model=[options[@"translator"] respondsToSelector:@selector(translateLines:progress:error:)] ?
+        options[@"translator"] : nil;
     spdf_translation_script from=spdf_translation_script_for_language(source.UTF8String);
     spdf_translation_script to=spdf_translation_script_for_language(target.UTF8String);
+    // The model reads any language, so every line with words in it goes; Argos needs the script filter.
+    BOOL (^wanted)(NSString*)=^BOOL(NSString* text) {
+        return model ? HasLetters(text) : spdf_translation_should_translate(text.UTF8String,from,to)!=0;
+    };
     NSMutableArray<NSDictionary*>* items=[NSMutableArray array]; char detail[1024]={};
     for (int page=0;page<spdf_page_count(doc);page++) {
         if (progress.cancelled) { Fail(error,@"Cancelled."); return NO; }
@@ -42,27 +89,37 @@ static BOOL Translate(spdf_document* doc, NSString* output, NSString* executable
         if (!spdf_extract_page_text_lines(doc,page,&lines,detail,sizeof(detail))) { Fail(error,@(detail)); return NO; }
         for (int i=0;i<lines.count;i++) {
             NSString* text=OneLine(lines.items[i].text ? @(lines.items[i].text) : @"");
-            if (!text.length || !spdf_translation_should_translate(text.UTF8String,from,to)) continue;
+            if (!text.length || !wanted(text)) continue;
             spdf_rect r=lines.items[i].bounds;
             [items addObject:@{@"page":@(page),@"text":text,@"font":@(lines.items[i].font_size),
                 @"bounds":[NSValue valueWithRect:NSMakeRect(r.x0,r.y0,r.x1-r.x0,r.y1-r.y0)]}];
         }
         spdf_free_text_lines(&lines);
     }
-    spdf_outline outline={};
+    spdf_outline outline={}; BOOL authored=NO;
     if (spdf_load_outline(doc,&outline,detail,sizeof(detail))) {
+        authored=outline.count>0;
         for (int i=0;i<outline.count;i++) {
             NSString* text=OneLine(outline.items[i].title ? @(outline.items[i].title) : @"");
-            if (text.length && spdf_translation_should_translate(text.UTF8String,from,to))
+            if (text.length && wanted(text))
                 [items addObject:@{@"kind":@"outline",@"index":@(i),@"page":@(-1),@"text":text}];
         }
         spdf_free_outline(&outline);
+    }
+    // No outline of its own: the chapters shown for the original (SPDFMacTranslateChapters.h) become the translation's,
+    // their titles translated with the rest.
+    NSArray<NSDictionary*>* chapters=authored ? @[] : options[@"chapters"] ?: @[];
+    NSMutableArray<NSString*>* chapterTitles=[NSMutableArray array];
+    for (NSUInteger i=0;i<chapters.count;i++) {
+        NSString* text=OneLine(chapters[i][@"title"] ?: @"");
+        [chapterTitles addObject:text];
+        if (text.length && wanted(text)) [items addObject:@{@"kind":@"chapter",@"index":@(i),@"page":@(-3),@"text":text}];
     }
     spdf_comments comments={};
     if (spdf_load_comments(doc,&comments,detail,sizeof(detail))) {
         for (int i=0;i<comments.count;i++) {
             NSString* text=OneLine(comments.items[i].text ? @(comments.items[i].text) : @"");
-            if (text.length && spdf_translation_should_translate(text.UTF8String,from,to))
+            if (text.length && wanted(text))
                 [items addObject:@{@"kind":@"comment",@"index":@(comments.items[i].index),@"page":@(-2),@"text":text}];
         }
         spdf_free_comments(&comments);
@@ -70,7 +127,12 @@ static BOOL Translate(spdf_document* doc, NSString* output, NSString* executable
     if (!items.count) { Fail(error,@"No translatable text was found. Run OCR first for scanned documents."); return NO; }
     progress.totalUnitCount=(int64_t)items.count;
     NSMutableArray<NSString*>* translated=[NSMutableArray array];
-    for (NSUInteger start=0;start<items.count;) {
+    if (model) {
+        NSArray* lines=TranslateWithModel(model,items,progress,error);
+        if (!lines) return NO;
+        [translated addObjectsFromArray:lines];
+    }
+    for (NSUInteger start=model ? items.count : 0;start<items.count;) {
         NSUInteger end=start+1;
         while (end<items.count && end-start<100 && [items[end][@"page"] isEqual:items[start][@"page"]]) end++;
         NSMutableArray* texts=[NSMutableArray array];
@@ -91,7 +153,8 @@ static BOOL Translate(spdf_document* doc, NSString* output, NSString* executable
     std::vector<spdf_translated_text> titles, notes;
     for (NSUInteger i=0;i<items.count;i++) {
         NSDictionary* item=items[i]; const char* text=translated[i].UTF8String;
-        if ([item[@"kind"] isEqual:@"outline"]) titles.push_back({[item[@"index"] intValue],text});
+        if ([item[@"kind"] isEqual:@"chapter"]) chapterTitles[[item[@"index"] unsignedIntegerValue]]=OneLine(translated[i]);
+        else if ([item[@"kind"] isEqual:@"outline"]) titles.push_back({[item[@"index"] intValue],text});
         else if ([item[@"kind"] isEqual:@"comment"]) notes.push_back({[item[@"index"] intValue],text});
         else {
             NSRect r=[item[@"bounds"] rectValue];
@@ -102,8 +165,10 @@ static BOOL Translate(spdf_document* doc, NSString* output, NSString* executable
     if (progress.cancelled) { Fail(error,@"Cancelled."); return NO; }
     BOOL ok=spdf_save_translated_copy_full(doc,output.fileSystemRepresentation,lines.data(),(int)lines.size(),
         titles.data(),(int)titles.size(),notes.data(),(int)notes.size(),detail,sizeof(detail));
-    if (!ok) Fail(error,@(detail));
-    return ok;
+    if (!ok) { Fail(error,@(detail)); return NO; }
+    NSString* failure=nil;
+    if (!SPDFMacTranslateWriteChapters(output,chapters,chapterTitles,&failure)) { Fail(error,failure); return NO; }
+    return YES;
 }
 NSDictionary* SPDFAIRunPDFJob(NSString* kind, NSString* source, NSString* directory, NSString* name,
     NSString* executable, NSDictionary* environment, NSDictionary* options, NSProgress* progress, NSError** error) {

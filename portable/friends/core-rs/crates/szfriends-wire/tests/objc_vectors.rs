@@ -29,6 +29,11 @@ fn encodes_every_frame_type_as_the_helper_does() {
     let frame = Frame::decode(&request).expect("REQUEST_BY_ID decodes");
     assert_eq!(frame.encode().expect("re-encodes"), request);
     covered.insert(frame.frame_type);
+    // Minor 4's frames are WP1's vectors (fixtures/vectors/transfer, tests/transfer_vectors.rs), written from ADR 0018
+    // before the helper exports them.
+    for case in cases(&load("transfer/frames.json"), "encode") {
+        covered.insert(FrameType::from_byte(number(case, "type") as u8).expect("known type"));
+    }
     assert_eq!(covered.len(), FrameType::ALL.len(), "a frame type has no encoding vector");
 }
 
@@ -103,7 +108,7 @@ fn streams_split_into_the_helpers_messages() {
     let vectors = load("objc-noise.json");
     for handshake in cases(&vectors, "handshakes") {
         let pattern = Pattern::from_byte(number(handshake, "pattern_byte") as u8).expect("pattern");
-        let preamble = Preamble { pattern };
+        let preamble = Preamble::new(pattern);
         assert_eq!(hex(&preamble.bytes()), text(handshake, "preamble"));
         assert_eq!(hex(&prologue(preamble)), text(handshake, "prologue"));
         let messages: Vec<Vec<u8>> = cases(handshake, "messages").iter().map(|m| field(m, "ciphertext")).collect();

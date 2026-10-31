@@ -17,6 +17,8 @@ mod chunk;
 mod closing;
 mod code;
 mod handshake;
+pub mod lanes;
+mod liveness;
 mod replay;
 mod transport;
 
@@ -29,7 +31,9 @@ use szfriends_wire::{Fields, Frame};
 use zeroize::Zeroizing;
 
 pub use channel::{HandshakeOptions, ListenerHooks, ProfileDecision, RemoteKeyPolicy, SecureChannel, Transmit};
-pub use chunk::{chunk_bytes_for_route, send_window_for_route, ChunkReceiver, ChunkSender, FlowError};
+pub use chunk::{
+    chunk_bytes_for_route, send_window_for_route, transfer_liveness, ChunkReceiver, ChunkSender, FlowError,
+};
 pub use replay::ReplayCache;
 
 /// Why a channel closed (`SZFriendsSessionError`). None of these are shown to people; the service maps them to
@@ -58,6 +62,8 @@ pub enum SessionError {
     TimedOut,
     /// Message 1 repeated an initiator ephemeral key seen within the replay window.
     Replayed,
+    /// While a transfer ran, nothing arrived for the silence limit: the route went quiet (out of range, a dead path).
+    Silent,
 }
 
 impl SessionError {
@@ -75,6 +81,7 @@ impl SessionError {
             Self::CodeMismatch => 9,
             Self::TimedOut => 10,
             Self::Replayed => 11,
+            Self::Silent => 12,
         }
     }
 }
@@ -132,6 +139,20 @@ pub struct ChannelConfig {
     /// The route's efficient write size; the bytes handed to the link stay under four times it (at least 4 KiB), so
     /// a message queued now can still overtake file chunks.
     pub preferred_write_size: usize,
+    /// While [`SecureChannel::set_liveness`] asks for it: PING after this long without sending anything.
+    pub keepalive: Duration,
+    /// While [`SecureChannel::set_liveness`] watches: close after hearing nothing this long; on a session whose
+    /// initiator declared Bluetooth, `silence_bluetooth`.
+    pub silence: Duration,
+    pub silence_bluetooth: Duration,
+    /// The handshake's capability bits this side sets (`szfriends_wire::consts::CAPABILITY_*`): fast transfers, unless
+    /// the helper switches them off (ADR 0018 § 1; a test home plays a peer without them).
+    pub capabilities: u32,
+    /// Bulk frames sealed, and complete messages opened, together on several cores (ADR 0018 § 9.2); off seals and
+    /// opens one at a time (the measurement's before).
+    pub crypto_batches: bool,
+    /// The highest session minor this side offers: [`consts::SESSION_MINOR`]; a test plays an older peer with less.
+    pub minor_max: u16,
 }
 
 impl Default for ChannelConfig {
@@ -143,6 +164,12 @@ impl Default for ChannelConfig {
             handshake_timeout: Duration::from_secs(consts::HANDSHAKE_TIMEOUT_SECONDS),
             refusal_delay: Duration::from_millis(consts::REFUSAL_DELAY_MILLISECONDS),
             preferred_write_size: 65_536,
+            keepalive: Duration::from_millis(consts::KEEPALIVE_MILLISECONDS),
+            silence: Duration::from_millis(consts::SILENCE_MILLISECONDS),
+            silence_bluetooth: Duration::from_millis(consts::SILENCE_BLUETOOTH_MILLISECONDS),
+            capabilities: consts::CAPABILITY_FAST_TRANSFERS,
+            crypto_batches: true,
+            minor_max: consts::SESSION_MINOR,
         }
     }
 }
@@ -177,6 +204,23 @@ pub type PublicProfile = Fields;
 
 /// Time since an arbitrary origin that keeps counting while the device sleeps: `CLOCK_BOOTTIME` on Linux and
 /// Android, `CLOCK_MONOTONIC` on Apple systems (which counts sleep there), the performance counter on Windows.
+/// The capability bits this build sets in its handshakes (ADR 0018 § 1): none without fast transfers; with them, bit 0,
+/// bit 1 where this processor has hardware AES (§ 9.2), bit 3, pieces (§ 3), and the compressed parts it reads (§ 9.4):
+/// bit 2 (zstd) and bit 4 (LZ4), or bit 4 alone on Android. A test home plays a
+/// peer without AES lanes or compression with `SZFRIENDS_TEST_AES_LANES=0` or `SZFRIENDS_TEST_COMPRESSED_PARTS=0`:
+/// the helper and the interop peer read them and clear those bits in [`ChannelConfig::capabilities`].
+pub fn local_capabilities(fast_transfers: bool) -> u32 {
+    if !fast_transfers {
+        return 0;
+    }
+    let mut bits =
+        consts::CAPABILITY_FAST_TRANSFERS | consts::CAPABILITY_PIECES | crate::transfer::compress::capabilities();
+    if szfriends_crypto::noise::hardware_aes() {
+        bits |= consts::CAPABILITY_AES_LANES;
+    }
+    bits
+}
+
 pub fn monotonic_now() -> Duration {
     clock::now()
 }

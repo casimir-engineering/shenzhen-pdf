@@ -34,26 +34,7 @@ typedef struct spdf_bitmap {
     unsigned char* rgba;
 } spdf_bitmap;
 
-typedef struct spdf_outline_item {
-    char* title;
-    int page_index;
-    int level;
-    /* Destination point of the heading on its page, taken from the PDF outline
-     * link (fz_outline.x/y). PDF destination coordinates are in PDF user space
-     * (origin bottom-left, y increases UPWARD). has_dest is 0 when the outline
-     * entry carries no usable point (e.g. /Fit-style dests, or non-finite
-     * coordinates); callers must fall back to page-only attribution then.
-     * Appended at the end of the struct so the Linux build, which ignores these
-     * fields, is unaffected. */
-    float dest_x;
-    float dest_y;
-    int has_dest;
-} spdf_outline_item;
-
-typedef struct spdf_outline {
-    spdf_outline_item* items;
-    int count;
-} spdf_outline;
+#include "spdf_outline.h"
 
 typedef struct spdf_rect {
     float x0;
@@ -112,6 +93,7 @@ typedef struct spdf_text_lines {
     int image_backed;
 } spdf_text_lines;
 
+/* Unused: the original text is removed, so no background is drawn. */
 typedef enum spdf_translation_background {
     SPDF_TRANSLATION_BACKGROUND_NONE = -1,
     SPDF_TRANSLATION_BACKGROUND_AUTO = 0,
@@ -255,8 +237,6 @@ void spdf_free_string(char* text);
 int spdf_extract_page_text_lines(spdf_document* doc, int page_index, spdf_text_lines* out, char* err, size_t err_len);
 void spdf_free_text_lines(spdf_text_lines* lines);
 
-int spdf_load_outline(spdf_document* doc, spdf_outline* out, char* err, size_t err_len);
-void spdf_free_outline(spdf_outline* outline);
 int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t err_len);
 void spdf_free_comments(spdf_comments* comments);
 /* detect_text_links: when non-zero, also scan the page's structured text for
@@ -291,6 +271,9 @@ int spdf_rotate_page(spdf_document* doc, int page_index, int degrees, char* err,
 int spdf_delete_all_text(spdf_document* doc, const char* path, char* err, size_t err_len);
 int spdf_save_document(spdf_document* doc, const char* path, char* err, size_t err_len);
 int spdf_document_has_text(spdf_document* doc, int max_pages, char* err, size_t err_len);
+/* Writes a copy with each line's original glyphs removed (scan pixels under
+ * an OCR layer set to their background) and its translation written as
+ * embedded, searchable text fitted to the line's box. */
 int spdf_save_translated_copy(spdf_document* doc, const char* path, const spdf_translated_line* lines, int line_count,
                               char* err, size_t err_len);
 /* Replacement text for one outline entry or one comment in the translated

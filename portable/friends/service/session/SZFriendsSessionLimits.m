@@ -3,6 +3,8 @@
 
 #import "service/session/SZFriendsSession.h"
 
+#import <sodium.h>
+
 const uint8_t SZFriendsSessionMajor = 1;
 const NSUInteger SZFriendsNoiseMessageMax = 65535;
 // One frame per transport message: the Noise limit minus ChaChaPoly's 16-byte tag.
@@ -31,12 +33,48 @@ const NSTimeInterval SZFriendsHandshakeTimeout = 10;
 // holds an admission slot only briefly.
 const NSTimeInterval SZFriendsRefusalDelay = 1.5;
 const NSTimeInterval SZFriendsReplayWindow = 600;
-const uint16_t SZFriendsSessionMinor = 3;
+const uint16_t SZFriendsSessionMinor = 4;
+const uint16_t SZFriendsFastTransfersMinor = 4;
+// ADR 0018 § 7, as szfriends_wire::consts (KEEPALIVE_MILLISECONDS, SILENCE_MILLISECONDS, SILENCE_BLUETOOTH_...).
+const NSTimeInterval SZFriendsKeepaliveInterval = 1;
+const NSTimeInterval SZFriendsSilenceLimit = 8;
+const NSTimeInterval SZFriendsSilenceLimitBluetooth = 12;
 // A host signature (64 bytes), the identity key (32), the Friends ID (at most 64) and a few dates and key ids fit in
 // well under half of this; the rest leaves the host area room to grow the format without a session change.
 const NSUInteger SZFriendsAttestationMax = 512;
 // 750 bytes at most today (SZFriendsSession.h); the rest is room for a few more payload fields, still bounded.
 const NSUInteger SZFriendsResponderHandshakeMax = 1024;
+
+static BOOL SZFriendsFastTransfersOff = NO;
+
+static BOOL SZFriendsDirectWiFiBoostOn = NO;
+
+void SZFriendsSetDirectWiFiBoostEnabled(BOOL enabled) {
+    SZFriendsDirectWiFiBoostOn = enabled;
+}
+
+void SZFriendsSetFastTransfersEnabled(BOOL enabled) {
+    SZFriendsFastTransfersOff = !enabled;
+}
+
+SZFriendsCapabilities SZFriendsDefaultCapabilities(void) {
+    const char *test = getenv("SZFRIENDS_TEST_FAST_TRANSFERS");
+    if (SZFriendsFastTransfersOff || (test != NULL && strcmp(test, "0") == 0)) return 0;
+    return SZFriendsCapabilityFastTransfers | SZFriendsCapabilityPieces |
+           (SZFriendsDirectWiFiBoostOn ? SZFriendsCapabilityDirectWiFiBoost : 0);
+}
+
+NSData *SZFriendsLaneToken(NSData *handshakeHash, uint8_t index) {
+    if (handshakeHash.length != 64) return nil;
+    static const char label[] = "SZFriends lane v1";
+    crypto_generichash_state state;
+    crypto_generichash_init(&state, handshakeHash.bytes, handshakeHash.length, 16);
+    crypto_generichash_update(&state, (const uint8_t *)label, sizeof label - 1);
+    crypto_generichash_update(&state, &index, 1);
+    uint8_t out[16];
+    crypto_generichash_final(&state, out, sizeof out);
+    return [NSData dataWithBytes:out length:sizeof out];
+}
 
 NSErrorDomain const SZFriendsSessionErrorDomain = @"SZFriendsSessionErrorDomain";
 NSString *const SZFriendsSessionCloseReasonKey = @"SZFriendsSessionCloseReason";

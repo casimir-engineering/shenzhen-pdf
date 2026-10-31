@@ -135,6 +135,11 @@ fn build(scenario: &Value, side: &str, strict: bool) -> Replay {
     };
     let draws = setup["random"].as_array().map(|draws| draws.iter().map(bytes).collect()).unwrap_or_default();
     channel.set_random(Box::new(Draws(draws)));
+    // The helper recorded these sessions at its own minor, which is this build's, with fast transfers on.
+    assert_eq!(
+        number(&szfriends_vectors::load("objc-frames.json"), "session_minor"),
+        u64::from(szfriends_core::wire::consts::SESSION_MINOR)
+    );
     channel
         .set_config(ChannelConfig { rekey_after_bytes: number(scenario, "rekey_after_bytes"), ..Default::default() });
     channel.set_local_attestation(setup.get("attestation").map(bytes));

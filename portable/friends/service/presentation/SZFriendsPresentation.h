@@ -84,7 +84,12 @@ typedef NS_ENUM(NSInteger, SZFriendsOnlineReach) {
 @property(nonatomic) NSInteger unreadCount;
 @property(nonatomic) NSInteger offersWaiting;              // incoming offers waiting for this person's answer
 @property(nonatomic, copy) NSDate *lastInteractionAt;
-@property(nonatomic, copy, nullable) NSString *lastPreviewItemID; // the item the row's subtitle describes
+// The conversation's newest item of any kind (an event too): whether it has history at all.
+@property(nonatomic, copy, nullable) NSString *lastPreviewItemID;
+// The newest message or file (a file received through a link included), which a friend's list row shows, and how many
+// files went together with that file: sent or received one after the other, a minute apart at most.
+@property(nonatomic, copy, nullable) NSString *lastMessageItemID;
+@property(nonatomic) NSInteger lastMessageFileCount;
 @property(nonatomic, copy, nullable) NSDate *requestAt;
 @property(nonatomic) BOOL requestFoundNearby;
 // An answer to our own Add by ID that the Friends host could not confirm, waiting for the person's acceptance as an
@@ -168,6 +173,17 @@ typedef NS_ENUM(NSInteger, SZFriendsAgainState) {
 @property(nonatomic) BOOL askedBecauseDiskLow;
 @property(nonatomic) SZFriendsRouteMethod transferRoute;
 @property(nonatomic) double bytesPerSecond;                 // measured on the current route; 0 when unknown
+// Every block arrived and the whole file has been checked for over a second before it is saved (PROTOCOL.md § Fast
+// transfers): "Finishing…".
+@property(nonatomic) BOOL finishing;
+// The Wi-Fi Direct boost (ADR 0019) on this Mac, for this transfer: 0 none, 1 asking (Go faster, Not now), 2
+// connecting, 3 direct, 4 rejoining, 5 did not get back on its Wi-Fi by itself (SZFriendsBoostStage's values).
+@property(nonatomic) NSInteger boostStage;
+@property(nonatomic, copy, nullable) NSString *boostNetwork; // this Mac's Wi-Fi by name, when it knows it
+@property(nonatomic) BOOL boostLeavesWiFi;
+@property(nonatomic) BOOL boostOverEthernet;
+@property(nonatomic) double boostBluetoothSeconds;
+@property(nonatomic) double boostDirectSeconds;
 @property(nonatomic, copy, nullable) NSString *localPath;   // received file, once published
 // Where a received file was saved, for its "Saved to {folder}": the default Downloads, else the name of the folder it
 // is in; neither (older files, or kept in the helper's own folder) keeps "Received".
@@ -362,7 +378,7 @@ typedef NS_ENUM(NSInteger, SZFriendsReceivedFallbackFacts) {
 
 // `people` in any order; the builder sorts by latest interaction and counts rows waiting for an answer.
 - (NSDictionary<NSString *, id> *)badgeWithPeople:(NSArray<SZFriendsPersonFacts *> *)people;
-// `previewItems` is keyed by item id: each row describes previewItems[person.lastPreviewItemID].
+// `previewItems` is keyed by item id: each row describes previewItems[person.lastMessageItemID].
 - (NSDictionary<NSString *, id> *)listWithPeople:(NSArray<SZFriendsPersonFacts *> *)people
                                     previewItems:(NSDictionary<NSString *, SZFriendsItemFacts *> *)previewItems
                                          profile:(SZFriendsProfileFacts *)profile

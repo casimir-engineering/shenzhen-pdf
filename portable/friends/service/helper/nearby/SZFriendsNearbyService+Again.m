@@ -46,6 +46,7 @@ static NSString *SZFriendsAgainKey(NSString *transferID) {
 }
 
 - (BOOL)againCopyingTransfer:(NSString *)transferID fraction:(double *)fraction {
+    if ([self pullFractionOfTransfer:transferID fraction:fraction]) return YES;
     for (SZFriendsPeerLink *link in self.links) {
         if (link.closed || ![link.againExchange.copyingTransferID isEqualToString:transferID]) continue;
         if (fraction) *fraction = link.againExchange.copyingFraction;
@@ -87,6 +88,7 @@ static NSString *SZFriendsAgainKey(NSString *transferID) {
     [self setAgainState:SZFriendsAgainAsked ofTransfer:transferID];
     SZFriendsPeerLink *live = [self liveLinkForConversation:conversationID];
     if (live != nil) [[self againExchangeForLink:live] pump];
+    [self schedulePullReconsider];
     [self scheduleReconsider]; // the friend is dialed nearby, and reached online
     [self changed];
     return nil;
@@ -202,12 +204,39 @@ static NSString *SZFriendsAgainKey(NSString *transferID) {
     exchange.servePath = ^NSString *_Nullable(NSString *transferID, uint64_t *size, SZFriendsAgainAnswer *answer) {
         return [weakSelf againPathToServe:transferID conversation:conversationID size:size answer:answer];
     };
+    // Our copies by blocks on a fast session (ADR 0018 § 4), by offset otherwise; their HAVEs go on this session.
+    exchange.fast = link.channel.fastTransfers;
+    exchange.sendFrame = ^(SZFriendsFrame *frame) {
+        SZFriendsPeerLink *strongLink = weakLink;
+        if (strongLink != nil && !strongLink.closed) [strongLink.channel sendFrame:frame];
+    };
+    // A copy by blocks (AGAIN 4, ADR 0018 § 4): the same checks, then the file's tree and the blocks asked for.
+    __weak SZFriendsAgainExchange *weakExchange = exchange;
+    exchange.wantBlocks = ^(NSString *transferID, uint8_t shift, NSData *ranges) {
+        SZFriendsAgainExchange *strongExchange = weakExchange;
+        SZFriendsPeerLink *strongLink = weakLink;
+        uint64_t size = 0;
+        NSString *path = [strongExchange beginServingBlocks:transferID size:&size];
+        if (path == nil || strongLink == nil) return;
+        if (![weakSelf serveCopyOnLink:strongLink transfer:transferID path:path size:size shift:shift ranges:ranges
+                                  sync:NO]) {
+            [strongExchange sendNone:transferID reason:SZFriendsAgainAnswerNotHere];
+        }
+    };
+    // On a fast session, copies are the pulls' (+Pulls): this exchange's requester starts none, and the answers to a
+    // pull's asks go there first.
+    exchange.pulls = [self pullsOnLink:link];
+    exchange.pullAnswer = ^BOOL(NSString *transferID, NSData *root, uint8_t shift, BOOL gone) {
+        SZFriendsPeerLink *strongLink = weakLink;
+        return strongLink != nil && [weakSelf link:strongLink pullAnswer:transferID root:root shift:shift gone:gone];
+    };
     link.againExchange = exchange;
     return exchange;
 }
 
 - (void)startAgainOnLink:(SZFriendsPeerLink *)link {
     [[self againExchangeForLink:link] pump];
+    [self schedulePullReconsider];
 }
 
 - (void)link:(SZFriendsPeerLink *)link person:(SZFriendsPersonRecord *)person receivedAgainFrame:(SZFriendsFrame *)frame {

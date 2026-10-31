@@ -176,6 +176,26 @@ fn relay_estimates() {
 }
 
 #[test]
+fn a_file_being_checked_before_it_is_saved_says_finishing() {
+    if presentation::tree_missing() {
+        return;
+    }
+    // PROTOCOL.md § Fast transfers: every block arrived, the whole file's check runs for more than a second.
+    let mut finishing =
+        transfer("t_f", false, "2026-10-12 09:00", "Scan.step", 8_000_000_000, TransferState::Receiving);
+    finishing.bytes_done = 8_000_000_000;
+    finishing.bytes_per_second = 90_000_000.0;
+    finishing.finishing = true;
+    let data = conversation(online_audience(), &people()["c_mei"], &[finishing], "finishing");
+    let row = item(&data, "t_f");
+    assert_eq!(row["state"], "receiving");
+    assert_eq!(row["status_label"], "Finishing…");
+    assert_eq!(row["progress"]["fraction"], 1.0);
+    assert_eq!(row["progress"]["accessibility_label"], "Finishing");
+    assert!(row["accessibility_label"].as_str().unwrap().ends_with(", finishing"), "{}", row["accessibility_label"]);
+}
+
+#[test]
 fn joining_in_every_state() {
     if presentation::tree_missing() {
         return;
@@ -225,9 +245,10 @@ fn the_sender_of_a_link_file() {
     let mut link_event = event_item("e_link", "2026-10-12 14:40", event::RECEIVED_LINK_FILE);
     link_event.event_arguments.insert("file".into(), "Site photos.pdf".into());
     mei.last_preview_item_id = Some("e_link".into());
+    mei.last_message_item_id = Some("e_link".into());
     let previews = HashMap::from([("e_link".to_owned(), link_event.clone())]);
     let row = builder.list(std::slice::from_ref(&mei), &previews, &profile_raph(), "", now())["rows"][0].clone();
-    assert_eq!(row["subtitle"], "Sent you Site photos.pdf through a link");
+    assert_eq!(row["subtitle"], "Mei: 📎 Site photos.pdf");
     let file = transfer("t_link", false, "2026-10-12 14:39", "Site photos.pdf", 2_516_582, TransferState::Received);
     let data = builder.conversation(&mei, &[file, link_event.clone()], false, None, 0, now());
     validate_snapshot(&data, "conversation", "link contact");

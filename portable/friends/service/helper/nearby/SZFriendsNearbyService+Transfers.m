@@ -8,6 +8,18 @@
 // a file) this makes them durable anyway, so the sender's window reopens.
 static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
 
+// ADR 0018 § 7: PING while this link carries a transfer, and close it when the friend's Mac owes something (PROGRESS,
+// the rest of a file, a HAVE for blocks sent) and nothing at all arrived for the silence limit. Called whenever a
+// flow on the link changes.
+static void SZFriendsUpdateLiveness(SZFriendsPeerLink *link) {
+    if (link.closed) return;
+    BOOL keepalive = NO, watch = NO;
+    SZFriendsTransferLiveness(link.senders.allValues, link.receivers.allValues, &keepalive, &watch);
+    keepalive |= link.blocks.carriesTransfers;
+    watch |= link.blocks.awaitingPeer;
+    [link.channel setLivenessKeepalive:keepalive watch:watch];
+}
+
 @implementation SZFriendsNearbyService (Transfers)
 
 #pragma mark - Receiving
@@ -18,8 +30,21 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
     NSArray<SZFriendsTransferRecord *> *unfinished =
         [self.services.transfers unfinishedIncomingTransfersForConversation:conversationID];
     BOOL flushed = NO;
+    SZFriendsBlockExchange *blocks = [self blocksOnLink:link];
     for (SZFriendsTransferRecord *__strong record in unfinished) {
-        if (link.receivers[record.transferID] != nil) continue;
+        if (link.receivers[record.transferID] != nil || [link.blocks.receiving containsObject:record.transferID]) {
+            continue;
+        }
+        // By blocks on a fast session, from exactly what is missing (ADR 0018 § 4); on any other, the map goes and
+        // the CHUNK flow resumes from the durable prefix.
+        BOOL answered = [link.answeredByBlocks containsObject:record.transferID];
+        if (answered ? [blocks beginIncoming:record] : [blocks resumeIncoming:record]) {
+            [link.endedTransfers removeObject:record.transferID];
+            continue;
+        }
+        if (blocks == nil && [self.services.transfers hasOfferedTree:record.transferID]) {
+            [self.services.transfers dropBlocks:record.transferID];
+        }
         NSData *wire = SZFriendsLinkBytesFromHex(record.transferID);
         if (wire == nil) continue;
         if (!flushed) {
@@ -39,6 +64,7 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
         link.rateStart[record.transferID] = @[ @(record.verifiedBytes), [NSDate date] ];
         [link.channel sendFrame:[receiver resumeProgressFrame]];
     }
+    SZFriendsUpdateLiveness(link);
 }
 
 - (BOOL)refuseUnsolicitedOnLink:(SZFriendsPeerLink *)link transfer:(NSString *)transferID {
@@ -58,6 +84,12 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
     [link.doneSent removeObject:transferID];
     [link.rateStart removeObjectForKey:transferID];
     [link.endedTransfers addObject:transferID];
+    [link.blocks endTransfer:transferID];
+    SZFriendsUpdateLiveness(link);
+}
+
+- (void)updateLivenessOnLink:(SZFriendsPeerLink *)link {
+    SZFriendsUpdateLiveness(link);
 }
 
 - (void)link:(SZFriendsPeerLink *)link receivedChunkFrame:(SZFriendsFrame *)frame {
@@ -88,6 +120,7 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
     }
     [self reportProgressOnLink:link transfer:transferID];
     [self armProgressFlushOnLink:link];
+    SZFriendsUpdateLiveness(link);
     [self progressChanged];
 }
 
@@ -199,7 +232,7 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
         [self changed];
         return;
     }
-    NSFileHandle *source = [NSFileHandle fileHandleForReadingAtPath:transfer.stagedPath];
+    NSFileHandle *source = SZFriendsOpenSnapshotForSending(transfer.stagedPath);
     sender = [[SZFriendsChunkSender alloc] initWithOfferID:wire size:transfer.size resumeOffset:offset
                                                      route:link.raceRoute];
     if (source == nil || sender == nil) {
@@ -229,15 +262,12 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
         uint64_t offset = 0;
         NSUInteger length = 0;
         while ([sender getNextChunkOffset:&offset length:&length]) {
-            if (rate > 0 && [self paceLink:link bytes:length rate:rate]) return;
-            NSData *data = nil;
-            @try {
-                [source seekToFileOffset:offset];
-                data = [source readDataOfLength:length];
-            } @catch (NSException *exception) {
-                data = nil;
+            if (rate > 0 && [self paceLink:link bytes:length rate:rate]) {
+                SZFriendsUpdateLiveness(link);
+                return;
             }
-            if (data.length != length) {
+            NSData *data = SZFriendsReadSnapshotAt(source, offset, length);
+            if (data == nil) {
                 // The snapshot vanished under us: nothing true can be sent from it.
                 [self.services.transfers failTransfer:transferID reason:SZFriendsTransferFailureSourceMissing
                                                 error:NULL];
@@ -260,6 +290,8 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
             }
         }
     }
+    [link.blocks pump];
+    SZFriendsUpdateLiveness(link);
 }
 
 // YES when this chunk would go faster than the test's cap: the pump runs again once it may.
@@ -300,6 +332,7 @@ static const NSTimeInterval SZFriendsProgressFlushDelay = 0.5;
 - (BOOL)transfersInFlight {
     for (SZFriendsPeerLink *link in self.links) {
         if (link.closed) continue;
+        if (link.blocks.carriesTransfers) return YES;
         for (SZFriendsChunkSender *sender in link.senders.allValues) {
             if (sender.sentOffset > sender.durableOffset) return YES;
         }

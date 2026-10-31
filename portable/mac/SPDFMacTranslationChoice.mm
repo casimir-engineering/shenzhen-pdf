@@ -1,82 +1,119 @@
 #import "SPDFMacTranslationChoice.h"
 #import "SPDFMacTranslationEnablement.h"
-#import "SPDFMacAITranslationPanel.h"
-#import "SPDFMacAIOutputs.h"
+#import "SPDFMacTranslateLanguagePopover.h"
+#import "SPDFMacAIIntegration.h"
+#import "SPDFMacModels.h"
+#import "SPDFMacSupport.h"
+#import "SPDFMacTabGroups.h"
+#import "SPDFMacCollectionPathPolicy.h"
 #import "SPDFMacCollectionStore.h"
-#import "SPDFMacAITranslation.h"
-#import "SPDFMacAISettings.h"
-#import "SPDFMacAITransport.h"
-#import "SPDFMacMarkdownDelegatePrivate.h"
-#import "SPDFMacMarkdownSession.h"
-#import "markdown/SPDFTextDocumentParser.h"
 #import <objc/runtime.h>
 
+static char localRequestKey;
+
 @interface ShenzhenMacDelegate (SPDFMacTranslationChoicePrivate)
-- (NSString*)trimmedSelectedTextForCommand;
-- (NSString*)activeWorkingPath;
-- (spdf_document*)workerDocumentForPath:(NSString*)path sourcePath:(NSString*)source error:(char*)error errorLength:(size_t)length;
+- (void)translateDocumentLocally:(id)sender;
+- (NSInteger)indexOfTabForPath:(NSString*)path;
+- (void)openPath:(NSString*)path;
+- (BOOL)pathIsInTemporaryLocation:(NSString*)path;
 @end
+
 @implementation ShenzhenMacDelegate (SPDFMacTranslationChoice)
 - (void)translateDocument:(id)sender {
-    if(!spdf_translation_command_enabled([self translationContext]))return;
-    NSMenu* menu=SPDFMacTranslationChoiceMenu(self);
-    NSView* anchor=[sender isKindOfClass:NSView.class] ? sender : _translateButton;
-    if(anchor.window && !anchor.hidden) {
-        NSPoint point=NSMakePoint(NSMinX(anchor.bounds),anchor.isFlipped ? NSMaxY(anchor.bounds)+3 : NSMinY(anchor.bounds)-3);
-        [menu popUpMenuPositioningItem:nil atLocation:point inView:anchor];
-    } else [menu popUpMenuPositioningItem:nil atLocation:NSEvent.mouseLocation inView:nil];
+    if (!spdf_translation_command_enabled([self translationContext]) || ![self selectedTab].path.length) { NSBeep(); return; }
+    // Under the button when it is in the toolbar; from the File or overflow menu, under the toolbar's right end.
+    NSView* anchor=_translateButton.window && !_translateButton.hidden && _translateButton.superview ? _translateButton :
+        ([sender isKindOfClass:NSView.class] ? sender : _toolbar);
+    __weak ShenzhenMacDelegate* weakSelf=self;
+    [SPDFMacTranslateLanguagePopover showRelativeToView:anchor localLanguages:spdf_translation_languages()
+                                              translate:^(NSString* language, NSString* localCode) {
+        if (localCode) [weakSelf translateShownDocumentLocallyInto:localCode language:language];
+        else [weakSelf translateShownDocumentInto:language];
+    }];
 }
-- (void)translateDocumentWithAI:(id)sender {
-    (void)sender;if(!spdf_translation_command_enabled([self translationContext]))return;
-    static char panelKey;
-    NSMutableArray* panels=objc_getAssociatedObject(self,&panelKey);
-    if(!panels){panels=[NSMutableArray array];objc_setAssociatedObject(self,&panelKey,panels,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-    for(SPDFMacAITranslationPanel* previous in panels.copy)if(!previous.window.visible)[panels removeObject:previous];
-    SPDFMacAISettings* settings=[[SPDFMacAISettings alloc] initWithURL:SPDFMacAISettings.defaultURL];[settings load:nil];
-    SPDFMacAITranslationPanel* panel=[[SPDFMacAITranslationPanel alloc] initWithSourceName:_path language:settings.language];
-    panel.protectedSourcePaths=@[_path ?: @"",[self activeWorkingPath] ?: @""];[panels addObject:panel];
-    __weak NSMutableArray* weakPanels=panels;__weak SPDFMacAITranslationPanel* weakPanel=panel;
-    panel.onClosed=^{SPDFMacAITranslationPanel* closed=weakPanel;if(closed)[weakPanels removeObject:closed];};
-    __weak ShenzhenMacDelegate* weakSelf=self;panel.openCopy=^(NSString* path){[weakSelf openPath:path];};
-    panel.keepCopy=^(NSString* path){SPDFMacAIOutputKeepInCollection(path,SPDFMacCollectionStore.defaultStore);};
-    [panel.window center];[panel showWindow:nil];
-    NSString* selected=[self trimmedSelectedTextForCommand];
-    if(selected.length){[panel setSourceText:selected error:nil];return;}
-    BOOL textDocument=[self isMarkdownActive];
-    NSString* path=[[self activeWorkingPath] copy];NSString* source=[_path copy];
-    // Independent worker document: no rendering, extraction or network work on launch or the reader thread.
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
-        @autoreleasepool {
-            char errorText[1024]={};NSError* failure=nil;NSMutableString* text=[NSMutableString string];
-            if(textDocument) {
-                NSNumber* bytes=[NSFileManager.defaultManager attributesOfItemAtPath:path error:&failure][NSFileSize];
-                NSString* raw=nil;
-                if(bytes.unsignedLongLongValue>2000004)failure=SPDFMacAIError(120,@"This document is too large. Select a smaller passage to translate.");
-                if(!failure && !panel.preparation.cancelled) {
-                    NSData* data=[NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:&failure];
-                    if(data)raw=SPDFDecodeSourceDocument(data,&failure);
-                }
-                dispatch_async(dispatch_get_main_queue(),^{[panel setSourceText:raw error:failure];});return;
-            }
-            spdf_document* doc=panel.preparation.cancelled ? NULL : [self workerDocumentForPath:path sourcePath:source error:errorText errorLength:sizeof(errorText)];
-            if(!doc)failure=SPDFMacAIError(122,errorText[0] ? @(errorText) : @"Could not read document text.");
-            for(int page=0;doc && !panel.preparation.cancelled && page<spdf_page_count(doc);++page) {
-                spdf_text_lines lines={};
-                if(!spdf_extract_page_text_lines(doc,page,&lines,errorText,sizeof(errorText))) {
-                    failure=SPDFMacAIError(122,@"Could not extract all pages. No text was sent.");break;
-                }
-                for(int line=0;line<lines.count;++line) {
-                    NSString* value=lines.items[line].text ? @(lines.items[line].text) : @"";
-                    if(!SPDFMacAITranslationAppendLine(text,value,panel.preparation,&failure))break;
-                }
-                spdf_free_text_lines(&lines);
-                if(failure || !SPDFMacAITranslationAppendLine(text,@"",panel.preparation,&failure))break;
-            }
-            // workerDocumentForPath is owned by the thread-local cache; never close it here.
-            if(!failure && ![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)
-                failure=SPDFMacAIError(123,@"No selectable text. Run OCR first for scanned pages.");
-            dispatch_async(dispatch_get_main_queue(),^{[panel setSourceText:failure ? nil : text error:failure];});
+- (BOOL)translateShownDocumentInto:(NSString*)language {
+    SPDFDocumentTab* tab=[self selectedTab];
+    if (!tab.path.length || !language.length) return NO;
+    NSString* name=spdf_tab_display_name(tab) ?: tab.title.length ? tab.title : tab.path.lastPathComponent;
+    return [self aiSendRequestInNewChat:[NSString stringWithFormat:@"Translate “%@” to %@.",name,language]];
+}
+
+#pragma mark On this Mac
+- (void)translateShownDocumentLocallyInto:(NSString*)code language:(NSString*)language {
+    SPDFDocumentTab* tab=[self selectedTab];
+    if (!tab.path.length || !code.length) { NSBeep(); return; }
+    NSString* name=spdf_tab_display_name(tab) ?: tab.path.lastPathComponent.stringByDeletingPathExtension;
+    objc_setAssociatedObject(self,&localRequestKey,@{@"target":code,@"language":language ?: code,@"name":name ?: @"Document"},
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [self translateDocumentLocally:nil];
+}
+- (NSDictionary*)localTranslationRequest { return objc_getAssociatedObject(self,&localRequestKey); }
+- (void)noteLocalTranslationMakesPDF {
+    NSMutableDictionary* request=[[self localTranslationRequest] mutableCopy];
+    if (!request) return;
+    request[@"madePDF"]=@YES;
+    objc_setAssociatedObject(self,&localRequestKey,request,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+- (void)clearLocalTranslationRequest { objc_setAssociatedObject(self,&localRequestKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+
+// The best guess of a sample's language, as the primary code ("zh" for either Chinese script); nil when unsure.
+static NSString* GuessLanguage(NSString* text) {
+    if (!text.length) return nil;
+    NSString* sample=text.length>6000 ? [text substringToIndex:[text rangeOfComposedCharacterSequenceAtIndex:6000].location] : text;
+    NSString* guess=CFBridgingRelease(CFStringTokenizerCopyBestStringLanguage((__bridge CFStringRef)sample,
+                                                                               CFRangeMake(0,(CFIndex)sample.length)));
+    return [guess componentsSeparatedByString:@"-"].firstObject.lowercaseString;
+}
+- (NSString*)localTranslationSourceForText:(NSString*)text target:(NSString*)target {
+    NSMutableSet* codes=[NSMutableSet set];
+    for (NSDictionary* language in spdf_translation_languages()) if (language[@"code"]) [codes addObject:language[@"code"]];
+    NSString* guess=GuessLanguage(text);
+    if ([codes containsObject:guess] && ![guess isEqual:target]) return guess;
+    // Mostly in the target language (a Chinese datasheet full of English part names, say): the lines in another
+    // script are what needs translating, so their language is the one to translate from.
+    spdf_translation_script targetScript=spdf_translation_script_for_language(target.UTF8String);
+    NSMutableString* others=[NSMutableString string];
+    for (NSString* line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet])
+        if (line.length && spdf_translation_should_translate(line.UTF8String,SPDF_TRANSLATION_SCRIPT_UNKNOWN,targetScript)) {
+            [others appendString:line]; [others appendString:@"\n"];
         }
-    });
+    NSString* second=GuessLanguage(others);
+    if ([codes containsObject:second] && ![second isEqual:target]) return second;
+    if ([guess isEqual:target] && !others.length) return nil;
+    // Nothing recognisable: the language translated from last time, as the dialog this replaced remembered it.
+    NSString* last=_translationSourceLanguage.length ? _translationSourceLanguage : @"zh";
+    if (![last isEqual:target]) return last;
+    return [target isEqual:@"en"] ? @"zh" : @"en";
+}
+- (NSString*)localTranslationDirectory {
+    NSString* directory=_path.stringByDeletingLastPathComponent;
+    BOOL beside=directory.length && !SPDFMacPathIsCollectionArchive(_path) &&
+        ![SPDFMacCollectionStore.defaultStore isArchivePath:_path] &&
+        ![self pathIsInTemporaryLocation:_path] && [NSFileManager.defaultManager isWritableFileAtPath:directory];
+    if (beside) return directory;
+    return [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject.path ?:
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
+}
+- (NSString*)localTranslationOutputPathInDirectory:(NSString*)directory request:(NSDictionary*)request {
+    NSString* name=[[request[@"name"] ?: @"Document" stringByReplacingOccurrencesOfString:@"/" withString:@"-"]
+        stringByReplacingOccurrencesOfString:@":" withString:@"-"];
+    [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString* base=[NSString stringWithFormat:@"%@ (%@)",name,request[@"language"] ?: request[@"target"]];
+    NSString* candidate=[directory stringByAppendingPathComponent:[base stringByAppendingPathExtension:@"pdf"]];
+    for (NSUInteger n=2;[NSFileManager.defaultManager fileExistsAtPath:candidate] && n<1000;n++)
+        candidate=[directory stringByAppendingPathComponent:[[base stringByAppendingFormat:@" %lu",(unsigned long)n]
+            stringByAppendingPathExtension:@"pdf"]];
+    return candidate;
+}
+- (void)openTranslation:(NSString*)path besidePath:(NSString*)original {
+    BOOL existed=[self indexOfTabForPath:path]>=0;
+    [self openPath:path];
+    NSInteger index=[self indexOfTabForPath:path], beside=original.length ? [self indexOfTabForPath:original] : -1;
+    if (existed || index<0 || beside<0 || index==beside || ![self respondsToSelector:@selector(moveTabAtIndex:toGroup:atIndex:)])
+        return;
+    // Right after the original, in its group, where the person will look for it.
+    SPDFTabGroup* group=_tabs[(NSUInteger)beside].group;
+    if (index==beside+1 && _tabs[(NSUInteger)index].group==group) return;
+    [(id<SPDFTabGroupReader>)self moveTabAtIndex:index toGroup:group atIndex:index>beside ? beside+1 : beside];
 }
 @end

@@ -59,11 +59,50 @@ static const SZFriendsFieldRule kOffer[] = {
     RULE(SZFriendsFieldSize, 8, 8, REQ),
     RULE(SZFriendsFieldDigest, 32, 32, REQ),
     RULE(SZFriendsFieldViaAssistant, 1, 1, SZFriendsFieldRuleBoolean),
+    RULE(SZFriendsFieldTreeRoot, 32, 32, 0),
+    RULE(SZFriendsFieldBlockShift, 1, 1, 0),
 };
 static const SZFriendsFieldRule kOfferReply[] = {
     ID_RULE,
     RULE(SZFriendsFieldAccept, 1, 1, REQ | SZFriendsFieldRuleBoolean),
     RULE(SZFriendsFieldOffset, 8, 8, 0),
+    RULE(SZFriendsFieldBlocks, 1, 1, SZFriendsFieldRuleBoolean),
+};
+// Minor 4 (ADR 0018 § 3). Whole leaves and whole ranges; how many and which is the transfer area's check.
+static const SZFriendsFieldRule kHashes[] = {
+    ID_RULE,
+    RULE(SZFriendsFieldIndex, 4, 4, REQ),
+    RULE(SZFriendsFieldHashes, 32, 64000, REQ | SZFriendsFieldRuleMultipleOf32), // 2,000 leaves
+};
+// WANT names missing blocks, missing pieces of partly received blocks, or both: at least one.
+static const SZFriendsFieldRule kWant[] = {
+    ID_RULE,
+    RULE(SZFriendsFieldRanges, 8, 64000, SZFriendsFieldRuleOneOf | SZFriendsFieldRuleMultipleOf8),
+    RULE(SZFriendsFieldPieces, 8, 64000, SZFriendsFieldRuleOneOf | SZFriendsFieldRuleMultipleOf8),
+};
+static const SZFriendsFieldRule kPart[] = {
+    ID_RULE,
+    RULE(SZFriendsFieldOffset, 8, 8, REQ),
+    RULE(SZFriendsFieldData, 1, 61440, REQ),
+    RULE(SZFriendsFieldCodec, 1, 1, 0),
+    RULE(SZFriendsFieldLength, 4, 4, 0),
+};
+static const SZFriendsFieldRule kHave[] = {
+    ID_RULE,
+    RULE(SZFriendsFieldRanges, 8, 64000, SZFriendsFieldRuleMultipleOf8),
+    RULE(SZFriendsFieldDurable, 8, 64000, SZFriendsFieldRuleMultipleOf8),
+    RULE(SZFriendsFieldPieces, 8, 64000, SZFriendsFieldRuleMultipleOf8),
+};
+// ADR 0019: which fields a step needs is the boost's own check.
+static const SZFriendsFieldRule kBoost[] = {
+    ID_RULE,
+    RULE(SZFriendsFieldReason, 1, 1, 0),
+    RULE(SZFriendsFieldStep, 1, 1, REQ),
+    RULE(SZFriendsFieldAbilities, 1, 1, 0),
+    RULE(SZFriendsFieldNetwork, 1, 32, 0),
+    RULE(SZFriendsFieldPassphrase, 8, 63, 0),
+    RULE(SZFriendsFieldAddress, 4, 16, 0),
+    RULE(SZFriendsFieldPort, 2, 2, 0),
 };
 static const SZFriendsFieldRule kChunk[] = {
     ID_RULE,
@@ -103,6 +142,7 @@ static const SZFriendsFieldRule kHandshakePayload[] = {
     RULE(SZFriendsFieldCapabilities, 4, 4, 0),
     RULE(SZFriendsFieldRouteClass, 1, 1, 0),
     RULE(SZFriendsFieldAttestation, 1, kAttestationMax, 0),
+    RULE(SZFriendsFieldLane, 16, 16, 0),
 };
 
 #define RULES(array) ((SZFriendsFieldRules){(array), sizeof(array) / sizeof((array)[0])})
@@ -139,6 +179,11 @@ BOOL SZFriendsFrameRulesForType(uint8_t type, SZFriendsFieldRules *rules) {
     case SZFriendsFrameTypeJoin: *rules = RULES(kJoin); return YES;
     case SZFriendsFrameTypeSync: *rules = RULES(kSync); return YES;
     case SZFriendsFrameTypeAgain: *rules = RULES(kAgain); return YES;
+    case SZFriendsFrameTypeHashes: *rules = RULES(kHashes); return YES;
+    case SZFriendsFrameTypeWant: *rules = RULES(kWant); return YES;
+    case SZFriendsFrameTypePart: *rules = RULES(kPart); return YES;
+    case SZFriendsFrameTypeHave: *rules = RULES(kHave); return YES;
+    case SZFriendsFrameTypeBoost: *rules = RULES(kBoost); return YES;
     }
     return NO;
 }
@@ -166,6 +211,12 @@ static BOOL SZFriendsFieldBytesAllowed(const SZFriendsFieldRule *rule, const uin
     if ((rule->flags & SZFriendsFieldRuleMultipleOf16) && length % 16 != 0) {
         return NO;
     }
+    if ((rule->flags & SZFriendsFieldRuleMultipleOf32) && length % 32 != 0) {
+        return NO;
+    }
+    if ((rule->flags & SZFriendsFieldRuleMultipleOf8) && length % 8 != 0) {
+        return NO;
+    }
     return YES;
 }
 
@@ -180,6 +231,8 @@ NSUInteger SZFriendsIntegerFieldWidth(uint8_t tag) {
     case SZFriendsFieldOffset:
         return 8;
     case SZFriendsFieldCapabilities:
+    case SZFriendsFieldIndex:
+    case SZFriendsFieldLength:
         return 4;
     case SZFriendsFieldPictureSet:
     case SZFriendsFieldPictureIndex:
@@ -192,6 +245,9 @@ NSUInteger SZFriendsIntegerFieldWidth(uint8_t tag) {
     case SZFriendsFieldReason:
     case SZFriendsFieldRouteClass:
     case SZFriendsFieldViaAssistant:
+    case SZFriendsFieldBlockShift:
+    case SZFriendsFieldBlocks:
+    case SZFriendsFieldCodec:
         return 1;
     default:
         return 0;
@@ -244,12 +300,19 @@ NSDictionary<NSNumber *, NSData *> *SZFriendsDecodeFields(NSData *data, NSUInteg
         }
         position += fieldLength;
     }
+    int oneOf = -1; // the first field of a one-of set, while none of the set is present
     for (size_t i = 0; i < rules.count; i++) {
         uint8_t tag = rules.rules[i].tag;
-        if ((rules.rules[i].flags & SZFriendsFieldRuleRequired) && !(seen[tag >> 3] & (1u << (tag & 7)))) {
+        BOOL present = (seen[tag >> 3] & (1u << (tag & 7))) != 0;
+        if ((rules.rules[i].flags & SZFriendsFieldRuleRequired) && !present) {
             return SZFriendsFail(error, [NSString stringWithFormat:@"missing field %u", tag]);
         }
+        if (rules.rules[i].flags & SZFriendsFieldRuleOneOf) {
+            if (present) oneOf = 256;
+            else if (oneOf < 0) oneOf = tag;
+        }
     }
+    if (oneOf >= 0 && oneOf < 256) return SZFriendsFail(error, [NSString stringWithFormat:@"missing field %d", oneOf]);
 
     NSMutableDictionary<NSNumber *, NSData *> *fields = [NSMutableDictionary dictionary];
     for (NSUInteger position = offset; position < length;) {
@@ -277,10 +340,19 @@ BOOL SZFriendsAppendFields(NSMutableData *output, NSDictionary<NSNumber *, NSDat
             return SZFriendsRefuse(error, [NSString stringWithFormat:@"field %ld outside its limits", (long)tag]);
         }
     }
+    int oneOf = -1;
     for (size_t i = 0; i < rules.count; i++) {
-        if ((rules.rules[i].flags & SZFriendsFieldRuleRequired) && fields[@(rules.rules[i].tag)] == nil) {
+        BOOL present = fields[@(rules.rules[i].tag)] != nil;
+        if ((rules.rules[i].flags & SZFriendsFieldRuleRequired) && !present) {
             return SZFriendsRefuse(error, [NSString stringWithFormat:@"missing field %u", rules.rules[i].tag]);
         }
+        if (rules.rules[i].flags & SZFriendsFieldRuleOneOf) {
+            if (present) oneOf = 256;
+            else if (oneOf < 0) oneOf = rules.rules[i].tag;
+        }
+    }
+    if (oneOf >= 0 && oneOf < 256) {
+        return SZFriendsRefuse(error, [NSString stringWithFormat:@"missing field %d", oneOf]);
     }
     NSArray<NSNumber *> *tags = [fields.allKeys sortedArrayUsingSelector:@selector(compare:)];
     for (NSNumber *key in tags) {

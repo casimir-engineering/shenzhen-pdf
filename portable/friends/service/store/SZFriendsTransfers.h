@@ -18,6 +18,8 @@
 
 #import <Foundation/Foundation.h>
 
+#import "service/transfer/SZFriendsTransferBlocks.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 @class SZFriendsStore;
@@ -169,6 +171,20 @@ NSString *_Nullable SZFriendsPublishReceivedFile(NSString *staged, NSString *fil
 // The hidden file a copy across volumes writes before it takes `finalPath`: ".<name>.part" beside it.
 NSString *SZFriendsReceivedPartPath(NSString *finalPath);
 
+// Sending a staged snapshot (ADR 0018 § 9.1): opened once per transfer and session, read-only, read-ahead on, so each
+// chunk is one pread at its offset instead of a seek and a read. Nil when the snapshot is gone.
+NSFileHandle *_Nullable SZFriendsOpenSnapshotForSending(NSString *path);
+// Exactly `length` bytes at `offset`, or nil (the snapshot shrank or vanished: nothing true can be sent from it).
+NSData *_Nullable SZFriendsReadSnapshotAt(NSFileHandle *snapshot, uint64_t offset, NSUInteger length);
+
+// The two halves of a durability batch (ADR 0018 § 4, as szfriends-core's store/disk.rs). OrderWrites: the file's
+// writes reach the drive before anything written after it (F_BARRIERFSYNC; fsync where that is refused), without
+// flushing the drive's cache. MakeDurable: everything written so far survives a power cut (F_FULLFSYNC, which on Apple
+// storage flushes the drive's whole cache; fsync where that is refused). A batch orders its data, writes what records
+// it, and flushes once: a commit to the store, which runs F_FULLFSYNC itself, is that one flush.
+BOOL SZFriendsOrderWrites(int fd);
+BOOL SZFriendsMakeDurable(int fd);
+
 // Offer metadata a peer sent (the helper reads it from the OFFER frame; the session codec has already checked
 // field lengths), checked before any buffer is allocated: name, declared size, digest length, and the number of
 // offers this friend has pending (floods). Returns NO with a reason for the log; the peer learns only that the
@@ -310,6 +326,116 @@ typedef NS_ENUM(NSInteger, SZFriendsReceivedSource) {
       fromConversation:(NSString *)conversationID error:(NSError **)error;
 // Makes every received byte durable now (session lost, handover, exit), so the next resume starts from it.
 - (BOOL)flushProgressWithError:(NSError **)error;
+@end
+
+// What one PART did (ADR 0018 § 3), for the helper to answer.
+typedef NS_ENUM(NSInteger, SZFriendsBlockPartResult) {
+    SZFriendsBlockPartRefused = 0, // out of place, past the limits, or not stored: close
+    SZFriendsBlockPartPending,     // stored; its block still misses bytes
+    SZFriendsBlockPartWritten,     // its block checked and is written; a HAVE reports it
+    SZFriendsBlockPartCorrupt,     // its block failed its leaf: want it again, alone
+    SZFriendsBlockPartLate,        // for a block already complete: dropped
+    SZFriendsBlockPartStale,       // the transfer was cancelled or finished meanwhile: dropped
+    // Before the leaves are here: a part on a lane overtook HASHES on the first session. Dropped, and its block is
+    // wanted again once the leaves check.
+    SZFriendsBlockPartEarly,
+};
+
+// Fast transfers on disk (ADR 0018 § 4 and 5; SZFriendsBlockDownloads.m). The receiver keeps the offered tree and
+// then a block map beside its staging file (received/.partial/<id>.map), writes checked blocks at their offsets and
+// makes them durable in batches of 8 MiB or a second; verified_bytes keeps the contiguous durable prefix for older
+// helpers. The sender keeps its tree beside the snapshot (outgoing/<id>.tree) and checks every block against it as it
+// reads it.
+// A file received by blocks being read back before it is saved (-beginBlockCheck:).
+@interface SZFriendsBlockCheck : NSObject
+@property(nonatomic, readonly) NSString *transferID;
+@property(nonatomic, readonly) NSString *conversationID;
+- (void)run; // reads the whole file: tree and digest
+@end
+
+@interface SZFriendsTransfers (Blocks)
+// The tree a friend's OFFER announced, kept for when the person accepts (perhaps after a restart). Only for an offer
+// from that friend still waiting for an answer, whose size matches.
+- (BOOL)recordOfferedTree:(NSString *)transferID
+             conversation:(NSString *)conversationID
+                 geometry:(SZFriendsBlockGeometry)geometry
+                     root:(NSData *)root;
+- (BOOL)hasOfferedTree:(NSString *)transferID;
+// Starts or resumes a download by blocks; NO with no error when there is no offered tree (it goes by CHUNK).
+- (BOOL)beginBlocks:(NSString *)transferID conversation:(NSString *)conversationID error:(NSError **)error;
+// Stops treating a download as blocks (a session without fast transfers resumes it by CHUNK from the prefix).
+- (void)dropBlocks:(NSString *)transferID;
+- (BOOL)isReceivingBlocks:(NSString *)transferID;
+// Blocks still missing, for WANT (SZFriendsTransferBlocks.h's packed ranges).
+- (NSData *)blocksMissing:(NSString *)transferID;
+// With a peer that has pieces (ADR 0018 § 3): the blocks to WANT besides those partly received, and in `*pieces` the
+// pieces still missing from those.
+- (NSData *)blocksMissing:(NSString *)transferID pieces:(NSData *_Nullable *_Nonnull)pieces;
+// The leaves of a download by blocks are here and checked.
+- (BOOL)blockLeavesKnown:(NSString *)transferID;
+// Blocks partly received now (diagnostics: a PART refused at the in-flight limit).
+- (NSUInteger)blocksPartlyReceived:(NSString *)transferID;
+// Pieces arrived since the last call in blocks not yet complete (HAVE's Pieces).
+- (NSData *)takePieceHave:(NSString *)transferID;
+// Leaves from a HASHES frame; once all are here and check, the map gains them.
+- (BOOL)acceptBlockHashes:(NSData *)hashes
+                    index:(uint32_t)index
+              forTransfer:(NSString *)transferID
+         fromConversation:(NSString *)conversationID
+                    error:(NSError **)error;
+- (SZFriendsBlockPartResult)acceptBlockPart:(NSData *)data
+                                   atOffset:(uint64_t)offset
+                                forTransfer:(NSString *)transferID
+                           fromConversation:(NSString *)conversationID
+                                      block:(uint32_t *)block
+                                      error:(NSError **)error;
+// Durability batches that came due (all of them with `all`, at a session's end or exit): the transfers flushed.
+- (NSArray<NSString *> *)flushDueBlocks:(BOOL)all;
+@property(nonatomic, readonly) BOOL blocksPending; // some block is written and not yet durable
+// What changed since the last HAVE: blocks written, blocks made durable.
+- (void)takeBlockHave:(NSString *)transferID complete:(NSData *_Nonnull *_Nonnull)complete
+              durable:(NSData *_Nonnull *_Nonnull)durable;
+- (BOOL)blocksAllDurable:(NSString *)transferID;
+// The session receiving a download's parts now (any object standing for it): a later session takes it over.
+- (void)claimBlocks:(NSString *)transferID forSession:(id)session;
+// A session ended with these downloads open. Partly received blocks are kept (ADR 0018 § 3): the next session wants
+// only their missing pieces, or the blocks whole from a peer without pieces.
+- (void)blocksSessionEnded:(NSArray<NSString *> *)transferIDs session:(id)session;
+@end
+
+// A download by blocks checked before it is saved, and our offers served by blocks (SZFriendsBlockCheck.m).
+@interface SZFriendsTransfers (BlockCheck)
+// Every block durable: the file read back through the descriptor that wrote it, tree and BLAKE2b digest in one pass,
+// and published only when both match the offer; otherwise deleted and failed (DigestMismatch). The three steps below
+// in one call, on the caller's thread.
+- (BOOL)finishBlockTransfer:(NSString *)transferID fromConversation:(NSString *)conversationID
+                      error:(NSError **)error;
+// The same check in three steps, so the long one runs off the store's queue ("Finishing…", PROTOCOL.md § Fast
+// transfers): begun once every block is durable (nil while the file is incomplete or already being checked), run on
+// any thread, then completed: saved, or deleted and failed. The map stays until then, so a helper that stops during
+// the check runs it again at its next start.
+- (nullable SZFriendsBlockCheck *)beginBlockCheck:(NSString *)transferID
+                                 fromConversation:(NSString *)conversationID
+                                            error:(NSError **)error;
+- (BOOL)completeBlockCheck:(SZFriendsBlockCheck *)check error:(NSError **)error;
+
+// The sender's tree for one of our offers, from outgoing/<id>.tree when it matches the row, else (with `compute`)
+// computed from the snapshot, whose digest must still be the offered one, and kept there. NO when it cannot be had.
+// Staging writes it while it hashes the snapshot anyway, so an OFFER never waits for it.
+- (BOOL)senderTreeForTransfer:(SZFriendsTransferRecord *)record
+                      compute:(BOOL)compute
+                     geometry:(SZFriendsBlockGeometry *)geometry
+                         root:(NSData *_Nullable *_Nonnull)root
+                       leaves:(NSData *_Nullable *_Nonnull)leaves;
+// They took our offer by blocks (OFFER_REPLY with Blocks, or a WANT on a later session): Sending, without hashing
+// the snapshot first, since every block is checked against its leaf as it is read. `first` on the first acceptance.
+- (nullable SZFriendsTransferRecord *)peerTookBlocks:(NSString *)transferID
+                                    fromConversation:(NSString *)conversationID
+                                               first:(BOOL *)first
+                                               error:(NSError **)error;
+- (nullable NSData *)readOutgoingBlock:(uint32_t)index
+                           ofTransfer:(SZFriendsTransferRecord *)record
+                             geometry:(SZFriendsBlockGeometry)geometry;
 @end
 
 @interface SZFriendsTransfers (ReceivedFolder)

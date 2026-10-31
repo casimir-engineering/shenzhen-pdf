@@ -68,7 +68,7 @@ impl IntentState for Context<'_> {
     }
 }
 
-type Answer = Result<Value, IntentError>;
+pub(crate) type Answer = Result<Value, IntentError>;
 
 fn refused(code: &'static str) -> Answer {
     Err(IntentError::new(code))
@@ -165,6 +165,9 @@ impl State {
             Intent::FetchFromFriend { transfer_id } => {
                 self.device_intent(|s| s.fetch_from_friend(&transfer_id)).map_err(|e| worded(e, "again"))
             }
+            // ADR 0019: the answer to the boost's question; a question already gone is stale.
+            Intent::BoostTransfer { transfer_id } => self.answer_boost(&transfer_id, true),
+            Intent::SkipBoost { transfer_id } => self.answer_boost(&transfer_id, false),
             Intent::ResetFriendLink => self.reset_friend_link(),
             // A reset replaces the service, so whoever runs it answers before it gets here (`reset.rs`).
             Intent::ResetFriends => refused("unavailable"),
@@ -289,13 +292,24 @@ impl State {
             }
             Intent::SendFiles { conversation_id, files, client_token, .. } => {
                 self.friend(&conversation_id)?;
-                let mut transfers = Vec::new();
+                // Files sent together are staged together: one store batch, one flush (ADR 0018 § 9.3), committed
+                // before their offers go.
+                let _ = self.store.begin_batch();
+                let mut staged = Ok(Vec::new());
                 for (index, file) in files.iter().enumerate() {
                     // The token on the first offer: a retry of this press finds it (PROTOCOL.md § Intents).
                     let token = (index == 0).then(|| client_token.clone());
                     let path = Path::new(&file.path);
-                    transfers.push(self.offer_file(&conversation_id, path, file.display_name.as_deref(), token)?);
+                    match self.offer_file(&conversation_id, path, file.display_name.as_deref(), token) {
+                        Ok(transfer) => staged.as_mut().map(|t: &mut Vec<_>| t.push(transfer)).unwrap_or(()),
+                        Err(error) => {
+                            staged = Err(error);
+                            break;
+                        }
+                    }
                 }
+                self.end_store_batch();
+                let transfers = staged?;
                 self.after_send(&conversation_id);
                 Ok(json!({"transfer_ids": transfers}))
             }
@@ -338,6 +352,8 @@ impl State {
                 for session in self.sessions.map.values_mut() {
                     session.senders.remove(&transfer_id);
                     session.receivers.remove(&transfer_id);
+                    session.block_senders.remove(&transfer_id);
+                    session.block_receivers.remove(&transfer_id);
                 }
                 self.queue_answer(&record.conversation_id, json!({"frame": "cancel", "transfer_id": transfer_id}));
                 self.changed();

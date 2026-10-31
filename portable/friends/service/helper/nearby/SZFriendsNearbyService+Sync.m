@@ -172,8 +172,30 @@ static NSData *_Nullable SZFriendsKeyFromHex(NSString *hex) {
                       [strongLink.channel sendFrame:[SZFriendsFrame frameWithType:SZFriendsFrameTypeSync
                                                                            fields:@{@(SZFriendsFieldSync) : message}]];
                   }];
+    // Our copies by blocks on a fast session (ADR 0018 § 4), by offset otherwise; their HAVEs go on this session.
+    exchange.fast = link.channel.fastTransfers;
+    exchange.sendFrame = ^(SZFriendsFrame *frame) {
+        SZFriendsPeerLink *strongLink = weakLink;
+        if (strongLink != nil && !strongLink.closed) [strongLink.channel sendFrame:frame];
+    };
+    // A copy by blocks (SYNC 7, ADR 0018 § 4) of a file this device holds.
+    __weak SZFriendsNearbyService *weakSelf = self;
+    __weak SZFriendsSyncExchange *weakExchange = exchange;
+    exchange.wantBlocks = ^(NSString *transferID, NSString *path, uint64_t size, uint8_t shift, NSData *ranges) {
+        SZFriendsPeerLink *strongLink = weakLink;
+        if (strongLink == nil || ![weakSelf serveCopyOnLink:strongLink transfer:transferID path:path size:size
+                                                      shift:shift ranges:ranges sync:YES]) {
+            [weakExchange sendNone:transferID];
+        }
+    };
+    exchange.pulls = [self pullsOnLink:link];
+    exchange.pullAnswer = ^BOOL(NSString *transferID, NSData *root, uint8_t shift, BOOL gone) {
+        SZFriendsPeerLink *strongLink = weakLink;
+        return strongLink != nil && [weakSelf link:strongLink pullAnswer:transferID root:root shift:shift gone:gone];
+    };
     link.syncExchange = exchange;
     [engine captureLocalChanges];
+    [self schedulePullReconsider];
     [exchange start];
     [self changed];
 }

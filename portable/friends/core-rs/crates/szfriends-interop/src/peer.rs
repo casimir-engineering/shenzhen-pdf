@@ -12,8 +12,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use szfriends_core::identity::Identity;
 use szfriends_core::session::{
-    monotonic_now, ChannelConfig, ChannelIdentity, ChunkReceiver, ChunkSender, Event, HandshakeOptions, SecureChannel,
-    SessionError,
+    monotonic_now, transfer_liveness, ChannelConfig, ChannelIdentity, ChunkReceiver, ChunkSender, Event,
+    HandshakeOptions, SecureChannel, SessionError,
 };
 use szfriends_core::store::{Person, Relation, Store, TransferRecord};
 use szfriends_core::wire::{tag, CloseReason, Fields, Frame, Pattern, RouteMethod};
@@ -40,6 +40,8 @@ pub(crate) struct Outgoing {
     pub(crate) sender: ChunkSender,
     pub(crate) record: TransferRecord,
     pub(crate) done_sent: bool,
+    pub(crate) file: Option<szfriends_core::store::disk::OutgoingFile>,
+    pub(crate) buffer: Vec<u8>,
 }
 
 pub(crate) struct Session {
@@ -50,6 +52,8 @@ pub(crate) struct Session {
     pub(crate) receivers: HashMap<String, ChunkReceiver>,
     /// When received bytes not yet reported must be flushed (`flows.rs`).
     pub(crate) flush_due: Option<std::time::Instant>,
+    /// Files going by blocks on this session (`blocks.rs`).
+    pub(crate) blocks: crate::blocks::Blocks,
     finished: bool,
 }
 
@@ -65,6 +69,12 @@ pub(crate) struct State {
     events: Sender<Value>,
     pub(crate) online: Option<crate::online::OnlinePart>,
     pub(crate) devices: crate::devices::Devices,
+    /// Lane groups (ADR 0018 § 6, `lanes.rs`).
+    pub(crate) lanes: crate::lanes::Lanes,
+    /// While a store batch is open nothing is written to a link: what it acknowledges is committed first.
+    holding: bool,
+    /// An input taken while gathering link bytes into a batch, handled next.
+    later: std::collections::VecDeque<Input>,
 }
 
 /// A Rust peer with its own state directory (a temporary home) and identity, listening only on loopback.
@@ -99,6 +109,9 @@ impl RustPeer {
             events: events_tx,
             online: None,
             devices,
+            lanes: Default::default(),
+            holding: false,
+            later: std::collections::VecDeque::new(),
         };
         let thread = std::thread::spawn(move || run(state, inbox));
         Self { input, events, thread: Some(thread) }
@@ -140,21 +153,51 @@ fn run(mut state: State, inbox: Receiver<Input>) {
             .filter_map(|s| s.channel.poll_timeout())
             .min()
             .map_or(Duration::from_millis(50), |at| at.saturating_sub(now).min(Duration::from_millis(50)));
-        match inbox.recv_timeout(wait) {
+        // What arrived is handled in one store batch (ADR 0018 § 9.3), committed before any byte of what it
+        // acknowledges is written, as the Rust helper does. One input per batch: a TCP read carries many frames.
+        let next = match state.later.pop_front() {
+            Some(input) => Ok(input),
+            None => inbox.recv_timeout(wait),
+        };
+        state.holding = state.store.begin_batch().is_ok();
+        match next {
             Ok(Input::Command(command, reply)) => {
                 let quit = command["cmd"] == "quit";
                 let answer = state.command(&command);
                 let _ = reply.send(answer);
                 if quit {
+                    state.end_batch();
                     return;
                 }
             }
             Ok(Input::Accepted(stream)) => state.accept(stream),
-            Ok(Input::Link(event)) => state.link_event(event),
+            Ok(Input::Link(event)) => {
+                state.link_event(event);
+                // Bytes already read from the links join the same batch, so a burst of small files costs one flush.
+                let mut deferred = None;
+                for _ in 0..64 {
+                    match inbox.try_recv() {
+                        Ok(Input::Link(event)) => state.link_event(event),
+                        Ok(other) => {
+                            deferred = Some(other);
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if let Some(input) = deferred {
+                    state.later.push_back(input);
+                }
+            }
             Ok(Input::Online(event)) => crate::online::event(&mut state, event),
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Disconnected) => {
+                state.end_batch();
+                return;
+            }
         }
+        state.service_all();
+        state.end_batch();
         state.service_all();
     }
 }
@@ -179,8 +222,11 @@ impl State {
             "hello" => json!({
                 "identity_key": hex(&self.identity.public_key()),
                 "static_key": hex(&self.identity.static_public_key()),
+                "session_minor": szfriends_core::wire::consts::SESSION_MINOR,
+                // `dial` takes "lane_of" (ADR 0018 § 6), and lanes are admitted.
+                "lanes": true,
             }),
-            "listen" => self.listen(),
+            "listen" => self.listen(command),
             "public_profile" => {
                 let mut fields = Fields::new();
                 fields.insert(tag::NAME, command["name"].as_str().unwrap_or_default().as_bytes().to_vec());
@@ -227,6 +273,7 @@ impl State {
             }
             "request_by_id" => self.request_by_id(session, command),
             "send_file" => self.send_file(session, command),
+            "send_files" => self.send_files(session, command),
             "transfer" => self.transfer(command),
             "online" => crate::online::start(self, command, self.input.clone()),
             "reach" => crate::online::reach(self, command),
@@ -237,14 +284,38 @@ impl State {
                 crate::online::stop(self);
                 json!({})
             }
+            // What each group's scheduler and each file sent by blocks hold now (the bench asks when a transfer
+            // stalls, for its transcripts).
+            "debug" => {
+                let groups: serde_json::Map<String, Value> = self
+                    .lanes
+                    .groups
+                    .iter()
+                    .map(|(head, group)| (head.to_string(), json!(format!("{:?}", group.scheduler))))
+                    .collect();
+                let senders: serde_json::Map<String, Value> = self
+                    .sessions
+                    .iter()
+                    .flat_map(|(id, session)| {
+                        session.blocks.senders.iter().map(move |(transfer, send)| {
+                            let queues: serde_json::Map<String, Value> =
+                                send.lanes.iter().map(|(lane, q)| (lane.to_string(), json!(q.len()))).collect();
+                            (format!("{id}:{transfer}"), json!({ "queued": queues, "state": send.debug_state() }))
+                        })
+                    })
+                    .collect();
+                json!({ "groups": groups, "senders": senders, "head_of": format!("{:?}", self.lanes.head_of) })
+            }
             other => self
                 .device_command(other, command)
                 .unwrap_or_else(|| json!({ "error": format!("{other} failed or is unknown") })),
         }
     }
 
-    fn listen(&mut self) -> Value {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    /// On loopback, or on every interface with `"any": true` (the device runs of `tools/transfer-devices.sh`).
+    fn listen(&mut self, command: &Value) -> Value {
+        let address = if command["any"] == true { "0.0.0.0:0" } else { "127.0.0.1:0" };
+        let listener = TcpListener::bind(address).expect("a port");
         let port = listener.local_addr().expect("bound").port();
         let input = self.input.clone();
         std::thread::spawn(move || {
@@ -277,7 +348,21 @@ impl State {
     }
 
     fn channel_config(&self) -> ChannelConfig {
-        let mut config = ChannelConfig::default();
+        let mut config =
+            ChannelConfig { capabilities: szfriends_core::session::local_capabilities(true), ..Default::default() };
+        // The helper's test switches (ADR 0018 § 9.2, § 9.4), so the bench measures with and without.
+        let off = |name: &str| std::env::var_os(name).is_some_and(|v| v == "0");
+        use szfriends_core::wire::consts;
+        if off("SZFRIENDS_TEST_AES_LANES") {
+            config.capabilities &= !consts::CAPABILITY_AES_LANES;
+        }
+        if off("SZFRIENDS_TEST_COMPRESSED_PARTS") {
+            config.capabilities &= !(consts::CAPABILITY_COMPRESSED_PARTS | consts::CAPABILITY_LZ4_PARTS);
+        }
+        // A phone without zstd: LZ4 only.
+        if off("SZFRIENDS_TEST_ZSTD") {
+            config.capabilities &= !consts::CAPABILITY_COMPRESSED_PARTS;
+        }
         if let Some(bytes) = self.rekey_after {
             config.rekey_after_bytes = bytes;
         }
@@ -325,6 +410,7 @@ impl State {
             senders: HashMap::new(),
             receivers: HashMap::new(),
             flush_due: None,
+            blocks: crate::blocks::Blocks::default(),
             finished: false,
         };
         self.sessions.insert(id, session);
@@ -336,11 +422,40 @@ impl State {
             Some("IK") => Pattern::IK,
             _ => Pattern::NN,
         };
-        let mut options = HandshakeOptions::new(pattern, RouteMethod::Lan);
+        // The route class this side declares as the initiator (it sets chunk size and window); LAN by default.
+        let route = match command["route"].as_str() {
+            Some("p2p_wifi") => RouteMethod::PeerToPeerWifi,
+            Some("bluetooth") => RouteMethod::Bluetooth,
+            Some("internet") => RouteMethod::Internet,
+            Some("relay") => RouteMethod::Relay,
+            _ => RouteMethod::Lan,
+        };
+        let mut options = HandshakeOptions::new(pattern, route);
         options.remote_static = key(&command["remote_static"]);
         options.expected_identity = key(&command["expected_identity"]);
         options.request_token = command["token"].as_str().and_then(hex_bytes);
-        let Ok(stream) = TcpStream::connect(("127.0.0.1", command["port"].as_u64().unwrap_or(0) as u16)) else {
+        // A lane of a live fast session (ADR 0018 § 6): its token, reserved under a provisional id until the session
+        // exists.
+        let lane = command["lane_of"].as_u64().map(|head| (head, u64::MAX - self.next_session));
+        if let Some((head, provisional)) = lane {
+            match self.reserve_lane(head, provisional, route) {
+                Some(token) => {
+                    options.lane = Some(token);
+                    // ADR 0018 § 9.2: AES-256-GCM when both first handshakes said hardware AES.
+                    if self.sessions.get(&head).is_some_and(|s| s.channel.aes_lanes()) {
+                        options.cipher = szfriends_core::wire::NoiseCipher::AesGcm;
+                    }
+                }
+                None => return json!({ "error": "no lane: no fast group, or its limits" }),
+            }
+        }
+        let Ok(stream) = TcpStream::connect((
+            command["host"].as_str().unwrap_or("127.0.0.1"),
+            command["port"].as_u64().unwrap_or(0) as u16,
+        )) else {
+            if let Some((head, provisional)) = lane {
+                self.lane_dial_failed(head, provisional);
+            }
             return json!({ "error": "connect failed" });
         };
         let mut channel = SecureChannel::initiator(ChannelIdentity::new(&self.identity), options);
@@ -350,135 +465,12 @@ impl State {
             channel.set_profile_decision(Box::new(|_| true));
         }
         let id = self.new_session(channel, stream);
+        if let Some((head, provisional)) = lane {
+            self.lane_dialed(head, provisional, id);
+        }
         let now = monotonic_now();
         self.sessions.get_mut(&id).expect("just made").channel.start(now);
         json!({ "session": id })
-    }
-
-    fn accept(&mut self, stream: TcpStream) {
-        let mut channel = self.responder_channel();
-        channel.set_config(self.channel_config());
-        let id = self.new_session(channel, stream);
-        let session = self.sessions.get_mut(&id).expect("just made");
-        session.channel.start(monotonic_now());
-        self.emit(json!({ "event": "accepted", "session": id }));
-    }
-
-    /// A responder admitting IK from friends and token holders, as the helper's listeners do.
-    pub(crate) fn responder_channel(&self) -> SecureChannel {
-        let policy = self.policy.clone();
-        let decide = Box::new(move |key: Option<&[u8; 32]>, pattern: Pattern, token: Option<&[u8]>| {
-            let policy = policy.lock().unwrap();
-            match pattern {
-                Pattern::IK => {
-                    key.is_some_and(|k| policy.friends.contains(k) || policy.own_devices.contains(k))
-                        || token.is_some_and(|t| policy.tokens.contains(t))
-                }
-                Pattern::XX | Pattern::NN => true,
-            }
-        });
-        let identity = ChannelIdentity::new(&self.identity);
-        SecureChannel::responder(identity, self.public_profile.clone(), decide)
-    }
-
-    fn link_event(&mut self, event: LinkEvent) {
-        let now = monotonic_now();
-        match event {
-            LinkEvent::Bytes(id, bytes) => {
-                if let Some(s) = self.sessions.get_mut(&id) {
-                    s.channel.receive(&bytes, now);
-                }
-            }
-            LinkEvent::Eof(id) => {
-                if let Some(s) = self.sessions.get_mut(&id) {
-                    s.channel.link_closed_by_peer();
-                }
-            }
-            LinkEvent::Written(id) => {
-                if let Some(s) = self.sessions.get_mut(&id) {
-                    s.channel.write_completed(now);
-                }
-            }
-        }
-    }
-
-    fn service_all(&mut self) {
-        let ids: Vec<u64> = self.sessions.keys().copied().collect();
-        for id in ids {
-            self.service(id);
-        }
-        self.sessions.retain(|_, s| !s.finished);
-    }
-
-    /// Timers, then writes and events until the session has nothing more to say, then the transfers' next chunks.
-    fn service(&mut self, id: u64) {
-        let now = monotonic_now();
-        if let Some(s) = self.sessions.get_mut(&id) {
-            s.channel.handle_timeout(now);
-        }
-        loop {
-            let Some(s) = self.sessions.get_mut(&id) else { return };
-            while let Some(write) = s.channel.poll_transmit() {
-                s.link.write(write.bytes);
-            }
-            let Some(event) = s.channel.poll_event() else { break };
-            self.handle_event(id, event);
-        }
-        self.flush_if_due(id);
-        self.pump(id);
-        let Some(s) = self.sessions.get_mut(&id) else { return };
-        while let Some(write) = s.channel.poll_transmit() {
-            s.link.write(write.bytes);
-        }
-        if s.channel.is_closed() && !s.finished {
-            s.finished = true;
-            s.link.finish();
-        }
-    }
-
-    fn handle_event(&mut self, id: u64, event: Event) {
-        match event {
-            Event::Established => {
-                self.established(id);
-                self.devices_established(id);
-            }
-            Event::Frame(frame) => self.frame(id, frame),
-            Event::Code(result) => match result {
-                Ok(code) => self.emit(json!({ "event": "code", "session": id, "code": code })),
-                Err(error) => self.emit(json!({ "event": "code", "session": id, "error": error.code() })),
-            },
-            Event::Closed(error) => {
-                self.devices_closed(id);
-                let _ = self.store.flush_progress();
-                let reason = match error {
-                    Some(SessionError::PeerClosed(reason)) => json!(reason),
-                    _ => Value::Null,
-                };
-                let code = error.map_or(0, SessionError::code);
-                let rekeys = self.sessions.get(&id).map(|s| s.channel.rekeys()).unwrap_or_default();
-                let rekeys = [rekeys.0, rekeys.1];
-                self.emit(
-                    json!({ "event": "closed", "session": id, "error": code, "reason": reason, "rekeys": rekeys }),
-                );
-            }
-        }
-    }
-
-    pub(crate) fn close_for_protocol(&mut self, id: u64) {
-        if let Some(s) = self.sessions.get_mut(&id) {
-            s.channel.close_with_reason(CloseReason::ProtocolError, monotonic_now());
-        }
-    }
-
-    fn transfer(&mut self, command: &Value) -> Value {
-        match self.store.transfer(command["id"].as_str().unwrap_or_default()) {
-            Ok(Some(record)) => json!({
-                "state": record.state as i64,
-                "verified": record.verified_bytes,
-                "received_path": record.received_path.map(|p| p.to_string_lossy().into_owned()),
-            }),
-            _ => json!({ "error": "no such transfer" }),
-        }
     }
 
     pub(crate) fn set_own_devices(&mut self, keys: Vec<[u8; 32]>) {
@@ -489,3 +481,6 @@ impl State {
         &self.identity
     }
 }
+
+#[path = "peer_sessions.rs"]
+mod sessions;

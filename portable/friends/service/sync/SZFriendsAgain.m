@@ -7,6 +7,7 @@
 #import <sodium.h>
 
 #import "service/sync/SZFriendsSync.h"
+#import "service/transfer/SZFriendsBlockCopy.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -14,6 +15,8 @@ typedef NS_ENUM(uint8_t, SZFriendsAgainMessage) {
     SZFriendsAgainMessageWant = 1,
     SZFriendsAgainMessagePart = 2,
     SZFriendsAgainMessageNone = 3,
+    SZFriendsAgainMessageWantBlocks = 4,
+    SZFriendsAgainMessageBlocksFollow = 5,
 };
 
 static const uint16_t SZFriendsAgainParts = 8;           // parts per WANT
@@ -41,6 +44,11 @@ BOOL SZFriendsFileHasDigest(NSString *path, uint64_t size, NSData *digest) {
     uint8_t computed[32];
     crypto_generichash_final(&state, computed, sizeof computed);
     return total == size && sodium_memcmp(computed, digest.bytes, 32) == 0;
+}
+
+void SZFriendsRemoveCopy(NSString *path) {
+    [NSFileManager.defaultManager removeItemAtPath:path error:NULL];
+    [NSFileManager.defaultManager removeItemAtPath:[path stringByAppendingString:@".map"] error:NULL];
 }
 
 static NSData *_Nullable SZFriendsAgainID(NSString *transferID) {
@@ -88,6 +96,7 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
 @property(nonatomic, strong) NSFileHandle *handle;
 @property(nonatomic) uint64_t received;
 @property(nonatomic) uint64_t requested;
+@property(nonatomic, strong, nullable) SZFriendsBlockCopy *blocks; // by blocks: `handle` is then unused
 @end
 
 @implementation SZFriendsAgainCopy
@@ -118,19 +127,30 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
 }
 
 - (double)copyingFraction {
-    return _copy.file.size > 0 ? (double)_copy.received / (double)_copy.file.size : 0;
+    uint64_t received = _copy.blocks ? _copy.blocks.receivedBytes : _copy.received;
+    return _copy.file.size > 0 ? (double)received / (double)_copy.file.size : 0;
+}
+
+- (nullable NSString *)copyingByBlocks {
+    return _copy.blocks ? _copy.file.transferID : nil;
+}
+
+// Ends the current copy, keeping what arrived for a later one.
+- (void)endCopy {
+    [_copy.handle closeFile];
+    [_copy.blocks pause];
+    _copy = nil;
 }
 
 - (void)stop {
     _stopped = YES;
-    [_copy.handle closeFile];
-    _copy = nil;
+    [self endCopy];
 }
 
 #pragma mark - Requester
 
 - (void)pump {
-    if (_copy != nil || _stopped || self.wanted == nil) return;
+    if (_copy != nil || _stopped || self.wanted == nil || self.pulls) return;
     NSFileManager *files = NSFileManager.defaultManager;
     for (SZFriendsAgainFile *file in self.wanted()) {
         NSData *identifier = SZFriendsAgainID(file.transferID);
@@ -138,6 +158,20 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
         [files createDirectoryAtPath:_directory withIntermediateDirectories:YES
                           attributes:@{NSFilePosixPermissions : @0700} error:NULL];
         NSString *path = [_directory stringByAppendingPathComponent:[@"again-" stringByAppendingString:file.transferID]];
+        if (self.fast) {
+            // By blocks, from what the map beside the copy says is here (ADR 0018 § 4).
+            SZFriendsBlockCopy *blocks = [SZFriendsBlockCopy openWithSize:file.size digest:file.digest partial:path];
+            NSData *want = blocks ? SZFriendsAgainWantBlocks(file.transferID, blocks.shift, blocks.missing) : nil;
+            if (want == nil) continue;
+            SZFriendsAgainCopy *copy = [[SZFriendsAgainCopy alloc] init];
+            copy.file = file;
+            copy.identifier = identifier;
+            copy.path = path;
+            copy.blocks = blocks;
+            _copy = copy;
+            _send(want);
+            return;
+        }
         if (![files fileExistsAtPath:path]) {
             [files createFileAtPath:path contents:nil attributes:@{NSFilePosixPermissions : @0600}];
         }
@@ -180,9 +214,73 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
 
 - (void)abandon:(NSString *)transferID {
     if (![_copy.file.transferID isEqualToString:transferID]) return;
-    [_copy.handle closeFile];
-    _copy = nil;
+    [self endCopy];
     [self pump];
+}
+
+#pragma mark - Requester by blocks
+
+- (void)sendHave {
+    NSData *have = [_copy.blocks takeHave];
+    NSData *wire = SZFriendsAgainID(_copy.file.transferID);
+    if (have.length == 0 || wire == nil || self.sendFrame == nil) return;
+    for (SZFriendsFrame *frame in SZFriendsHaveFrames(wire, have, [NSData data])) self.sendFrame(frame);
+}
+
+// A copy by blocks that cannot go on now (a tree or leaves that cannot be this file's, a PART out of place): kept for
+// the next session, and the next wanted file starts.
+- (void)stopBlocksCopy {
+    NSString *transferID = _copy.file.transferID;
+    [self endCopy];
+    if (transferID) [_unavailable addObject:transferID];
+    [self pump];
+}
+
+- (void)finishBlocksCopy {
+    SZFriendsAgainCopy *copy = _copy;
+    _copy = nil;
+    NSString *path = [copy.blocks finish];
+    if (path != nil) {
+        if (self.arrived) self.arrived(copy.file, path);
+    } else if (self.notThere) {
+        self.notThere(copy.file.transferID); // not the file it was offered as: gone, as a copy by offset
+    }
+    [self pump];
+}
+
+- (BOOL)receiveHashes:(NSData *)hashes index:(uint32_t)index forTransfer:(NSString *)transferID {
+    if (_copy.blocks == nil || ![_copy.file.transferID isEqualToString:transferID]) return NO;
+    BOOL done = NO;
+    if (![_copy.blocks acceptHashes:hashes index:index done:&done]) {
+        [self stopBlocksCopy];
+        return YES;
+    }
+    [self sendHave];
+    if (done && _copy.blocks.complete) [self finishBlocksCopy]; // every block was here already
+    return YES;
+}
+
+- (BOOL)receivePart:(NSData *)data offset:(uint64_t)offset forTransfer:(NSString *)transferID {
+    if (_copy.blocks == nil || ![_copy.file.transferID isEqualToString:transferID]) return NO;
+    uint32_t block = 0;
+    switch ([_copy.blocks acceptPart:data offset:offset block:&block]) {
+    case SZFriendsCopyPartPending:
+    case SZFriendsCopyPartLate: break;
+    case SZFriendsCopyPartWritten: [self sendHave]; break;
+    case SZFriendsCopyPartCorrupt: {
+        uint32_t pair[2] = {block, 1};
+        NSData *want = SZFriendsAgainWantBlocks(transferID, _copy.blocks.shift,
+                                                [NSData dataWithBytes:pair length:sizeof pair]);
+        if (want) _send(want);
+        break;
+    }
+    case SZFriendsCopyPartRefused: [self stopBlocksCopy]; break;
+    case SZFriendsCopyPartComplete:
+        [self sendHave];
+        [self finishBlocksCopy];
+        break;
+    }
+    return YES;
 }
 
 - (void)finishCopy {
@@ -194,7 +292,7 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
         if (self.arrived) self.arrived(copy.file, copy.path);
     } else {
         // Not the bytes it was sent as: the friend's file changed while it was read.
-        [NSFileManager.defaultManager removeItemAtPath:copy.path error:NULL];
+        SZFriendsRemoveCopy(copy.path);
         if (self.notThere) self.notThere(copy.file.transferID);
     }
 }
@@ -202,18 +300,21 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
 - (void)receivePart:(NSString *)transferID offset:(uint64_t)at last:(BOOL)last bytes:(NSData *)bytes {
     SZFriendsAgainCopy *copy = _copy;
     // A part of a copy this side gave up, or one already written: nothing to do.
-    if (copy == nil || ![copy.file.transferID isEqualToString:transferID] || at != copy.received) return;
+    if (copy == nil || copy.blocks != nil || ![copy.file.transferID isEqualToString:transferID] ||
+        at != copy.received) {
+        return;
+    }
     if (copy.received + bytes.length > copy.file.size || (last && copy.received + bytes.length != copy.file.size)) {
         _copy = nil;
         [copy.handle closeFile];
-        [NSFileManager.defaultManager removeItemAtPath:copy.path error:NULL];
+        SZFriendsRemoveCopy(copy.path);
         [_unavailable addObject:transferID];
         return;
     }
     if (![copy.handle writeData:bytes error:NULL]) {
         _copy = nil;
         [copy.handle closeFile];
-        [NSFileManager.defaultManager removeItemAtPath:copy.path error:NULL];
+        SZFriendsRemoveCopy(copy.path);
         if (self.noRoom) self.noRoom(transferID);
         [self pump];
         return;
@@ -230,9 +331,9 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
 - (void)receiveNone:(NSString *)transferID reason:(SZFriendsAgainAnswer)reason {
     BOOL copying = [_copy.file.transferID isEqualToString:transferID];
     if (copying) {
-        [_copy.handle closeFile];
-        if (reason == SZFriendsAgainAnswerNotHere) [NSFileManager.defaultManager removeItemAtPath:_copy.path error:NULL];
-        _copy = nil;
+        NSString *path = _copy.path;
+        [self endCopy];
+        if (reason == SZFriendsAgainAnswerNotHere) SZFriendsRemoveCopy(path);
     }
     [_unavailable addObject:transferID];
     if (reason == SZFriendsAgainAnswerNotHere && self.notThere) self.notThere(transferID);
@@ -285,6 +386,38 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
     _servingDone = at >= size;
 }
 
+- (nullable NSString *)beginServingBlocks:(NSString *)transferID size:(uint64_t *)size {
+    BOOL busy = _servingID != nil && ![_servingID isEqualToString:transferID] && !_servingDone &&
+                [[NSDate date] timeIntervalSinceDate:_servingAt] < SZFriendsAgainOneAtATime;
+    if (busy) {
+        [self sendNone:transferID reason:SZFriendsAgainAnswerNotNow];
+        return nil;
+    }
+    SZFriendsAgainAnswer answer = SZFriendsAgainAnswerNotHere;
+    NSString *path = self.servePath ? self.servePath(transferID, size, &answer) : nil;
+    if (path == nil) {
+        [self sendNone:transferID reason:answer];
+        return nil;
+    }
+    _servingID = transferID;
+    _servingAt = [NSDate date];
+    _servingDone = NO;
+    return path;
+}
+
+- (void)finishedServing:(NSString *)transferID {
+    if ([_servingID isEqualToString:transferID]) _servingDone = YES;
+}
+
+- (void)sendNone:(NSString *)transferID reason:(SZFriendsAgainAnswer)reason {
+    NSData *identifier = SZFriendsAgainID(transferID);
+    if (identifier == nil) return;
+    NSMutableData *message = SZFriendsAgainHead(SZFriendsAgainMessageNone, identifier);
+    uint8_t byte = reason;
+    [message appendBytes:&byte length:1];
+    _send(message);
+}
+
 #pragma mark - Messages
 
 - (BOOL)receiveMessage:(NSData *)message {
@@ -305,10 +438,29 @@ static NSMutableData *SZFriendsAgainHead(SZFriendsAgainMessage type, NSData *ide
         return YES;
     case SZFriendsAgainMessageNone:
         if (message.length != 18) return NO;
+        if (self.pullAnswer && self.pullAnswer(transferID, nil, 0, p[17] == SZFriendsAgainAnswerNotHere)) return YES;
         // A reason this side does not know yet reads as "not now": nothing is concluded from it.
         [self receiveNone:transferID reason:p[17] == SZFriendsAgainAnswerNotHere ? SZFriendsAgainAnswerNotHere
                                                                                  : SZFriendsAgainAnswerNotNow];
         return YES;
+    case SZFriendsAgainMessageWantBlocks: {
+        NSData *ranges = message.length > 18 ? SZFriendsCopyRangesDecode(p + 18, message.length - 18) : nil;
+        if (ranges == nil) return NO;
+        if (self.wantBlocks) self.wantBlocks(transferID, p[17], ranges);
+        else [self sendNone:transferID reason:SZFriendsAgainAnswerNotNow];
+        return YES;
+    }
+    case SZFriendsAgainMessageBlocksFollow: {
+        if (message.length != 17 + 33) return NO;
+        if (self.pullAnswer && self.pullAnswer(transferID, [message subdataWithRange:NSMakeRange(17, 32)], p[49], NO)) {
+            return YES;
+        }
+        if (_copy.blocks == nil || ![_copy.file.transferID isEqualToString:transferID]) return YES; // late
+        if (![_copy.blocks followRoot:[message subdataWithRange:NSMakeRange(17, 32)] shift:p[49]]) {
+            [self stopBlocksCopy]; // a tree that cannot be this file's: tried again on the next session
+        }
+        return YES;
+    }
     default:
         return YES; // a later kind of message this side does not know: nothing to do
     }

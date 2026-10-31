@@ -163,7 +163,12 @@ pub(super) fn set_column(
 }
 
 /// The transfer only when `conversation_id` owns it: the lookup for an id a peer named.
-fn owned(conn: &Connection, transfer_id: &str, conversation_id: &str, outgoing: bool) -> Result<TransferRecord> {
+pub(super) fn owned(
+    conn: &Connection,
+    transfer_id: &str,
+    conversation_id: &str,
+    outgoing: bool,
+) -> Result<TransferRecord> {
     match load(conn, transfer_id)? {
         Some(record)
             if !conversation_id.is_empty()
@@ -203,7 +208,7 @@ impl Store {
         let staged = directory.join(&transfer_id);
         // Before the copy, so a change during it shows later.
         let source_mtime_ns = super::transfer_files::modified_ns(source);
-        let (size, digest) = snapshot(source, &staged).map_err(|e| match e.kind() {
+        let (size, digest, tree) = snapshot(source, &staged).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => StoreError::FileMissing,
             _ => StoreError::from(e),
         })?;
@@ -241,6 +246,12 @@ impl Store {
             };
             insert_item(conn, &item).map(|_| ())
         });
+        if let (Ok(()), Some(hashed)) = (&result, tree) {
+            let geometry = crate::transfer::Geometry::for_size(size).expect("hashed by blocks");
+            let header = crate::transfer::sidecar::Header { geometry, root: hashed.root, digest };
+            let tree = crate::transfer::sidecar::SenderTree { header, leaves: hashed.leaves };
+            super::blocks::write_tree_cache(&self.sender_tree_path(&record.transfer_id), &tree);
+        }
         if result.is_err() {
             let _ = std::fs::remove_file(&staged);
         }
@@ -331,7 +342,11 @@ impl Store {
             let staging = create_staging_file(&partial_directory)?;
             set_column(conn, transfer_id, "partial_path", &staging.to_string_lossy().into_owned())?;
             apply_event(conn, transfer_id, TransferEvent::Accepted, None).map(|_| ())
-        })
+        })?;
+        // The same file from the same friend, still here: filled locally (ADR 0018 § 9.5); the sender is answered
+        // with the whole file durable and sends only DONE.
+        let _ = self.fill_from_held_copy(transfer_id);
+        Ok(())
     }
 
     /// Their device acknowledged our OFFER.
@@ -401,6 +416,12 @@ impl Store {
         })?;
         self.receiving.forget(transfer_id);
         Ok(())
+    }
+
+    /// An outgoing transfer's snapshot, opened once for all its chunks.
+    pub fn open_outgoing(&self, record: &TransferRecord) -> Result<super::disk::OutgoingFile> {
+        let path = record.staged_path.as_ref().ok_or(StoreError::FileMissing)?;
+        super::disk::OutgoingFile::open(path, record.size).map_err(|_| StoreError::FileMissing)
     }
 
     /// Reads `length` bytes at `offset` from an outgoing transfer's snapshot, for its next CHUNK.

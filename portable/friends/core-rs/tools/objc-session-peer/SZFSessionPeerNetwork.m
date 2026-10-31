@@ -6,11 +6,15 @@
 #import "service/discovery/SZFriendsNetworkStream.h"
 #import "service/session/SZFriendsSecureChannelInternal.h"
 
+/// TCP without Nagle; on any interface for the device runs of tools/transfer-devices.sh.
+static nw_parameters_t SZFTCPParameters(void) {
+    return nw_parameters_create_secure_tcp(NW_PARAMETERS_DISABLE_PROTOCOL, ^(nw_protocol_options_t tcp) {
+        nw_tcp_options_set_no_delay(tcp, true);
+    });
+}
+
 static nw_parameters_t SZFLoopbackParameters(void) {
-    nw_parameters_t parameters =
-        nw_parameters_create_secure_tcp(NW_PARAMETERS_DISABLE_PROTOCOL, ^(nw_protocol_options_t tcp) {
-            nw_tcp_options_set_no_delay(tcp, true);
-        });
+    nw_parameters_t parameters = SZFTCPParameters();
     nw_parameters_set_required_interface_type(parameters, nw_interface_type_loopback);
     nw_parameters_prohibit_interface_type(parameters, nw_interface_type_wifi);
     nw_parameters_prohibit_interface_type(parameters, nw_interface_type_wired);
@@ -61,8 +65,8 @@ static nw_parameters_t SZFLoopbackParameters(void) {
                          }];
 }
 
-- (NSDictionary *)listen {
-    nw_listener_t listener = nw_listener_create(SZFLoopbackParameters());
+- (NSDictionary *)listenOnAnyInterface:(BOOL)any {
+    nw_listener_t listener = nw_listener_create(any ? SZFTCPParameters() : SZFLoopbackParameters());
     dispatch_semaphore_t ready = dispatch_semaphore_create(0);
     __block BOOL started = NO;
     nw_listener_set_queue(listener, self.networkQueue);
@@ -93,16 +97,34 @@ static nw_parameters_t SZFLoopbackParameters(void) {
     options.pattern = [pattern isEqualToString:@"XX"]   ? SZFriendsHandshakeXX
                       : [pattern isEqualToString:@"IK"] ? SZFriendsHandshakeIK
                                                         : SZFriendsHandshakeNN;
-    options.route = SZFriendsRouteMethodLAN;
+    // The route class this side declares as the initiator (it sets chunk size and window); LAN by default.
+    NSDictionary *routes = @{
+        @"p2p_wifi" : @(SZFriendsRouteMethodPeerToPeerWiFi), @"bluetooth" : @(SZFriendsRouteMethodBluetooth),
+        @"internet" : @(SZFriendsRouteMethodInternet), @"relay" : @(SZFriendsRouteMethodRelay)
+    };
+    NSNumber *route = [command[@"route"] isKindOfClass:[NSString class]] ? routes[command[@"route"]] : nil;
+    options.route = route ? (SZFriendsRouteMethod)route.integerValue : SZFriendsRouteMethodLAN;
     options.remoteStaticKey = SZFBytes(command[@"remote_static"]);
     options.expectedIdentityKey = SZFBytes(command[@"expected_identity"]);
     options.requestToken = SZFBytes(command[@"token"]);
     NSData *attestation = SZFBytes(command[@"attestation"]);
     SZFPeerSession *session = [[SZFPeerSession alloc] init];
     session.sessionID = [self nextSessionID];
+    if (command[@"lane_of"] != nil) {
+        // A lane of a fast session (ADR 0018 § 6): its token from that session's handshake hash, in IK message 1.
+        SZFPeerSession *head = self.sessions[@([command[@"lane_of"] unsignedLongLongValue])];
+        NSData *token = nil;
+        if (head.blocks == nil ||
+            [head.blocks reserveLane:session.sessionID route:options.route token:&token] == 0) {
+            return @{@"error" : @"no fast session to add a lane to, or past the lanes' limits"};
+        }
+        options.lane = token;
+        session.laneHead = head;
+    }
     NSString *port = [command[@"port"] stringValue];
-    nw_endpoint_t endpoint = nw_endpoint_create_host("127.0.0.1", port.UTF8String);
-    nw_connection_t connection = nw_connection_create(endpoint, SZFLoopbackParameters());
+    NSString *host = [command[@"host"] isKindOfClass:[NSString class]] ? command[@"host"] : nil;
+    nw_endpoint_t endpoint = nw_endpoint_create_host(host ? host.UTF8String : "127.0.0.1", port.UTF8String);
+    nw_connection_t connection = nw_connection_create(endpoint, host ? SZFTCPParameters() : SZFLoopbackParameters());
     SZFriendsNetworkStream *stream = [[SZFriendsNetworkStream alloc] initWithConnection:connection
                                                                         connectionQueue:self.networkQueue];
     session.stream = stream;

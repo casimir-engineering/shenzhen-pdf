@@ -9,6 +9,7 @@
 
 #import "service/discovery/SZFriendsDiscoveryCoordinator.h"
 #import "service/helper/nearby/SZFriendsNearbyLimits.h"
+#import "service/helper/nearby/SZFriendsNearbyCopies.h" // +Pulls and +Copies
 #import "service/helper/SZFriendsHelperInternal.h"
 #import "service/helper/SZFriendsHelperTesting.h"
 #import "service/helper/nearby/SZFriendsPeerLink.h"
@@ -17,6 +18,8 @@
 #import "service/online/driver/SZFriendsOnlineDriver.h"
 #import "service/session/SZFriendsSession.h"
 #import "service/thumbnails/SZFriendsThumbnails.h"
+#import "service/transfer/SZFriendsBlockExchange.h"
+#import "service/transfer/SZFriendsDirectWiFiBoost.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -88,17 +91,20 @@ extern const NSTimeInterval SZFriendsNearbyConnectingTimeout;
 // ("path|size|mtime" as checked), and when each person's checks ran in the last hour, by conversation.
 @property(nonatomic, strong, nullable) NSMutableDictionary<NSString *, NSString *> *againVerified;
 @property(nonatomic, strong, nullable) NSMutableDictionary<NSString *, NSMutableArray<NSDate *> *> *againChecks;
+// One file pulled from every holder at once (+Pulls, ADR 0018 § 9.6): the pull running now, files no holder could
+// give and when they may be tried again, its timer, and when a copy running by itself last looked for a Get again.
+@property(nonatomic, strong, nullable) id pullCurrent;
+@property(nonatomic, strong, nullable) NSMutableDictionary<NSString *, NSDate *> *pullNotBefore;
+@property(nonatomic) BOOL pullTickScheduled;
+@property(nonatomic) BOOL pullReconsiderScheduled;
+@property(nonatomic, copy, nullable) NSDate *pullCheckedAt;
 
 // Core.
 - (void)changed;
 // Progress-only changes, at most 4 per second (PROTOCOL.md § Snapshots).
 - (void)progressChanged;
-- (void)refreshAdvertisement;
-- (void)rebuildTagMatcher;
-- (NSData *)localIdentityKey;
-// The name, Friends ID and picture friends see, as PROFILE fields (also the public entry's profile).
-- (NSDictionary<NSNumber *, NSData *> *)profileFields;
-- (int64_t)currentWindow;
+// Has a store and an identity, and is neither stopping, resetting nor removed from its profile: may send.
+- (BOOL)ready;
 @end
 
 // One connection attempt: which sighting, why, for whom, with what handshake, after what stagger.
@@ -115,6 +121,9 @@ extern const NSTimeInterval SZFriendsNearbyConnectingTimeout;
 @property(nonatomic, copy, nullable) NSData *requestToken;  // NN: the Add by ID request to carry
 @property(nonatomic, copy, nullable) NSString *attemptKey;  // NN: its one-shot entry in `attempts`
 @property(nonatomic, copy, nullable) NSString *ownDeviceHex; // IK to one of our devices: which (+Sync)
+// A lane of `laneHead`'s group (ADR 0018 § 6), reserved in its exchange as `laneSerial` (+Blocks).
+@property(nonatomic, weak, nullable) SZFriendsPeerLink *laneHead;
+@property(nonatomic) uint64_t laneSerial;
 @end
 
 // Explicit rank (ADR 0011 § Route rank): dialing a friend at `sighting` is pointless while a live session runs on
@@ -336,18 +345,6 @@ void SZFriendsNearbyRecordEvent(SZFriendsStore *store, NSString *eventKind, NSSt
 - (void)onlineOutboxChangedForConversation:(NSString *)conversationID;
 @end
 
-@interface SZFriendsNearbyService (Inbound)
-- (void)link:(SZFriendsPeerLink *)link receivedFrame:(SZFriendsFrame *)frame;
-// Our request to this conversation arrived (an answer, or a callback presenting its token): Delivered.
-- (void)acknowledgeRequestEntriesOfConversation:(NSString *)conversationID;
-- (void)applyProfile:(NSDictionary<NSNumber *, NSData *> *)fields toPerson:(SZFriendsPersonRecord *)person;
-// Name, Friends ID and picture from PROFILE fields (or a public profile), cleaned and validated; not saved.
-- (void)updatePerson:(SZFriendsPersonRecord *)person withProfile:(NSDictionary<NSNumber *, NSData *> *)fields;
-// An outbox entry with no history item (answers, presence secrets), as the router queues them.
-- (void)enqueueKind:(SZFriendsOutboxKind)kind
-     conversationID:(NSString *)conversationID
-            payload:(nullable NSDictionary *)payload;
-@end
 
 @interface SZFriendsNearbyService (Transfers)
 // A link was adopted: one receiver per unfinished inbound transfer, each announcing its durable offset.
@@ -361,7 +358,43 @@ void SZFriendsNearbyRecordEvent(SZFriendsStore *store, NSString *eventKind, NSSt
 // Moves every receiver's bytes to disk and reports what became durable.
 - (void)flushProgressOnLink:(SZFriendsPeerLink *)link;
 - (BOOL)transfersInFlight;
+// YES when `bytes` more would go faster than the tests' cap: the pump runs again once they may.
+- (BOOL)paceLink:(SZFriendsPeerLink *)link bytes:(NSUInteger)bytes rate:(double)rate;
+// PING and silence for whatever the link carries now (ADR 0018 § 7).
+- (void)updateLivenessOnLink:(SZFriendsPeerLink *)link;
 @end
+
+// Files by blocks on fast sessions (ADR 0018; SZFriendsNearbyService+Blocks.m).
+@interface SZFriendsNearbyService (Blocks)
+// The link's exchange, made on first use; nil unless the link is a live friend's session that negotiated them.
+- (nullable SZFriendsBlockExchange *)blocksOnLink:(SZFriendsPeerLink *)link;
+- (void)link:(SZFriendsPeerLink *)link receivedBlockFrame:(SZFriendsFrame *)frame;
+// A responder's session whose IK message 1 carried a Lane token: admitted into the group of the live session with the
+// same device whose handshake hash and a free index make that token, or closed with CLOSE LaneRefused.
+- (void)admitLane:(SZFriendsPeerLink *)link;
+// One of our lanes went live: it joins its head's group.
+- (void)joinLane:(SZFriendsPeerLink *)link toHead:(SZFriendsPeerLink *)head;
+// The head is closing while lanes live (ADR 0018 § 6: the group goes on): its lowest live lane takes the group, as the
+// link to adopt in its place; nil when none can (the caller ends the group as before).
+- (nullable SZFriendsPeerLink *)handOverGroupOfLink:(SZFriendsPeerLink *)head;
+// The scheduler's timers while the group sends (and the boost's, while one runs).
+- (void)scheduleBlockTickOnLink:(SZFriendsPeerLink *)link;
+@end
+
+// The Wi-Fi Direct boost (ADR 0019; SZFriendsNearbyService+Boost.m): a Mac joins a friend's phone's link.
+@interface SZFriendsNearbyService (Boost)
+@property(nonatomic, readonly, nullable) SZFriendsDirectWiFiCoordinator *directWiFi;
+// At launch, for a person's own home only: CoreWLAN, and the way back from a link a crashed run left the Mac on.
+- (void)startDirectWiFiForOwnHome;
+// Tests: a mocked Wi-Fi instead (never CoreWLAN).
+- (void)useDirectWiFi:(id<SZFriendsWiFiJoining>)wifi;
+- (void)stopDirectWiFi;
+- (void)boostTickOnLink:(SZFriendsPeerLink *)head;
+- (void)link:(SZFriendsPeerLink *)link receivedBoostFrame:(SZFriendsFrame *)frame;
+- (void)boostLinkClosed:(SZFriendsPeerLink *)link;
+- (void)boostLaneDialFailedOnLink:(nullable SZFriendsPeerLink *)head route:(SZFriendsRouteMethod)route;
+@end
+
 
 // File previews (brief § Transfers, Thumbnails before acceptance; SZFriendsNearbyService+Thumbnails.m).
 @interface SZFriendsNearbyService (ThumbnailFrames)
@@ -440,3 +473,6 @@ SZFriendsAnswerAttestation SZFriendsJudgeAnswerAttestation(NSData *_Nullable pre
 @end
 
 NS_ASSUME_NONNULL_END
+
+// The Advertising, Inbound and InboundContent categories.
+#import "service/helper/nearby/SZFriendsNearbyParts.h"

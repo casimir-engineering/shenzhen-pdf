@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use szfriends_core::session::{monotonic_now, ChunkReceiver, ChunkSender};
+use szfriends_core::store::disk::OutgoingFile;
 use szfriends_core::store::{new_identifier, unix_now, OutboxEntry, OutboxKind, OutboxState, TransferRecord};
 use szfriends_core::wire::{tag, CloseReason, Frame, FrameType};
 
@@ -22,6 +23,9 @@ pub struct Outgoing {
     pub sender: ChunkSender,
     pub record: TransferRecord,
     pub done_sent: bool,
+    /// The snapshot, opened at the first chunk and read at offsets into one buffer.
+    file: Option<OutgoingFile>,
+    buffer: Vec<u8>,
 }
 
 fn id_frame(frame_type: FrameType, id: &[u8]) -> Frame {
@@ -81,6 +85,9 @@ impl State {
         if !kind.is_empty() {
             frame = frame.with(tag::FILE_TYPE, kind.as_bytes().to_vec());
         }
+        if let Some(id) = self.sessions.live_for(&record.conversation_id) {
+            frame = self.with_tree(id, &record, frame);
+        }
         Some((record.transfer_id, frame))
     }
 
@@ -109,6 +116,9 @@ impl State {
                 let record = self.store.transfer(&transfer).ok().flatten()?;
                 // Receiving from here: the chunks that follow have somewhere to go.
                 let id = self.sessions.live_for(&entry.conversation_id)?;
+                if let Some(reply) = self.blocks_reply(id, &transfer, &entry.conversation_id) {
+                    return Some((transfer, reply));
+                }
                 let route = self.chunk_route(id);
                 let receiver = ChunkReceiver::for_route(&wire, record.size, record.verified_bytes, route)?;
                 self.sessions.map.get_mut(&id)?.receivers.insert(transfer.clone(), receiver);
@@ -133,6 +143,9 @@ impl State {
         let file_type = frame.text(tag::FILE_TYPE);
         let recorded =
             self.store.record_incoming_offer(&wire, conversation, name, file_type, size, &digest, unix_now());
+        if recorded.is_ok() {
+            self.offered_tree(id, frame, conversation, &wire);
+        }
         let bytes = frame.get(tag::ID).unwrap_or_default().to_vec();
         self.send_on(id, &id_frame(FrameType::Ack, &bytes));
         let Ok(record) = recorded else {
@@ -187,7 +200,10 @@ impl State {
                     return false;
                 };
                 let session = self.sessions.map.get_mut(&id).expect("live");
-                session.senders.insert(offer.to_owned(), Outgoing { sender, record, done_sent: false });
+                session.senders.insert(
+                    offer.to_owned(),
+                    Outgoing { sender, record, done_sent: false, file: None, buffer: Vec::new() },
+                );
                 true
             }
             Ok(_) => true,
@@ -198,6 +214,12 @@ impl State {
     pub fn offer_reply(&mut self, id: u64, frame: &Frame, offer: String) {
         let accepted = frame.integer(tag::ACCEPT) == Some(1);
         let offset = frame.integer(tag::OFFSET).unwrap_or(0);
+        if accepted && szfriends_core::transfer::frames::takes_blocks(frame) && self.offer_taken_by_blocks(id, &offer) {
+            if let Some(wire) = unhex(&offer) {
+                self.send_ack(id, &wire);
+            }
+            return self.changed();
+        }
         // A late or replayed answer (the receiver's outbox sends it again on a new session until we acknowledge it)
         // is stale and changes nothing; it is acknowledged all the same, as the Objective-C helper does, or every new
         // session would carry it again.
@@ -260,7 +282,8 @@ impl State {
         };
         session.receivers.remove(&offer);
         let wire = frame.get(tag::ID).unwrap_or_default().to_vec();
-        if self.store.finish_transfer(&offer, &digest, conversation).is_ok() {
+        // Published at once, or at the end of the store batch, which acknowledges it then.
+        if self.store.finish_transfer(&offer, &digest, conversation).is_ok_and(|path| !path.as_os_str().is_empty()) {
             self.send_on(id, &id_frame(FrameType::Ack, &wire));
         }
         self.changed();
@@ -271,6 +294,8 @@ impl State {
             for session in self.sessions.map.values_mut() {
                 session.senders.remove(offer);
                 session.receivers.remove(offer);
+                session.block_senders.remove(offer);
+                session.block_receivers.remove(offer);
             }
             self.changed();
         }
@@ -281,7 +306,9 @@ impl State {
         if self.store.peer_verified_transfer(offer, conversation).is_ok() {
             if let Some(session) = self.sessions.map.get_mut(&id) {
                 session.senders.remove(offer);
+                session.block_senders.remove(offer);
             }
+            let _ = std::fs::remove_file(self.store.sender_tree_path(offer));
             self.changed();
         }
     }
@@ -297,6 +324,9 @@ impl State {
         let now = monotonic_now();
         let route = self.chunk_route(id);
         for record in self.store.unfinished_incoming_transfers(conversation).unwrap_or_default() {
+            if self.finishing.contains_key(&record.transfer_id) || self.resume_blocks(id, &record) {
+                continue;
+            }
             let offer = unhex(&record.transfer_id).unwrap_or_default();
             let Some(receiver) = ChunkReceiver::for_route(&offer, record.size, record.verified_bytes, route) else {
                 continue;
@@ -347,8 +377,15 @@ impl State {
                 }
                 let outgoing = session.senders.get_mut(&offer).expect("listed");
                 if let Some((offset, length)) = outgoing.sender.next_chunk() {
-                    let Ok(data) = self.store.read_outgoing(&outgoing.record, offset, length) else { return };
-                    let Some(frame) = outgoing.sender.chunk_frame(&data) else { return };
+                    if outgoing.file.is_none() {
+                        outgoing.file = self.store.open_outgoing(&outgoing.record).ok();
+                    }
+                    let Some(file) = &outgoing.file else { return };
+                    outgoing.buffer.resize(length, 0);
+                    if file.read_at(offset, &mut outgoing.buffer).is_err() {
+                        return;
+                    }
+                    let Some(frame) = outgoing.sender.chunk_frame(&outgoing.buffer) else { return };
                     session.channel.send_frame(&frame, now);
                     continue;
                 }

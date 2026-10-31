@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use szfriends_core::session::{monotonic_now, ChunkReceiver, Event, SecureChannel};
+use szfriends_core::session::{monotonic_now, transfer_liveness, ChunkReceiver, Event, SecureChannel};
 use szfriends_core::store::{
     unix_now, Direction, Item, ItemKind, OutboxEntry, OutboxEvent, OutboxKind, Person, Relation,
 };
@@ -24,6 +24,9 @@ pub struct Session {
     pub conversation: Option<String>,
     pub senders: HashMap<String, Outgoing>,
     pub receivers: HashMap<String, ChunkReceiver>,
+    /// Fast transfers (ADR 0018, `blocks.rs`): our files this session sends by blocks, and theirs it receives so.
+    pub block_senders: HashMap<String, super::blocks::BlockSend>,
+    pub block_receivers: HashSet<String>,
     pub flush_due: Option<Instant>,
     /// Wire id (hex) → what its ACK confirms: an outbox entry, or `done:<transfer>`.
     pub expecting: HashMap<String, String>,
@@ -37,6 +40,8 @@ pub struct Session {
 #[derive(Default)]
 pub struct Sessions {
     pub map: HashMap<u64, Session>,
+    /// Lanes and their groups (ADR 0018 § 6, `lanes.rs`).
+    pub groups: super::lanes::Groups,
     next: u64,
 }
 
@@ -72,7 +77,12 @@ impl Sessions {
 
     /// Whether any file is moving: a handover waits for it (at most 5 seconds).
     pub fn moving(&self) -> bool {
-        self.map.values().any(|s| !s.senders.is_empty() || !s.receivers.is_empty())
+        self.map.values().any(|s| {
+            !s.senders.is_empty()
+                || !s.receivers.is_empty()
+                || !s.block_senders.is_empty()
+                || !s.block_receivers.is_empty()
+        })
     }
 }
 
@@ -113,7 +123,13 @@ impl State {
         stream: crate::nearby::stream::LinkStream,
         meta: LinkMeta,
     ) -> Option<u64> {
-        let link = match Link::start(id, stream, self.input.clone(), Input::Link) {
+        let mut channel = channel;
+        let capabilities = self.session_capabilities;
+        channel.set_config(szfriends_core::session::ChannelConfig { capabilities, ..Default::default() });
+        let rate = self.route_rates.get(&meta.dialed_route).copied();
+        let silence = self.route_silence.clone().map(|path| (path, super::route_name(meta.dialed_route).to_owned()));
+        let emulated = (rate.is_some() || silence.is_some()).then_some((rate, silence));
+        let link = match Link::start(id, stream, self.input.clone(), Input::Link, emulated) {
             Ok(link) => link,
             Err(error) => {
                 log!("session link: {error}");
@@ -126,6 +142,8 @@ impl State {
             conversation: None,
             senders: HashMap::new(),
             receivers: HashMap::new(),
+            block_senders: HashMap::new(),
+            block_receivers: HashSet::new(),
             flush_due: None,
             expecting: HashMap::new(),
             in_flight: HashSet::new(),
@@ -146,6 +164,7 @@ impl State {
                 if let Some(s) = self.sessions.map.get_mut(&id) {
                     s.channel.receive(&bytes, now);
                 }
+                self.lane_written(id, true);
             }
             LinkEvent::Eof(id) => {
                 if let Some(s) = self.sessions.map.get_mut(&id) {
@@ -156,6 +175,7 @@ impl State {
                 if let Some(s) = self.sessions.map.get_mut(&id) {
                     s.channel.write_completed(now);
                 }
+                self.lane_written(id, false);
             }
         }
     }
@@ -168,28 +188,57 @@ impl State {
         }
         self.after_policy();
         self.sessions.map.retain(|_, s| !s.finished);
+        if self.pulls.current.is_some() {
+            self.reconsider_pulls();
+        }
     }
 
-    fn service(&mut self, id: u64) {
+    pub(super) fn service(&mut self, id: u64) {
         let now = monotonic_now();
+        // What a friend's session brings now is handled in one store batch (ADR 0018 § 9.3: offers, answers, files),
+        // committed before that session sends. Joining, our own devices' sync and strangers' sessions keep one
+        // transaction per write.
+        let mut batched = self.batches_files(id) && self.store.begin_batch().is_ok();
         if let Some(s) = self.sessions.map.get_mut(&id) {
+            let (keepalive, watch) = transfer_liveness(s.senders.values().map(|o| &o.sender), s.receivers.values());
+            let (blocks, owed) = self.block_liveness(id);
+            let s = self.sessions.map.get_mut(&id).expect("looked up");
+            s.channel.set_liveness(keepalive || blocks, watch || owed, now);
             s.channel.handle_timeout(now);
         }
-        loop {
-            let Some(s) = self.sessions.map.get_mut(&id) else { return };
-            while let Some(write) = s.channel.poll_transmit() {
+        while let Some(s) = self.sessions.map.get_mut(&id) {
+            while let Some(write) = (!batched).then(|| s.channel.poll_transmit()).flatten() {
                 s.link.write(write.bytes);
             }
             let Some(event) = s.channel.poll_event() else { break };
             match event {
                 Event::Established => self.went_live(id),
-                Event::Frame(frame) => self.frame(id, frame),
+                // A lane's frames are its group's first session's (lanes.rs); a PART's HAVE goes back on its lane.
+                Event::Frame(frame) if frame.frame_type == szfriends_core::wire::FrameType::Part => {
+                    let head = self.head_of(id);
+                    self.part_on(head, id, &frame);
+                }
+                Event::Frame(frame) => self.frame(self.head_of(id), frame),
                 Event::Code(result) => self.code_finished(id, result),
-                Event::Closed(error) => self.closed(id, error),
+                Event::Closed(error) => {
+                    // What it committed and queued (its CLOSE among them) leaves before the session is let go.
+                    if batched {
+                        self.end_store_batch();
+                        self.flush_writes(id);
+                    }
+                    self.closed(id, error);
+                    batched = false;
+                }
             }
         }
         self.flush_if_due(id);
+        self.flush_blocks_if_due();
         self.pump(id);
+        self.pump_blocks(id);
+        self.pump_again(id);
+        if batched {
+            self.end_store_batch();
+        }
         let Some(s) = self.sessions.map.get_mut(&id) else { return };
         while let Some(write) = s.channel.poll_transmit() {
             s.link.write(write.bytes);
@@ -197,6 +246,46 @@ impl State {
         if s.channel.is_closed() && !s.finished {
             s.finished = true;
             s.link.finish();
+        }
+    }
+
+    /// A friend's IK session, not one with our own devices: what may carry many files at once.
+    fn batches_files(&self, id: u64) -> bool {
+        let Some(s) = self.sessions.map.get(&id) else { return false };
+        s.channel.is_established()
+            && s.channel.pattern() == szfriends_core::wire::Pattern::IK
+            && s.conversation.is_some()
+            && !self.devices.exchanges.contains_key(&id)
+    }
+
+    /// Ends the store batch; each file it published is acknowledged now, on its friend's live session.
+    pub(super) fn end_store_batch(&mut self) {
+        let published = match self.store.end_batch() {
+            Ok(published) => published,
+            Err(error) => return log!("a store batch did not commit: {error}"),
+        };
+        for file in published {
+            match file.result {
+                Ok(_) => {
+                    let (Some(id), Some(wire)) =
+                        (self.sessions.live_for(&file.conversation_id), unhex(&file.transfer_id))
+                    else {
+                        continue;
+                    };
+                    self.send_ack(id, &wire);
+                    self.flush_writes(id);
+                }
+                Err(error) => log!("a received file could not be saved: {error}"),
+            }
+            self.changed();
+        }
+    }
+
+    /// Hands a session's queued writes to its link now (parts a group's first session queued on a lane).
+    pub(crate) fn flush_writes(&mut self, id: u64) {
+        let Some(s) = self.sessions.map.get_mut(&id) else { return };
+        while let Some(write) = s.channel.poll_transmit() {
+            s.link.write(write.bytes);
         }
     }
 
@@ -258,154 +347,18 @@ impl State {
     }
 
     /// Everything the outbox holds for this session's person that may go to them now.
-    pub fn deliver_pending(&mut self, id: u64) {
-        let Some(conversation) = self.conversation_of(id) else { return };
-        if self.sessions.live_for(&conversation) != Some(id) {
-            return;
-        }
-        let Some(person) = self.store.person_with_conversation(&conversation).ok().flatten() else { return };
-        // Files asked again of this friend start copying (again.rs).
-        self.again_start(id, &conversation);
-        // A request accepted on this session: the friend gets our chain now (nearby/chain.rs).
-        self.send_chain_to_friend(id);
-        let busy: HashSet<String> = self.sessions.map.values().flat_map(|s| s.in_flight.iter().cloned()).collect();
-        let mut pending = self.store.pending_outbox(&conversation).unwrap_or_default();
-        if person.callback_token.is_some() {
-            // Until our acceptance reaches an Add by ID requester, they know us only by its token and keep nothing else
-            // we send: it goes first. A friend who removed us and asked again by ID finds what we wrote meanwhile
-            // queued ahead of it (PROTOCOL.md remove_friend).
-            pending.sort_by_key(|e| !(is_request_answer(e) && answer_kind(e) == "accept"));
-        }
-        for entry in pending {
-            if busy.contains(&entry.entry_id) || !deliverable(&entry, &person) {
-                continue;
-            }
-            // A request or an answer may be the first they hear of us: our chain goes first (nearby/chain.rs).
-            if matches!(entry.kind, OutboxKind::Request | OutboxKind::Answer) {
-                self.send_first_contact_chain(id);
-            }
-            let Some((wire, frame)) = self.frame_for_entry(&entry, &person) else { continue };
-            // Written is committed before the frame goes, so Cancel never reads a message that left as unsent.
-            if self.store.apply_outbox_event(&entry.entry_id, OutboxEvent::Written).is_err() {
-                continue;
-            }
-            if !self.send_on(id, &frame) {
-                let _ = self.store.apply_outbox_event(&entry.entry_id, OutboxEvent::SessionLost);
-                continue;
-            }
-            let session = self.sessions.map.get_mut(&id).expect("live");
-            session.in_flight.insert(entry.entry_id.clone());
-            session.expecting.insert(wire, entry.entry_id.clone());
-            self.changed();
-        }
-    }
-
-    fn frame_for_entry(&mut self, entry: &OutboxEntry, person: &Person) -> Option<(String, Frame)> {
-        let entry_wire = unhex(&entry.entry_id).filter(|w| w.len() == 16);
-        match entry.kind {
-            OutboxKind::Message => {
-                let item = super::facts::item_row(&self.store, &entry.conversation_id, entry.item_id.as_deref()?)?;
-                let wire = unhex(&item.item_id)?;
-                let millis = (item.sent_at * 1000.0).max(0.0) as u64;
-                let frame = Frame::new(FrameType::Message)
-                    .with(tag::ID, wire)
-                    .with(tag::SENT_AT, millis.to_be_bytes())
-                    .with(tag::TEXT, item.body.unwrap_or_default().into_bytes());
-                Some((item.item_id, frame))
-            }
-            OutboxKind::Offer => self.offer_frame(entry),
-            OutboxKind::Answer => self.answer_frame(entry),
-            OutboxKind::Request => {
-                let millis = (entry.created_at * 1000.0).max(0.0) as u64;
-                let frame =
-                    Frame::new(FrameType::Request).with(tag::ID, entry_wire?).with(tag::SENT_AT, millis.to_be_bytes());
-                Some((entry.entry_id.clone(), frame))
-            }
-            OutboxKind::PresenceSecret => {
-                // Only to someone who is a friend now, and our current secret, so a later rotation is never undone.
-                if person.relation != Relation::Friend {
-                    let _ = self.store.apply_outbox_event(&entry.entry_id, OutboxEvent::Refused);
-                    return None;
-                }
-                let secret = self.store.own_presence_secret()?;
-                let frame = Frame::new(FrameType::PresenceSecret).with(tag::ID, entry_wire?).with(tag::SECRET, secret);
-                Some((entry.entry_id.clone(), frame))
-            }
-        }
-    }
-
-    /// A friend's message: committed, then acknowledged; a repeat is acknowledged again and kept once.
-    pub(super) fn message(&mut self, id: u64, frame: &Frame, conversation: &str, wire: String) {
-        let sent_at = frame.integer(tag::SENT_AT).map_or_else(unix_now, |ms| ms as f64 / 1000.0);
-        let item = Item {
-            item_id: wire.clone(),
-            conversation_id: conversation.to_owned(),
-            kind: ItemKind::Message,
-            direction: Direction::Incoming,
-            text: Some(frame.text(tag::TEXT).unwrap_or_default().to_owned()),
-            transfer_id: None,
-            sent_at,
-            received_at: unix_now(),
-            via_assistant: frame.integer(tag::VIA_ASSISTANT) == Some(1),
-        };
-        if self.store.insert_item(&item).is_ok() {
-            self.send_ack(id, &unhex(&wire).unwrap_or_default());
-            self.changed();
-        }
-    }
-
-    pub(super) fn send_ack(&mut self, id: u64, wire: &[u8]) {
-        self.send_on(id, &Frame::new(FrameType::Ack).with(tag::ID, wire.to_vec()));
-    }
-
-    /// The ACK for something this session sent.
-    pub(super) fn acknowledged(&mut self, id: u64, conversation: &str, wire: String) {
-        let Some(session) = self.sessions.map.get_mut(&id) else { return };
-        let Some(token) = session.expecting.remove(&wire) else { return };
-        if let Some(transfer) = token.strip_prefix("done:") {
-            self.transfer_acknowledged(id, transfer, conversation);
-            return;
-        }
-        session.in_flight.remove(&token);
-        let entry = self.store.outbox_entry(&token).ok().flatten();
-        if self.store.apply_outbox_event_from(&token, OutboxEvent::Acknowledged, conversation).is_err() {
-            return;
-        }
-        let Some(entry) = entry else { return };
-        if entry.kind == OutboxKind::Offer {
-            if let Some(transfer) = &entry.item_id {
-                let _ = self.store.mark_offer_delivered(transfer, conversation);
-            }
-        }
-        let mut person = self.store.person_with_conversation(conversation).ok().flatten();
-        let accepted = entry.kind == OutboxKind::Answer && is_request_answer(&entry) && answer_kind(&entry) == "accept";
-        if let Some(p) =
-            person.as_mut().filter(|p| accepted && (p.callback_token.is_some() || p.callback_secret.is_some()))
-        {
-            // The requester knows our key now: the Add by ID token and its callback tags are spent.
-            p.callback_token = None;
-            p.callback_secret = None;
-            if self.store.save_person(p).is_ok() {
-                self.rebuild_matcher();
-            }
-        }
-        // A removed person's session stays only to deliver the answer they are waiting for.
-        if let Some(p) = person.filter(|p| p.relation == Relation::Removed) {
-            let waiting =
-                self.store.pending_outbox(conversation).unwrap_or_default().iter().any(|e| deliverable(e, &p));
-            let in_flight = self.sessions.map.get(&id).is_some_and(|s| !s.in_flight.is_empty());
-            if !waiting && !in_flight {
-                self.close(id, CloseReason::Normal);
-            }
-        }
-        self.changed();
-    }
-
     /// The next time the service should look at its sessions.
     pub fn next_wakeup(&self) -> Duration {
         let now = monotonic_now();
-        let timers = self.sessions.map.values().filter_map(|s| s.channel.poll_timeout()).min();
-        let flush = self.sessions.map.values().filter_map(|s| s.flush_due).min();
+        let timers = self.sessions.map.values().filter_map(|s| s.channel.poll_timeout()).chain(self.pull_due()).min();
+        let flush = self
+            .sessions
+            .map
+            .values()
+            .filter_map(|s| s.flush_due)
+            .chain(self.store.block_flush_due())
+            .chain(self.finishing_due())
+            .min();
         let mut wait = timers.map_or(Duration::from_millis(250), |at| at.saturating_sub(now));
         if let Some(at) = flush {
             wait = wait.min(at.saturating_duration_since(Instant::now()));
@@ -423,6 +376,9 @@ impl State {
     /// Periodic work: nearby's timers, friends online could reach, and what waited too long in the outbox.
     pub fn tick(&mut self) {
         self.nearby_tick();
+        self.boost_tick();
+        self.reconsider_pulls();
+        self.serving_tick();
         self.join_tick(unix_now());
         self.sync_tick(unix_now());
         self.reach_online();
@@ -451,3 +407,6 @@ pub enum Rival {
     OtherDevice,
     Same(u64),
 }
+
+#[path = "sessions_outbox.rs"]
+mod outbox;

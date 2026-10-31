@@ -37,17 +37,25 @@ impl State {
             "token": channel.presented_token().map(hex::encode),
             "route": channel.initiator_route() as u8,
             "minor": channel.negotiated_minor(),
+            "fast": channel.fast_transfers(),
+            "cipher": format!("{:?}", channel.cipher()),
         });
         let route = channel.initiator_route();
+        if self.lane_established(id, &event) {
+            return; // a lane of a group (lanes.rs): never a conversation of its own
+        }
         let conversation = remote
             .and_then(|key| self.store.person_with_identity_key(&key).ok().flatten())
             .map(|person| person.conversation_id);
         self.emit(event);
         let Some(conversation) = conversation else { return };
         let unfinished = self.store.unfinished_incoming_transfers(&conversation).unwrap_or_default();
-        let session = self.sessions.get_mut(&id).expect("looked up above");
-        session.conversation = Some(conversation);
+        self.sessions.get_mut(&id).expect("looked up above").conversation = Some(conversation);
         for record in unfinished {
+            if self.resume_blocks(id, &record) {
+                continue;
+            }
+            let session = self.sessions.get_mut(&id).expect("looked up above");
             let offer = hex_bytes(&record.transfer_id).unwrap_or_default();
             let Some(receiver) = ChunkReceiver::for_route(&offer, record.size, record.verified_bytes, route) else {
                 continue;
@@ -58,7 +66,7 @@ impl State {
     }
 
     pub(crate) fn frame(&mut self, id: u64, frame: Frame) {
-        if self.devices_frame(id, &frame) {
+        if self.devices_frame(id, &frame) || self.block_frame(id, &frame) {
             return;
         }
         let offer = frame.get(tag::ID).map(hex::encode);
@@ -105,6 +113,9 @@ impl State {
         let file_type = frame.text(tag::FILE_TYPE);
         let recorded =
             self.store.record_incoming_offer(&offer, &conversation, name, file_type, size, &digest, 0.0).is_ok();
+        if recorded {
+            self.offered_tree(id, frame, &conversation, &offer);
+        }
         let id_bytes = frame.get(tag::ID).unwrap_or_default().to_vec();
         if !recorded || self.store.accept_transfer(&offer).is_err() {
             self.send(id, &id_frame(FrameType::Ack, &id_bytes));
@@ -112,12 +123,20 @@ impl State {
             self.send(id, &reply);
             return true;
         }
+        if let Some(reply) = self.blocks_reply(id, &offer, &conversation) {
+            self.send(id, &id_frame(FrameType::Ack, &id_bytes));
+            self.send(id, &reply);
+            self.emit(json!({ "event": "offer", "session": id, "transfer": offer, "size": size, "blocks": true }));
+            return true;
+        }
         let route = self.sessions[&id].channel.initiator_route();
-        let Some(receiver) = ChunkReceiver::for_route(&id_bytes, size, 0, route) else { return true };
+        // From what is here already: nothing, or all of it when the same file was held here (ADR 0018 § 9.5).
+        let held = self.store.transfer(&offer).ok().flatten().map_or(0, |r| r.verified_bytes);
+        let Some(receiver) = ChunkReceiver::for_route(&id_bytes, size, held, route) else { return true };
         self.sessions.get_mut(&id).expect("live").receivers.insert(offer.clone(), receiver);
         self.send(id, &id_frame(FrameType::Ack, &id_bytes));
         let reply =
-            id_frame(FrameType::OfferReply, &id_bytes).with(tag::ACCEPT, [1]).with(tag::OFFSET, 0u64.to_be_bytes());
+            id_frame(FrameType::OfferReply, &id_bytes).with(tag::ACCEPT, [1]).with(tag::OFFSET, held.to_be_bytes());
         self.send(id, &reply);
         self.emit(json!({ "event": "offer", "session": id, "transfer": offer, "size": size }));
         true
@@ -131,7 +150,7 @@ impl State {
                 let offer_id = hex_bytes(offer).unwrap_or_default();
                 match ChunkSender::for_route(&offer_id, record.size, offset, route) {
                     Some(sender) => {
-                        let outgoing = Outgoing { sender, record, done_sent: false };
+                        let outgoing = Outgoing { sender, record, done_sent: false, file: None, buffer: Vec::new() };
                         self.sessions.get_mut(&id).expect("live").senders.insert(offer.to_owned(), outgoing);
                         self.emit(json!({ "event": "sending", "session": id, "transfer": offer, "offset": offset }));
                         true
@@ -153,6 +172,11 @@ impl State {
     fn offer_reply(&mut self, id: u64, frame: &Frame, offer: String) -> bool {
         let accepted = frame.integer(tag::ACCEPT) == Some(1);
         let offset = frame.integer(tag::OFFSET).unwrap_or(0);
+        if accepted && szfriends_core::transfer::frames::takes_blocks(frame) && self.offer_taken_by_blocks(id, &offer) {
+            let wire = frame.get(tag::ID).unwrap_or_default().to_vec();
+            self.send(id, &id_frame(FrameType::Ack, &wire));
+            return true;
+        }
         if !self.start_sending(id, &offer, accepted, offset) {
             self.close_for_protocol(id);
         }
@@ -214,6 +238,8 @@ impl State {
         session.receivers.remove(&offer);
         let offer_id = frame.get(tag::ID).unwrap_or_default().to_vec();
         match self.store.finish_transfer(&offer, &digest, &conversation) {
+            // Saved at the end of the store batch, which acknowledges and reports it.
+            Ok(path) if path.as_os_str().is_empty() => {}
             Ok(path) => {
                 self.send(id, &id_frame(FrameType::Ack, &offer_id));
                 let path = path.to_string_lossy().into_owned();
@@ -238,7 +264,9 @@ impl State {
                 let _ = self.store.mark_offer_delivered(&offer, &conversation);
             }
             TransferState::Sending if self.store.peer_verified_transfer(&offer, &conversation).is_ok() => {
-                self.sessions.get_mut(&id).expect("live").senders.remove(&offer);
+                let session = self.sessions.get_mut(&id).expect("live");
+                session.senders.remove(&offer);
+                session.blocks.senders.remove(&offer);
                 self.emit(json!({ "event": "delivered", "transfer": offer }));
             }
             _ => {}
@@ -304,8 +332,15 @@ impl State {
                 }
                 let outgoing = session.senders.get_mut(&offer).expect("listed");
                 if let Some((offset, length)) = outgoing.sender.next_chunk() {
-                    let Ok(data) = self.store.read_outgoing(&outgoing.record, offset, length) else { return };
-                    let frame = outgoing.sender.chunk_frame(&data).expect("the range it gave");
+                    if outgoing.file.is_none() {
+                        outgoing.file = self.store.open_outgoing(&outgoing.record).ok();
+                    }
+                    let Some(file) = &outgoing.file else { return };
+                    outgoing.buffer.resize(length, 0);
+                    if file.read_at(offset, &mut outgoing.buffer).is_err() {
+                        return;
+                    }
+                    let frame = outgoing.sender.chunk_frame(&outgoing.buffer).expect("the range it gave");
                     session.channel.send_frame(&frame, now);
                     continue;
                 }
@@ -332,8 +367,22 @@ impl State {
             .with(tag::NAME, record.file_name.as_bytes())
             .with(tag::SIZE, record.size.to_be_bytes())
             .with(tag::DIGEST, record.digest);
+        let offer = self.with_tree(id, &record, offer);
         self.send(id, &offer);
         json!({ "transfer": record.transfer_id, "size": record.size, "digest": hex::encode(record.digest) })
+    }
+
+    /// Several files at once, as the helper's send_files: staged in the same store batch, offered back to back.
+    pub(crate) fn send_files(&mut self, id: u64, command: &Value) -> Value {
+        let mut transfers = Vec::new();
+        for path in command["paths"].as_array().cloned().unwrap_or_default() {
+            let answer = self.send_file(id, &json!({ "path": path }));
+            if answer.get("error").is_some() {
+                return answer;
+            }
+            transfers.push(answer);
+        }
+        json!({ "transfers": transfers })
     }
 
     pub(crate) fn request_by_id(&mut self, id: u64, command: &Value) -> Value {

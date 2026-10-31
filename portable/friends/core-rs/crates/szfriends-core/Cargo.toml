@@ -6,6 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# BLAKE3 without its C and assembly (Rust intrinsics on x86, portable code on Arm): for checking a target from a
+# machine without that target's C toolchain (the MSVC targets on a Mac, friends-core-rs-cross-check). Release builds
+# leave it off: they compile BLAKE3's C where they compile SQLite's.
+blake3-pure = ["blake3/pure"]
+
 [dependencies]
 szfriends-wire.workspace = true
 szfriends-crypto.workspace = true
@@ -13,10 +19,16 @@ szfriends-identity.workspace = true
 szfriends-contract.workspace = true
 zeroize.workspace = true
 blake2.workspace = true
+blake3.workspace = true
+lz4_flex.workspace = true
 sha2.workspace = true
 unicode-normalization.workspace = true
 serde_json.workspace = true
 hex.workspace = true
+
+# zstd for compressed parts everywhere but Android (ADR 0018 § 9.4; Android reads and writes LZ4 only).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+zstd.workspace = true
 
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 rusqlite = { workspace = true, features = ["bundled"] }

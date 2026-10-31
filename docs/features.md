@@ -162,10 +162,11 @@ does not re-trigger the macOS access prompt.
 - First-use choice to keep local copies and history, with on/off, location, storage cap and management in Settings. Reading continues from original paths.
 - Background capture after opening; reachable recent documents are imported when Collection is enabled. Identical content shares storage, while distinct documents retain separate histories.
 - Immutable original and version copies, pre-edit protection, saved milestones and deliberate deletion of copies. Deleting Collection history never deletes source documents. History’s context menu deletes individual saved versions; the linked original offers **Delete all previous backups…**, retaining the latest saved copy. Collection’s bulk action uses that same scope. Manual deletion includes kept versions after confirmation.
+- **Move to Trash**, in a tab's menu, the page's menu and Collection's list (several documents at once there), after one confirmation (Return cancels): the file (an Edited Copy too) goes to the Trash, where the Finder can put it back, its tabs close in every window, and Collection forgets it for good with its saved versions, History copies, page previews, search text and viewing dates. A read-only or locked file, or one that can't go to the Trash, is named and nothing is removed. The assistant then treats it as deleted. A file received through Friends stays listed there, and Get again fetches it once more while its sender still has it.
 - Editable Collection documents with version history. Opening a saved version creates or reuses a writable working file without modifying retained snapshots. Rename changes its Collection filename and title while preserving the original source reference. Older History rows offer Compare with Latest in their context menu; Collection omits this self-comparison command.
 - PDF and Markdown comparison with old/new panes, red removals, green additions, linked scrolling/zoom, and clickable change markers. Inserted and deleted pages have blank counterparts.
 - A missing original opens its editable Collection document in the same tab and group, preserving reading position. A red toolbar pill marks the missing original, beside a Locate button. Collection documents no longer use a special Backups group. Missing-original recovery remains available. Locate Original offers manual selection or a cancellable exact-hash search, sorted by modification date from oldest to newest.
-- Manage Collection has Documents and Settings in the left sidebar. Documents uses one list view with small page previews, with no layout selector or thumbnail grid. It shows each document once using its latest saved copy; search stays inside Documents and searches only those copies, with page thumbnails and contextual highlighted matches. History opens PDF/Markdown versions for reading or editing, and offers comparison and copy export, plus Keep forever when a storage limit is active. Earlier versions are confined to History, where a Latest pill identifies the current saved version independently of selection. Query, selected version/page, expanded matches and browsing positions persist.
+- Manage Collection has Documents and Settings in the left sidebar. Documents uses one list view with small page previews, with no layout selector or thumbnail grid. Page previews show as soon as the window opens and are redrawn only when a document changes; a password-protected PDF's preview is never saved to disk. It shows each document once using its latest saved copy; search stays inside Documents and searches only those copies, with page thumbnails and contextual highlighted matches. History opens PDF/Markdown versions for reading or editing, and offers comparison and copy export, plus Keep forever when a storage limit is active. Earlier versions are confined to History, where a Latest pill identifies the current saved version independently of selection. Query, selected version/page, expanded matches and browsing positions persist.
 - **Keep forever / Stop keep forever** — available only when a storage limit is applied. Marks or unmarks a saved version for retention. While any version is kept, the document’s whole history is protected from automatic cleanup. Removing the last mark makes it eligible for cleanup; nothing is deleted immediately. Explicit manual deletion remains possible. Returning to unlimited storage hides these controls without clearing existing marks.
 - Per-document Pause / Resume saving actions are no longer offered. Existing saved copies, retention marks and legacy capture preferences remain unchanged.
 - New setup defaults to a dynamic budget of 80% of free space plus existing Collection storage, adjustable from 50–80%. Static and Unlimited are also available, and existing saved choices are preserved. Move location verifies the transfer before removing old stored files; editable documents require a destination on the same disk. Open location reveals the current folder. With a cap, cleanup ranks least-opened documents, prunes their oldest previous versions first, and only then removes final Collection copies. A kept version protects the entire history; originals are never deleted. Editable Collection working files and their histories are excluded from automatic cleanup so edits cannot be lost.
@@ -414,18 +415,25 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 <p align="center"><img src="images/portable/macos-translate.webp" alt="A whole PDF translated offline from English to Chinese, opened beside the original" width="880"></p>
 
-- **macOS: choose Local or AI** from the menu below Translate. Local keeps the existing Argos workflow.
-- **AI translation** uses your OpenRouter connection and model. Review the source text, choose a searchable target language (your AI language by default), then send explicitly. Selection and whole-document text are supported; scanned pages need OCR first.
-- AI results are editable and saved as a **new Markdown copy** in Downloads (kept in Collection when it is on), not a layout-preserving PDF. Nothing is overwritten. Progress and Cancel are available; failed or cancelled requests do not save partial files.
-- AI requests run sequentially in small text chunks. Documents above 500,000 characters are rejected with a request to select a smaller passage, never silently truncated.
-- **Argos Translate**, running locally across ~19 languages including Chinese.
-  Text never leaves the machine.
-- **Translate a selection** into a panel, or **a whole document**. On macOS this
-  includes Markdown, plain text, source code, EPUB and other readable text documents.
-  Non-PDF documents are rendered to a separate PDF before translation; the source stays unchanged.
-- **Local whole-document mode writes a real PDF** (`<name>_<lang>.pdf`) with the
-  translated text overlaid at each source line's position, and opens it when it
-  finishes.
+- **macOS: Translate asks for the language, and who translates.** At the top, **On this Mac | AI**: Tab, ⌘1 and ⌘2
+  switch, and the choice is kept for next time (On this Mac the first time). The field is ready to type in and English
+  is highlighted, so Return translates into English. Typing narrows the list (your recent languages first); Return
+  chooses the first match and Return again translates. Arrows move through the list and Escape cancels.
+- **On this Mac**, Argos Translate translates the whole document offline (~19 languages, including Chinese); the text
+  never leaves the Mac, and the list shows only the languages it has. The language the document is in is found from
+  its text. A PDF stays a PDF with each line translated in its place; a Markdown, text or EPUB document is translated
+  as the PDF it prints to. The result, **“<name> (<Language>).pdf”**, is saved beside the original (in Downloads when
+  that folder can't take it) and opens in a new tab right after it.
+- **AI**: the assistant translates the whole document with your OpenRouter model, into any language (type one that
+  isn't listed and choose **Use “Breton”**), and makes **“<name> (<Language>)”** in the same format: a PDF stays a PDF
+  with each line translated in its place, a Markdown or text document stays Markdown or text. It opens in a new tab
+  right after the original, in its group, and is saved to Downloads and kept in Collection like everything the
+  assistant makes. The chat beside the document shows how far it has got, with Cancel; you can keep reading meanwhile.
+  Read-only documents work too.
+- **Chapters come along, translated**, with either: a PDF's outline keeps its levels and where each chapter points;
+  a PDF without one keeps the chapters generated for it, an EPUB its table of contents and a Markdown document its
+  headings. Links, named destinations, page labels, form fields and comments (translated) stay as they were.
+- **Translate a selection** into a panel (Argos, on macOS and Linux), or a whole document on Linux.
 - **Cancellable mid-run**, with the same one-click toolchain install as OCR.
 
 ## <a id="export"></a>Printing and export

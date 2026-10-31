@@ -2,15 +2,13 @@
 // (chunks, digest, publishing, recovery) is SZFriendsTransferReceiver; file helpers are SZFriendsTransferFiles.
 
 #import <sodium.h>
+#import <fcntl.h>
 #import <sys/stat.h>
 #import <unistd.h>
 
 #import "service/store/SZFriendsStoreInternal.h"
 
 NS_ASSUME_NONNULL_BEGIN
-
-// Manual acceptance keeps this much free beyond the file itself, so a download never fills the disk completely.
-static const uint64_t SZFriendsAcceptMargin = 16ULL << 20;
 
 static NSError *SZFriendsTransferError(SZFriendsStoreError code, NSString *why) {
     return SZFriendsStoreMakeError(code, why);
@@ -26,6 +24,7 @@ static NSError *SZFriendsTransferError(SZFriendsStoreError code, NSString *why) 
 }
 
 @synthesize receiver = _receiver;
+@synthesize partialDirectory = _partialDirectory;
 
 - (instancetype)initWithStore:(SZFriendsStore *)store stateDirectory:(NSString *)stateDirectory {
     if ((self = [super init])) {
@@ -241,46 +240,6 @@ static NSError *SZFriendsTransferError(SZFriendsStoreError code, NSString *why) 
         return YES;
     } error:error];
     return ok ? result : nil;
-}
-
-// Every check a manual acceptance makes, so automatic acceptance gets exactly the same ones plus its own.
-- (BOOL)acceptIn:(SZFriendsStoreDB *)db
-        transfer:(NSString *)transferID
-   automatically:(BOOL)automatically
-       freeBytes:(uint64_t)freeBytes
-           error:(NSError **)error {
-    SZFriendsTransferRecord *record = SZFriendsTransferRowLoad(db, transferID);
-    if (!record) return SZFriendsFail(error, SZFriendsTransferError(SZFriendsStoreErrorNotFound, transferID));
-    if (record.outgoing || record.state != SZFriendsTransferStateWaitingForYou) {
-        return SZFriendsFail(error, SZFriendsTransferError(SZFriendsStoreErrorStale, @"offer is not waiting"));
-    }
-    SZFriendsPersonRecord *person = SZFriendsStorePeople(db, @"WHERE conversation_id = ?", @[ record.conversationID ])
-                                        .firstObject;
-    if (person.relation != SZFriendsRelationFriend) {
-        return SZFriendsFail(error, SZFriendsTransferError(SZFriendsStoreErrorInvalid, @"not an unblocked friend"));
-    }
-    if (automatically && (!person.autoAccept || person.keyChangePending)) {
-        return SZFriendsFail(error, SZFriendsTransferError(SZFriendsStoreErrorStale, @"automatic acceptance is off"));
-    }
-    uint64_t remaining = record.size - record.verifiedBytes;
-    uint64_t keep = automatically ? MAX(self.reserveBytes, SZFriendsAcceptMargin) : SZFriendsAcceptMargin;
-    if (remaining > freeBytes || freeBytes - remaining < keep) {
-        return SZFriendsFail(error, SZFriendsTransferError(SZFriendsStoreErrorDiskFull, @"not enough space"));
-    }
-    NSString *partial = SZFriendsEnsurePrivateDirectory(_partialDirectory, error)
-                            ? SZFriendsCreateStagingFile(_partialDirectory, error)
-                            : nil;
-    if (!partial) return NO;
-    NSDictionary *values = @{
-        @"accepted_automatically" : @(automatically), @"partial_path" : partial, @"verified_bytes" : @0,
-        @"asked_low_disk" : @0
-    };
-    if (SZFriendsTransferRowApplyEvent(db, transferID, SZFriendsTransferEventAccepted, nil, error) &&
-        SZFriendsTransferRowUpdate(db, transferID, values, error)) {
-        return YES;
-    }
-    unlink(partial.fileSystemRepresentation); // the row will not name it once this rolls back
-    return NO;
 }
 
 - (SZFriendsAutoAcceptDecision)applyAutomaticAcceptanceToTransfer:(NSString *)transferID error:(NSError **)error {

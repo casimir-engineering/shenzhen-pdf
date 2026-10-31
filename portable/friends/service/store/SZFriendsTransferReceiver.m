@@ -2,32 +2,11 @@
 // publishing into the folder received files go to, and crash recovery (ADR 0003 § Durable progress, § Crash
 // recovery; ADR 0001 § Files).
 
-#import <fcntl.h>
-#import <sodium.h>
-#import <stdio.h>
-#import <sys/stat.h>
-#import <unistd.h>
-
-#import "service/store/SZFriendsStoreInternal.h"
+#import "service/store/SZFriendsTransferReceiverInternal.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
 // ADR 0003: progress becomes durable every 4 MiB or every second, whichever comes first.
-static const uint64_t SZFriendsDurableBatchBytes = 4ULL << 20;
-static const NSTimeInterval SZFriendsDurableBatchInterval = 1.0;
-
-// One download in progress: its open staging file, running digest and how much of it is written versus durable.
-@interface SZFriendsReceiving : NSObject {
-@public
-    crypto_generichash_state hash;
-    int fd;
-    uint64_t written;
-    uint64_t durable;
-}
-@property(nonatomic, copy) NSString *partialPath;
-@property(nonatomic, copy) NSDate *lastCommit;
-@end
-
 @implementation SZFriendsReceiving
 - (instancetype)init {
     if ((self = [super init])) fd = -1; // ivars start at 0, which is stdin
@@ -38,63 +17,18 @@ static const NSTimeInterval SZFriendsDurableBatchInterval = 1.0;
 }
 @end
 
-static NSError *SZFriendsReceiveError(SZFriendsStoreError code, NSString *why) {
-    return SZFriendsStoreMakeError(code, why);
+@implementation SZFriendsTransferReceiver
+
+- (SZFriendsStore *)store {
+    return _store;
 }
 
-static BOOL SZFriendsHashPrefix(int fd, uint64_t length, crypto_generichash_state *state);
-
-// The file about to be published, read back through the descriptor that wrote it: still the file the staging path
-// names, a regular file of the offered size, hashing to the offered digest. The streamed digest only covers bytes as
-// they arrived; this is what makes a published file always match its verified digest, even if something else wrote
-// to the staging file meanwhile (security review: two transfers once shared one file and published a corrupted copy
-// as verified). It costs one read of the file on the store queue, once per received file.
-static BOOL SZFriendsStagedFileMatches(int fd, NSString *path, SZFriendsTransferRecord *record) {
-    struct stat opened, named;
-    if (record.contentDigest.length != 32 || fstat(fd, &opened) != 0 ||
-        lstat(path.fileSystemRepresentation, &named) != 0) {
-        return NO;
-    }
-    if (!S_ISREG(named.st_mode) || opened.st_dev != named.st_dev || opened.st_ino != named.st_ino ||
-        (uint64_t)opened.st_size != record.size) {
-        return NO;
-    }
-    crypto_generichash_state state;
-    crypto_generichash_init(&state, NULL, 0, 32);
-    if (!SZFriendsHashPrefix(fd, record.size, &state)) return NO;
-    uint8_t disk[32];
-    crypto_generichash_final(&state, disk, sizeof disk);
-    return sodium_memcmp(disk, record.contentDigest.bytes, 32) == 0;
+- (NSString *)partialDirectory {
+    return _partialDirectory;
 }
 
-static BOOL SZFriendsStagedFileMatchesAtPath(NSString *path, SZFriendsTransferRecord *record) {
-    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0) return NO;
-    BOOL matches = SZFriendsStagedFileMatches(fd, path, record);
-    close(fd);
-    return matches;
-}
-
-static BOOL SZFriendsHashPrefix(int fd, uint64_t length, crypto_generichash_state *state) {
-    uint8_t buffer[64 * 1024];
-    uint64_t offset = 0;
-    while (offset < length) {
-        size_t want = (size_t)MIN((uint64_t)sizeof buffer, length - offset);
-        ssize_t got = pread(fd, buffer, want, (off_t)offset);
-        if (got < 0 && errno == EINTR) continue;
-        if (got <= 0) return NO;
-        crypto_generichash_update(state, buffer, (unsigned long long)got);
-        offset += (uint64_t)got;
-    }
-    return YES;
-}
-
-@implementation SZFriendsTransferReceiver {
-    SZFriendsStore *_store;
-    NSString *_stateDirectory;
-    NSString *_receivedDirectory;
-    NSString *_partialDirectory;
-    NSMutableDictionary<NSString *, SZFriendsReceiving *> *_open; // touched only on the store queue
+- (NSMutableDictionary<NSString *, id> *)blockDownloads {
+    return _blockDownloads;
 }
 
 - (instancetype)initWithStore:(SZFriendsStore *)store stateDirectory:(NSString *)stateDirectory {
@@ -104,6 +38,7 @@ static BOOL SZFriendsHashPrefix(int fd, uint64_t length, crypto_generichash_stat
         _receivedDirectory = [stateDirectory stringByAppendingPathComponent:@"received"];
         _partialDirectory = [_receivedDirectory stringByAppendingPathComponent:@".partial"];
         _open = [NSMutableDictionary dictionary];
+        _blockDownloads = [NSMutableDictionary dictionary];
         _clock = ^NSDate * { return [NSDate date]; };
     }
     return self;
@@ -156,11 +91,14 @@ static BOOL SZFriendsHashPrefix(int fd, uint64_t length, crypto_generichash_stat
     return receiving;
 }
 
-// F_FULLFSYNC first, commit second: the database never claims a byte the disk could still lose (ADR 0003).
+// The bytes ordered first, the commit second, and the commit's own F_FULLFSYNC makes both durable: the database never
+// claims a byte the disk could still lose (ADR 0003), and a batch costs one full flush of the drive, not two (ADR 0018
+// § 4; F_FULLFSYNC flushes the whole drive cache, so flushing the file first and the commit again only repeated it;
+// the partial file and the database both live in the state directory, on one volume).
 - (BOOL)commit:(SZFriendsReceiving *)receiving transfer:(NSString *)transferID db:(SZFriendsStoreDB *)db
          error:(NSError **)error {
     if (receiving->durable == receiving->written) return YES;
-    if (fcntl(receiving->fd, F_FULLFSYNC) != 0 && fsync(receiving->fd) != 0) {
+    if (!SZFriendsOrderWrites(receiving->fd)) {
         return SZFriendsFail(error, SZFriendsReceiveError(SZFriendsStoreErrorDatabase, @"fsync failed"));
     }
     uint64_t written = receiving->written;
@@ -330,115 +268,6 @@ static BOOL SZFriendsHashPrefix(int fd, uint64_t length, crypto_generichash_stat
         return [self recoverPublishingIn:db error:inner] && [self recoverReceivingIn:db error:inner] &&
                [self removeOrphansIn:db error:inner];
     } error:error];
-}
-
-- (BOOL)recoverPublishingIn:(SZFriendsStoreDB *)db error:(NSError **)error {
-    NSMutableArray<NSArray *> *rows = [NSMutableArray array];
-    BOOL ok = [db run:@"SELECT transfer_id, partial_path, final_path, size FROM transfers WHERE publishing = 1"
-                binds:nil
-                  row:^(sqlite3_stmt *s) {
-                      [rows addObject:@[ SZFriendsColumnText(s, 0) ?: @"", SZFriendsSQL(SZFriendsColumnText(s, 1)),
-                                         SZFriendsSQL(SZFriendsColumnText(s, 2)), @(SZFriendsColumnInt(s, 3)) ]];
-                  }
-                error:error];
-    if (!ok) return NO;
-    for (NSArray *row in rows) {
-        NSString *transferID = row[0];
-        NSString *partial = [row[1] isKindOfClass:[NSString class]] ? row[1] : nil;
-        NSString *final = [row[2] isKindOfClass:[NSString class]] ? row[2] : nil;
-        uint64_t size = [row[3] unsignedLongLongValue];
-        struct stat info;
-        BOOL staged = partial && lstat(partial.fileSystemRepresentation, &info) == 0;
-        BOOL published = final && lstat(final.fileSystemRepresentation, &info) == 0;
-        SZFriendsTransferRecord *record = staged ? SZFriendsTransferRowLoad(db, transferID) : nil;
-        // A copy across volumes renamed before the crash, its staged file not yet removed: the published file is it.
-        if (record && published && SZFriendsStagedFileMatchesAtPath(final, record)) {
-            unlink(partial.fileSystemRepresentation);
-            if (![self markReceived:transferID at:final size:size db:db error:error]) return NO;
-            continue;
-        }
-        // A copy across volumes the crash interrupted: its hidden part file goes, and the copy is redone.
-        if (final) unlink(SZFriendsReceivedPartPath(final).fileSystemRepresentation);
-        if (record && !SZFriendsStagedFileMatchesAtPath(partial, record)) {
-            // Changed on disk since it was verified: never published as if it were what the friend sent.
-            if (![self failMismatched:transferID partial:partial db:db error:error]) return NO;
-        } else if (record) {
-            if (![self publish:record from:partial db:db error:error]) return NO;
-        } else if (published) {
-            // Renamed before the crash, committed after it: the digest was verified before the rename.
-            if (![self markReceived:transferID at:final size:size db:db error:error]) return NO;
-        } else {
-            // Both gone (only a damaged disk does this): start the download again rather than claim the file.
-            NSString *fresh = SZFriendsCreateStagingFile(_partialDirectory, error);
-            if (!fresh) return NO;
-            NSDictionary *values = @{@"publishing" : @0, @"final_path" : [NSNull null], @"partial_path" : fresh,
-                                     @"verified_bytes" : @0};
-            if (![db transaction:^BOOL(NSError **inner) {
-                    return SZFriendsTransferRowUpdate(db, transferID, values, inner);
-                } error:error]) {
-                return NO;
-            }
-        }
-    }
-    return YES;
-}
-
-- (BOOL)recoverReceivingIn:(SZFriendsStoreDB *)db error:(NSError **)error {
-    NSArray<SZFriendsTransferRecord *> *receiving =
-        SZFriendsTransferRows(db, @"WHERE outgoing = 0 AND state = ?", @[ @(SZFriendsTransferStateReceiving) ]);
-    for (SZFriendsTransferRecord *record in receiving) {
-        NSString *partial = SZFriendsTransferRowPartialPath(db, record.transferID);
-        struct stat info;
-        if (!partial || lstat(partial.fileSystemRepresentation, &info) != 0) {
-            NSString *fresh = SZFriendsCreateStagingFile(_partialDirectory, error);
-            if (!fresh || ![db transaction:^BOOL(NSError **inner) {
-                    return SZFriendsTransferRowUpdate(db, record.transferID,
-                                                      @{@"partial_path" : fresh, @"verified_bytes" : @0}, inner);
-                } error:error]) {
-                return NO;
-            }
-            continue;
-        }
-        // Opening truncates past the durable count and corrects a count the disk no longer backs.
-        [_open removeObjectForKey:record.transferID];
-        BOOL opened = [db transaction:^BOOL(NSError **inner) {
-            return [self openIn:db record:record error:inner] != nil;
-        } error:error];
-        if (!opened) return NO;
-    }
-    return YES;
-}
-
-// Staging files no row references (a download cancelled mid-crash, a snapshot staged and never offered) hold
-// document bytes nobody will use; they go. Rows staged but never offered go with them.
-- (BOOL)removeOrphansIn:(SZFriendsStoreDB *)db error:(NSError **)error {
-    BOOL ok = [db transaction:^BOOL(NSError **inner) {
-        return [db run:@"DELETE FROM transfers WHERE outgoing = 1 AND state = 0 AND transfer_id NOT IN "
-                       @"(SELECT transfer_id FROM messages WHERE transfer_id IS NOT NULL) AND transfer_id NOT IN "
-                       @"(SELECT item_id FROM outbox WHERE item_id IS NOT NULL)"
-                 binds:nil
-                   row:nil
-                 error:inner];
-    } error:error];
-    if (!ok) return NO;
-    NSMutableSet<NSString *> *referenced = [NSMutableSet set];
-    ok = [db run:@"SELECT staged_path, partial_path FROM transfers" binds:nil row:^(sqlite3_stmt *s) {
-        for (int column = 0; column < 2; column++) {
-            NSString *path = SZFriendsColumnText(s, column);
-            if (path) [referenced addObject:path.stringByStandardizingPath];
-        }
-    } error:error];
-    if (!ok) return NO;
-    NSMutableArray<NSString *> *orphans = [NSMutableArray array];
-    NSString *outgoing = [_stateDirectory stringByAppendingPathComponent:@"outgoing"];
-    for (NSString *directory in @[ _partialDirectory, outgoing ]) {
-        for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:directory error:NULL]) {
-            NSString *path = [directory stringByAppendingPathComponent:name];
-            if (![referenced containsObject:path.stringByStandardizingPath]) [orphans addObject:path];
-        }
-    }
-    SZFriendsRemovePrivateFiles(_stateDirectory, orphans);
-    return YES;
 }
 
 @end

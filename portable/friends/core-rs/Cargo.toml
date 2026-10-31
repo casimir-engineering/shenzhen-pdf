@@ -27,13 +27,22 @@ szfriends-vectors = { path = "crates/szfriends-vectors" }
 # One curve25519-dalek for snow, CPace and the identity keys (snow 0.10 pins the 4.x line). Not snow's "std": in 0.10
 # it enables ring, a second crypto library with its own C and assembly build for every target.
 snow = { version = "0.10", default-features = false, features = [
-    "default-resolver", "use-chacha20poly1305", "use-blake2", "use-curve25519", "use-getrandom",
+    "default-resolver", "use-chacha20poly1305", "use-blake2", "use-curve25519", "use-getrandom", "use-aes-gcm",
 ] }
 curve25519-dalek = { version = "4.1.3", default-features = false, features = [
     "alloc", "zeroize", "precomputed-tables",
 ] }
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std", "zeroize"] }
 blake2 = "0.10"
+# ADR 0018 § 2: the fast-transfer tree. Pinned; the decision and its measurements are in the fast-transfers journal.
+blake3 = "=1.8.5"
+# ADR 0018 § 9.4: compressed parts on Bluetooth and relay lanes. The C library (zstd-sys), as the Objective-C helper
+# vendors it; no legacy formats, no dictionary builder, and its size-optimised build ("thin": -Oz, the small decoders),
+# which still runs far faster than the routes it is for (the fast-transfers journal, WP6).
+zstd = { version = "=0.13.3", default-features = false, features = ["thin"] }
+# The same parts in LZ4's block format, pure Rust and a few kilobytes: what Android builds compress with, having no
+# room for zstd under ADR 0015's 5 MB (the fast-transfers journal, WP6). Safe code only.
+lz4_flex = { version = "=0.11.6", default-features = false, features = ["safe-encode", "safe-decode"] }
 sha2 = "0.10"
 hmac = "0.12"
 subtle = "2.6"
@@ -48,6 +57,8 @@ rusqlite = { version = "0.40", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# The ciphers' arm64 backends (.cargo/config.toml, phone.toml), which tests/build_flags.rs checks.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(chacha20_force_neon)", "cfg(aes_armv8)", "cfg(polyval_armv8)"] }
 missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
@@ -65,7 +76,45 @@ codegen-units = 1
 panic = "abort"
 strip = "symbols"
 
-# Phones (ADR 0015 § 12's 5 MB): the release profile made smaller, at the cost of speed a phone's radio never misses.
+# The ciphers and hashes that carry every transferred byte (ADR 0018 § 9.2): full speed, 1.7 times a size-optimised
+# build's through a session's transport (examples/transport-speed in szfriends-crypto). snow, szfriends-crypto and the
+# generic crates are listed too, because a generic cipher's code is generated in the crate that instantiates it. The
+# phone profile inherits these. Their SIMD backends on arm64 are switched on in .cargo/config.toml and phone.toml.
+[profile.release.package.szfriends-crypto]
+opt-level = 3
+[profile.release.package.snow]
+opt-level = 3
+[profile.release.package.chacha20poly1305]
+opt-level = 3
+[profile.release.package.chacha20]
+opt-level = 3
+[profile.release.package.poly1305]
+opt-level = 3
+[profile.release.package.aead]
+opt-level = 3
+[profile.release.package.cipher]
+opt-level = 3
+[profile.release.package.universal-hash]
+opt-level = 3
+[profile.release.package.aes-gcm]
+opt-level = 3
+[profile.release.package.aes]
+opt-level = 3
+[profile.release.package.ctr]
+opt-level = 3
+[profile.release.package.ghash]
+opt-level = 3
+[profile.release.package.polyval]
+opt-level = 3
+[profile.release.package.blake2]
+opt-level = 3
+# BLAKE3, the tree hash over every block of a file (ADR 0018 § 2): its Rust and the C and NEON that its build compiles
+# at the package's opt-level.
+[profile.release.package.blake3]
+opt-level = 3
+
+# Phones (ADR 0015 § 12's 5 MB): the release profile made smaller, at the cost of speed a phone's radio never misses;
+# the ciphers above keep their opt-level 3.
 # An app embedding the core sets the same in its own release profile for its phone builds (tools/embedded-size.sh
 # measures with it); szfriends-datachannel-sys compiles its C and C++ at -Oz on phones by itself.
 [profile.phone]

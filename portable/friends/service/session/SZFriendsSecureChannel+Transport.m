@@ -20,6 +20,17 @@ static BOOL SZFriendsIsChannelFrame(SZFriendsFrameType type) {
     }
 }
 
+// Minor 4's frames (ADR 0018 § 3): only on a session that negotiated fast transfers, either way.
+static BOOL SZFriendsIsFastTransferFrame(SZFriendsFrameType type) {
+    return type == SZFriendsFrameTypeHashes || type == SZFriendsFrameTypeWant || type == SZFriendsFrameTypePart ||
+           type == SZFriendsFrameTypeHave;
+}
+
+// The fields only a fast-transfers session carries (TreeRoot through Pieces).
+static BOOL SZFriendsIsFastTransferTag(NSInteger tag) {
+    return tag >= SZFriendsFieldTreeRoot && tag <= SZFriendsFieldPieces;
+}
+
 // NN exists only for Add by ID (ADR 0004) and joining a profile: REQUEST_BY_ID one way, RECEIVED the other, and JOIN
 // either way, nothing else. They never travel in XX or IK, where the peer's identity is already known.
 static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePattern pattern, BOOL fromInitiator) {
@@ -52,6 +63,25 @@ static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePatt
     if (SZFriendsIsChannelFrame(frame.type) || !SZFriendsTypeAllowed(frame.type, self.pattern, self.isInitiator)) {
         return NO;
     }
+    // ADR 0018 § 1: a peer that did not negotiate fast transfers never receives a frame or field of them, even when a
+    // caller forgets to ask.
+    BOOL fast = self.fastTransfers;
+    if (!fast && SZFriendsIsFastTransferFrame(frame.type)) {
+        return NO;
+    }
+    // ADR 0019: BOOST only to a peer that set the boost's bit.
+    if (frame.type == SZFriendsFrameTypeBoost && !self.directWiFiBoost) {
+        return NO;
+    }
+    if (!fast) {
+        NSMutableDictionary *plain = nil;
+        for (NSNumber *tag in frame.fields) {
+            if (!SZFriendsIsFastTransferTag(tag.integerValue)) continue;
+            plain = plain ?: [frame.fields mutableCopy];
+            [plain removeObjectForKey:tag];
+        }
+        if (plain) frame = [SZFriendsFrame frameWithType:frame.type fields:plain];
+    }
     NSData *plaintext = SZFriendsEncodeFrame(frame, NULL);
     if (plaintext == nil) {
         return NO;
@@ -59,7 +89,8 @@ static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePatt
     // A preview is up to 64 KB, slow over Bluetooth, and never urgent: it waits with the file data, behind messages.
     // A file part asked for again (AGAIN) is file data too.
     if (frame.type == SZFriendsFrameTypeChunk || frame.type == SZFriendsFrameTypeDone ||
-        frame.type == SZFriendsFrameTypeThumbnail || frame.type == SZFriendsFrameTypeAgain) {
+        frame.type == SZFriendsFrameTypeThumbnail || frame.type == SZFriendsFrameTypeAgain ||
+        frame.type == SZFriendsFrameTypeHashes || frame.type == SZFriendsFrameTypePart) {
         [_bulkQueue addObject:plaintext];
     } else {
         [_controlQueue addObject:plaintext];
@@ -154,6 +185,7 @@ static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePatt
     bytes[1] = (uint8_t)written;
     NSUInteger length = message.length;
     _inFlightBytes += length;
+    [self noteSent:[self now]];
     __weak typeof(self) weakSelf = self;
     [_stream writeData:message
             completion:^(NSError *error) {
@@ -172,6 +204,8 @@ static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePatt
         return;
     }
     [self pumpWrites];
+    void (^onWritten)(void) = self.onWritten;
+    if (onWritten && _state == SZFriendsChannelStateEstablished) onWritten();
 }
 
 #pragma mark - Session lifetime
@@ -193,6 +227,7 @@ static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePatt
     if (_state != SZFriendsChannelStateEstablished) {
         return;
     }
+    [self armLivenessTimer]; // a driver may have asked for liveness while the handshake ran
     void (^onEstablished)(void) = self.onEstablished;
     if (onEstablished) {
         onEstablished();
@@ -301,7 +336,9 @@ static BOOL SZFriendsTypeAllowed(SZFriendsFrameType type, SZFriendsHandshakePatt
     default:
         break;
     }
-    if (!SZFriendsTypeAllowed(type, self.pattern, !self.isInitiator)) {
+    if (!SZFriendsTypeAllowed(type, self.pattern, !self.isInitiator) ||
+        (SZFriendsIsFastTransferFrame(type) && !self.fastTransfers) ||
+        (type == SZFriendsFrameTypeBoost && !self.directWiFiBoost)) {
         [self protocolFailure:SZFriendsSessionErrorProtocol reason:@"frame type not allowed in this pattern"];
         return;
     }

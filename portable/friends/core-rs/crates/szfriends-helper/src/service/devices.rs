@@ -252,7 +252,9 @@ impl State {
                 others.push(record);
             }
         }
-        others.sort_by(|a, b| a.added_at.total_cmp(&b.added_at).then(a.device_key.cmp(&b.device_key)));
+        szfriends_core::wire::order::sort_by(&mut others, |a, b| {
+            a.added_at.total_cmp(&b.added_at).then(a.device_key.cmp(&b.device_key))
+        });
         let mut computers = vec![this];
         computers.extend(others.iter().map(|d| DeviceFacts {
             device_id: device_id(&d.device_key),
@@ -281,8 +283,23 @@ impl State {
             you: you.filter(|you| computers.len() >= 2 || you.last_preview_item_id.is_some()),
             computers,
             files,
+            you_items_everywhere: self.you_items_everywhere(),
+            you_copying: self.you_copying(),
             ..DevicesFacts::default()
         }
+    }
+
+    /// You items every other computer of ours holds; with no other computer, what is here is on every computer.
+    fn you_items_everywhere(&self) -> std::collections::BTreeSet<String> {
+        let engine = &self.devices.engine;
+        if !engine.other_device_keys(&self.store).is_empty() {
+            return engine.items_on_every_device(&self.store, YOU);
+        }
+        let conn = self.store.connection();
+        let outgoing = szfriends_core::store::Direction::Outgoing as i64;
+        conn.prepare("SELECT item_id FROM messages WHERE conversation_id = ?1 AND direction = ?2")
+            .and_then(|mut s| s.query_map(rusqlite::params![YOU, outgoing], |r| r.get(0))?.collect())
+            .unwrap_or_default()
     }
 
     /// approve_join, deny_join, join_profile, enter_join_code, cancel_join, revoke_device, rename_device,
@@ -408,6 +425,8 @@ impl State {
         for session in self.sessions.map.values_mut() {
             session.senders.retain(|transfer, _| kept(transfer));
             session.receivers.retain(|transfer, _| kept(transfer));
+            session.block_senders.retain(|transfer, _| kept(transfer));
+            session.block_receivers.retain(|transfer| kept(transfer));
         }
         self.pump_sync();
         self.changed();

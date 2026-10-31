@@ -129,6 +129,17 @@ typedef struct SZFriendsLiveTransfer {
 // order LAN, peer-to-peer Wi-Fi, Bluetooth), across all of that person's devices.
 - (NSDictionary<NSString *, NSArray<NSNumber *> *> *)foundMethodsByConversation;
 - (BOOL)liveTransfer:(NSString *)transferID state:(SZFriendsLiveTransfer *)state;
+// Whether a file received by blocks has been checked for over a second before it is saved ("Finishing…").
+- (BOOL)transferShowsFinishing:(NSString *)transferID;
+@end
+
+@class SZFriendsBoostRow;
+// The Wi-Fi Direct boost (ADR 0019; SZFriendsNearbyService+Boost.m), for facts and intents.
+@interface SZFriendsNearbyService (BoostFacts)
+// Where the boost stands for this transfer's row on this Mac; nil when this helper has none.
+- (nullable SZFriendsBoostRow *)boostRowForTransfer:(NSString *)transferID;
+// boost_transfer and skip_boost: NO when the question is no longer there.
+- (BOOL)answerBoostForTransfer:(NSString *)transferID goFaster:(BOOL)goFaster;
 @end
 
 // Mentions (SZFriendsNearbyService+Mentions.m, ADR 0007). An Add from a mention is an Add by ID that only the mentioned

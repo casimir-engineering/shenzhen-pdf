@@ -14,6 +14,7 @@
 #import "service/session/SZFriendsSession.h"
 #import "service/store/SZFriendsStore.h"
 #import "service/store/SZFriendsTransfers.h"
+#import "service/transfer/SZFriendsBlockExchange.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -27,6 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) NSMutableSet<NSString *> *doneSent;
 @property(nonatomic) NSMutableDictionary<NSString *, SZFriendsChunkReceiver *> *receivers;
 @property(nonatomic) BOOL flushArmed;
+// Files by blocks, on a session that negotiated fast transfers with a friend (ADR 0018), as the helper does.
+@property(nonatomic, nullable) SZFriendsBlockExchange *blocks;
+@property(nonatomic) BOOL blockFlushArmed;
+// A lane of `laneHead`'s group (ADR 0018 § 6): its frames are the head's, its id in the head's exchange its sessionID.
+@property(nonatomic, weak, nullable) SZFPeerSession *laneHead;
 @end
 
 @interface SZFPeer : NSObject
@@ -52,8 +58,14 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface SZFPeer (Network)
-- (NSDictionary *)listen;
+- (NSDictionary *)listenOnAnyInterface:(BOOL)any;
 - (NSDictionary *)dialWithCommand:(NSDictionary *)command;
+@end
+
+// Block exchanges (SZFSessionPeerBlocks.m).
+@interface SZFPeer (Blocks)
+- (nullable SZFriendsBlockExchange *)blocksOf:(SZFPeerSession *)session;
+- (void)wireBlocks:(SZFriendsBlockExchange *)blocks toSession:(SZFPeerSession *)session;
 @end
 
 @interface SZFPeer (Flows)

@@ -121,9 +121,15 @@ static NSData *SZFDerive(NSString *label) {
     NSString *name = command[@"cmd"];
     SZFPeerSession *session = _sessions[@([command[@"session"] unsignedLongLongValue])];
     if ([name isEqualToString:@"hello"]) {
-        return @{@"identity_key" : SZFHex(_identity.publicKey), @"static_key" : SZFHex(_identity.staticPublicKey)};
+        return @{
+            @"identity_key" : SZFHex(_identity.publicKey),
+            @"static_key" : SZFHex(_identity.staticPublicKey),
+            @"session_minor" : @(SZFriendsSessionMinor),
+            // `dial` takes "lane_of" (ADR 0018 § 6), and lanes are admitted.
+            @"lanes" : @YES,
+        };
     } else if ([name isEqualToString:@"listen"]) {
-        return [self listen];
+        return [self listenOnAnyInterface:[command[@"any"] boolValue]];
     } else if ([name isEqualToString:@"public_profile"]) {
         self.publicProfile = @{@(SZFriendsFieldName) : [command[@"name"] dataUsingEncoding:NSUTF8StringEncoding]};
         return @{};
@@ -168,6 +174,15 @@ static NSData *SZFDerive(NSString *label) {
         return [self openLinkWithCommand:command];
     } else if ([name isEqualToString:@"quit"] || [name isEqualToString:@"abort"]) {
         return @{};
+    } else if ([name isEqualToString:@"debug"]) {
+        // Each session's block exchange as it stands (the bench asks when a transfer stalls).
+        NSMutableDictionary *sessions = [NSMutableDictionary dictionary];
+        for (NSNumber *key in self.sessions) {
+            SZFPeerSession *session = self.sessions[key];
+            sessions[key.stringValue] = @{@"lane_of" : session.laneHead ? @(session.laneHead.sessionID) : [NSNull null],
+                                          @"blocks" : session.blocks ? [session.blocks debugState] : [NSNull null]};
+        }
+        return @{@"sessions" : sessions};
     }
     NSDictionary *device = [self deviceCommand:command];
     if (device != nil) return device;

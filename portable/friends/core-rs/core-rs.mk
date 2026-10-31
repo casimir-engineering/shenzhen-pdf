@@ -41,6 +41,14 @@
 #   friends-datachannel-rs-check
 #                           szfriends-datachannel-sys against the helper: its suite with a Rust peer talking to the
 #                           helper's own online transport (tools/objc-dc-peer) over 127.0.0.1. macOS; needs cargo.
+#   friends-transfer-bench  on demand, not in any suite: the transfer bench of ADR 0018 (examples/transfer_bench.rs):
+#                           Rust and Objective-C peers, each its own process, through a proxy emulating each route's
+#                           rate, delay and loss, then a cut and a silence; JSON lines to transfer-bench.jsonl in the
+#                           build tree and a table (MB/s, share of the link, CPU s/GB, recovery). BENCH_* narrow it.
+#   friends-transfer-interop
+#                           on demand, not in any suite: the interop matrix (examples/transfer_interop.rs): peers
+#                           built from the release tags (tools/released-peers.sh) against today's, and today's against
+#                           each other, on each emulated route, with resume after a cut. INTEROP_* narrow it.
 
 FRIENDS_CORE_RS_DIR := friends/core-rs
 # Cargo reads a workspace's .cargo/config.toml only when it runs from inside it; these targets run from portable/, so
@@ -55,24 +63,24 @@ FRIENDS_VECTORS_OUT := $(FRIENDS_CORE_RS_BUILD)/vectors
 
 # What the exporter calls: the Noise state machine, frame codec and secure channel (session), identity, CPace, join
 # tags and Friends IDs (identity), presence tags and the session race (discovery; the racer needs the TXT helpers),
-# the Bluetooth presence value, the store with what it links (the mention form, pictures, previews), and sync.
-# Production sources, not copies.
+# the Bluetooth presence value, the store with what it links (the mention form, pictures, previews), sync, and the
+# fast-transfer area with BLAKE3 (its vectors go to transfer/ beside the others). Production sources, not copies.
 FRIENDS_VECTORS_SRCS = $(wildcard $(FRIENDS_VECTORS_TOOL_DIR)/*.m) $(FRIENDS_SESSION_C_SRCS) \
 	$(FRIENDS_SESSION_M_SRCS) $(FRIENDS_IDENTITY_SRCS) \
 	friends/service/discovery/SZFriendsPresence.m friends/service/discovery/SZFriendsRouteRacer.m \
 	friends/service/discovery/SZFriendsNetworkTXT.m friends/service/discovery/SZFriendsBluetoothPresence.m \
-	$(FRIENDS_STORE_SRCS) $(FRIENDS_SYNC_SRCS) \
+	$(FRIENDS_STORE_SRCS) $(FRIENDS_SYNC_SRCS) $(FRIENDS_TRANSFER_SRCS) \
 	friends/service/presentation/SZFriendsMentions.m friends/avatars/SZFriendsPicture.m \
 	friends/avatars/SZFriendsAnimalSet.m friends/avatars/SZFriendsPictureErrors.m
 FRIENDS_VECTORS_STORE_FIXTURE := friends/service/store/tests/fixtures/store-v1.sql
 
 .PHONY: friends-vectors-tool
-friends-vectors-tool: $(FRIENDS_SODIUM_LIB) $$(FRIENDS_IDENTITY_WORDS_O)
+friends-vectors-tool: $(FRIENDS_SODIUM_LIB) $(FRIENDS_BLAKE3_LIB) $$(FRIENDS_IDENTITY_WORDS_O)
 	@mkdir -p "$(FRIENDS_CORE_RS_BUILD)"
 	@rm -f "$(FRIENDS_VECTORS_TOOL)"
-	clang $(PORTABLE_TEST_OPTFLAGS) $(FRIENDS_OBJC_FLAGS) $(FRIENDS_SODIUM_CFLAGS) -Wno-missing-prototypes \
-		-x objective-c $(filter %.m,$(FRIENDS_VECTORS_SRCS)) -x c $(filter %.c,$(FRIENDS_VECTORS_SRCS)) -x none \
-		$(FRIENDS_IDENTITY_WORDS_O) $(FRIENDS_SODIUM_LIB) -framework Foundation $(FRIENDS_IDENTITY_LIBS) \
+	clang $(PORTABLE_TEST_OPTFLAGS) $(FRIENDS_OBJC_FLAGS) $(FRIENDS_SODIUM_CFLAGS) $(FRIENDS_BLAKE3_CFLAGS) \
+		-Wno-missing-prototypes -x objective-c $(filter %.m,$(FRIENDS_VECTORS_SRCS)) -x c $(filter %.c,$(FRIENDS_VECTORS_SRCS)) -x none \
+		$(FRIENDS_IDENTITY_WORDS_O) $(FRIENDS_SODIUM_LIB) $(FRIENDS_BLAKE3_LIB) -framework Foundation $(FRIENDS_IDENTITY_LIBS) \
 		$(FRIENDS_STORE_LIBS) -o "$(FRIENDS_VECTORS_TOOL)"
 
 FRIENDS_TEST_TARGETS += friends-vectors-check
@@ -86,6 +94,20 @@ friends-vectors-check: friends-vectors-tool
 			echo "$$(basename "$$file") differs from the helper's behaviour:" \
 				"run make friends-vectors-export, then make friends-core-rs-check" >&2; exit 1; }; \
 	done
+	@# ADR 0018's vectors were written from the record by the Rust core first: the helper must give the same bytes.
+	@for file in "$(FRIENDS_VECTORS_DIR)"/transfer/*.json; do \
+		cmp -s "$$file" "$(FRIENDS_VECTORS_OUT)/transfer/$$(basename "$$file")" || { \
+			echo "transfer/$$(basename "$$file"): the helper does not give these bytes (ADR 0018)" >&2; exit 1; }; \
+	done
+	@# ADR 0018's later additions (WP6), also written by the Rust core first: aes_lane.json must be what the helper
+	@# exports once it exports it (until then the check says it is still to mirror, WP4). compressed_parts.json is read
+	@# by the helper's tests instead, since zstd's bytes depend on its version.
+	@for file in "$(FRIENDS_VECTORS_DIR)"/transfer-more/aes_lane.json; do \
+		out="$(FRIENDS_VECTORS_OUT)/transfer-more/$$(basename "$$file")"; \
+		if [ ! -f "$$out" ]; then echo "transfer-more/$$(basename "$$file"): not exported by the helper yet"; \
+		elif ! cmp -s "$$file" "$$out"; then \
+			echo "transfer-more/$$(basename "$$file"): the helper does not give these bytes (ADR 0018)" >&2; exit 1; fi; \
+	done
 	@# A committed objc-*.json the exporter no longer writes would keep feeding the Rust suites stale vectors.
 	@for file in "$(FRIENDS_VECTORS_DIR)"/objc-*.json; do \
 		[ -f "$(FRIENDS_VECTORS_OUT)/$$(basename "$$file")" ] || { \
@@ -98,10 +120,19 @@ friends-vectors-export: friends-vectors-tool
 	@mkdir -p "$(FRIENDS_VECTORS_DIR)"
 	"$(FRIENDS_VECTORS_TOOL)" "$(FRIENDS_VECTORS_DIR)" "$(FRIENDS_VECTORS_STORE_FIXTURE)"
 
+# The other lock files that build the core still fit its manifests: the fuzz workspace's, the Tauri plugin's and, in
+# the Shenzhen repository, Shenzhen 3D's Friends-build lock (the plugin's tools/host-build.sh check). A dependency the
+# core gains reaches them only when they are made again, and a stale one fails a --locked build on another machine.
+FRIENDS_CORE_RS_3D := $(abspath ../../3d)
 .PHONY: friends-core-rs-check
 friends-core-rs-check:
 	CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" \
 		cargo test $(FRIENDS_CORE_RS_MANIFEST) --workspace --locked
+	cargo metadata --manifest-path $(FRIENDS_CORE_RS_DIR)/fuzz/Cargo.toml --locked --format-version 1 >/dev/null
+	cargo metadata --manifest-path friends/tauri/Cargo.toml --locked --format-version 1 >/dev/null
+	if [ -f "$(FRIENDS_CORE_RS_3D)/src-tauri/friends/Cargo.lock" ]; then \
+		cd "$(FRIENDS_CORE_RS_3D)" && bash "$(abspath friends/tauri)/tools/host-build.sh" check src-tauri \
+			src-tauri/friends/Cargo.lock; fi
 
 # Every target a Shenzhen 3D build ships the core on, plus the GNU Windows ABI so a MinGW host stays possible.
 FRIENDS_CORE_RS_TARGETS := x86_64-pc-windows-msvc aarch64-pc-windows-msvc x86_64-pc-windows-gnu \
@@ -115,8 +146,8 @@ FRIENDS_CORE_RS_WASM_CRATES := -p szfriends-wire -p szfriends-contract
 # The store bundles SQLite's C everywhere but on Apple systems (ADR 0015 § 7), so checking a target compiles C for it:
 # the NDK's clang for Android (the newest NDK under the SDK, or FRIENDS_ANDROID_NDK), `zig cc` for Linux
 # (tools/zig-cc.sh), MinGW for Windows GNU. No MSVC headers exist on a Mac, so the MSVC targets check against a linked
-# SQLite instead (LIBSQLITE3_SYS_USE_PKG_CONFIG): the Rust is checked the same, and the bundled C is built for MSVC in
-# the Windows VM (friends-core-rs-vm-check).
+# SQLite instead (LIBSQLITE3_SYS_USE_PKG_CONFIG) and BLAKE3 without its C and assembly (szfriends-core's blake3-pure):
+# the Rust is checked the same, and the C of both is built for MSVC in the Windows VM (friends-core-rs-vm-check).
 FRIENDS_ANDROID_NDK ?= $(lastword $(sort $(wildcard $(HOME)/Library/Android/sdk/ndk/*)))
 FRIENDS_ANDROID_NDK_BIN = $(FRIENDS_ANDROID_NDK)/toolchains/llvm/prebuilt/darwin-x86_64/bin
 
@@ -125,9 +156,9 @@ friends-core-rs-cross-check:
 	@toolchain=$$(rustup run stable rustc --print sysroot) && \
 	export RUSTC="$$toolchain/bin/rustc" CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/cross-target" && \
 	for target in $(FRIENDS_CORE_RS_TARGETS); do \
-		triple=$$(echo "$$target" | tr '-' '_'); \
+		triple=$$(echo "$$target" | tr '-' '_'); features=; \
 		case "$$target" in \
-		*-windows-msvc) set -- LIBSQLITE3_SYS_USE_PKG_CONFIG=1 ;; \
+		*-windows-msvc) set -- LIBSQLITE3_SYS_USE_PKG_CONFIG=1; features="--features szfriends-core/blake3-pure" ;; \
 		*-unknown-linux-gnu) set -- "CC_$$triple=$(abspath $(FRIENDS_CORE_RS_DIR))/tools/zig-cc.sh" \
 			"AR_$$triple=zig ar" "SZFRIENDS_ZIG_TARGET=$${target%%-unknown-linux-gnu}-linux-gnu" ;; \
 		*-android*) clang=$$(echo "$$target" | sed 's/^armv7-/armv7a-/'); \
@@ -137,7 +168,7 @@ friends-core-rs-cross-check:
 		esac; \
 		echo "cargo check --target $$target"; \
 		env SZFRIENDS_DATACHANNEL_NO_NATIVE=1 "$$@" "$$toolchain/bin/cargo" check \
-			$(FRIENDS_CORE_RS_MANIFEST) --workspace --all-targets --locked \
+			$(FRIENDS_CORE_RS_MANIFEST) --workspace --all-targets --locked $$features \
 			--target "$$target" --quiet || exit 1; \
 	done && \
 	echo "cargo check --target wasm32-unknown-unknown" && \
@@ -155,7 +186,7 @@ friends-core-rs-vm-check:
 # entries and any crash land in the build tree, never in the source tree. rustup's stable toolchain and cargo-fuzz.
 FRIENDS_FUZZ_SECONDS ?= 600
 FRIENDS_CORE_RS_FUZZ_TARGETS := frame handshake_payload stream channel_responder chunk_flow json_lines device_chain \
-	join_message sync_message
+	join_message sync_message block_flow
 FRIENDS_CORE_RS_FUZZ_SEEDS := friends/service/thumbnails/fuzz/corpus/frame
 
 .PHONY: friends-core-rs-fuzz
@@ -261,3 +292,25 @@ friends-datachannel-rs-check: $$(FRIENDS_DATACHANNEL_LIBS)
 	CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" \
 		SZFRIENDS_DC_OBJC_PEER="$(abspath $(FRIENDS_DC_PEER))" \
 		cargo test $(FRIENDS_CORE_RS_MANIFEST) -p szfriends-datachannel-sys --locked
+
+# The transfer bench and the interop matrix (ADR 0018 § Verification, WP5). Release builds, as the helpers ship; on
+# demand only. Loopback; temporary homes; the released peers' worktrees and builds stay under the build tree.
+FRIENDS_TRANSFER_EXAMPLES = $(abspath $(FRIENDS_CORE_RS_BUILD))/target/release/examples
+
+.PHONY: friends-transfer-examples
+friends-transfer-examples:
+	CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" cargo build $(FRIENDS_CORE_RS_MANIFEST) --locked \
+		--release -p szfriends-interop --example session_peer --example transfer_bench --example transfer_interop
+
+.PHONY: friends-transfer-bench
+friends-transfer-bench: friends-session-peer friends-transfer-examples
+	SZFRIENDS_OBJC_PEER="$(abspath $(FRIENDS_SESSION_PEER))" \
+		BENCH_OUT="$${BENCH_OUT:-$(abspath $(FRIENDS_CORE_RS_BUILD))/transfer-bench.jsonl}" \
+		"$(FRIENDS_TRANSFER_EXAMPLES)/transfer_bench"
+
+.PHONY: friends-transfer-interop
+friends-transfer-interop: friends-session-peer friends-transfer-examples
+	eval "$$($(FRIENDS_CORE_RS_DIR)/tools/released-peers.sh "$(FRIENDS_CORE_RS_BUILD)/released")" && \
+		SZFRIENDS_OBJC_PEER="$(abspath $(FRIENDS_SESSION_PEER))" \
+		INTEROP_OUT="$${INTEROP_OUT:-$(abspath $(FRIENDS_CORE_RS_BUILD))/transfer-interop.jsonl}" \
+		"$(FRIENDS_TRANSFER_EXAMPLES)/transfer_interop"

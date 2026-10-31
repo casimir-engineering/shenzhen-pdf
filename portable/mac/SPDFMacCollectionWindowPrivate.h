@@ -1,6 +1,7 @@
 #import "SPDFMacCollectionWindow.h"
 #import "SPDFMacCollectionStore.h"
 #import "SPDFMacCollectionCompare.h"
+@class SPDFCollectionThumbnailLoader;
 @interface SPDFMacCollectionWindow ()
 @property(nonatomic) SPDFMacCollectionStore* store;
 @property(nonatomic, copy) SPDFCollectionOpenHandler openHandler;
@@ -22,6 +23,7 @@
 @property(nonatomic) NSCache<NSString*, NSImage*>* thumbnailCache;
 @property(nonatomic) NSOperationQueue* thumbnailQueue;
 @property(nonatomic) NSMutableSet<NSString*>* pendingThumbnails;
+@property(nonatomic) SPDFCollectionThumbnailLoader* thumbnails;
 @property(nonatomic) NSTextField* details;
 @property(nonatomic) NSTextField* storage;
 @property(nonatomic) NSTextField* storagePolicy;
@@ -81,6 +83,7 @@
 - (void)exportCopy:(id)sender;
 - (void)keep:(id)sender;
 - (void)deleteSelected:(id)sender;
+- (void)removeFromDiskAndCollection:(id)sender;
 - (void)changeEnabled:(id)sender;
 - (void)changeLimit:(id)sender;
 - (void)changeLocation:(id)sender;
@@ -89,4 +92,5 @@
 @interface SPDFMacCollectionWindow (Thumbnails)
 - (void)initializeThumbnails;
 - (void)requestThumbnail:(NSDictionary*)row key:(NSString*)key;
+- (void)cancelThumbnails;
 @end

@@ -92,7 +92,10 @@ $PORTABLE/mac/SPDFMacCollectionStyle.mm
 $PORTABLE/mac/SPDFMacPaletteAppearance.mm
 $PORTABLE/mac/SPDFMacSidebarPresentation.mm
 $PORTABLE/mac/SPDFMacCollectionWindowActions.mm
+$PORTABLE/mac/SPDFMacCollectionPermanentDelete.mm
 $PORTABLE/mac/SPDFMacCollectionWindowThumbnails.mm
+$PORTABLE/mac/SPDFMacCollectionThumbnailLoader.mm
+$PORTABLE/mac/SPDFMacTabPreviewCache.mm
 $PORTABLE/mac/SPDFMacCollectionWindowLayout.mm
 $PORTABLE/mac/SPDFMacCollectionWindowSettings.mm
 $PORTABLE/mac/SPDFMacCollectionWindowState.mm

@@ -2,8 +2,9 @@
 //! what no honest peer sends before anything is allocated; the store and presentation apply product rules later.
 
 use crate::consts::{
-    ATTESTATION_MAX, CHUNK_BYTES_WIFI, FRAME_AGAIN_MAX, FRAME_CHAIN_MAX, FRAME_JOIN_MAX, FRAME_PICTURE_MAX,
-    FRAME_SYNC_MAX, FRAME_TEXT_MAX, FRAME_THUMBNAIL_MAX,
+    ATTESTATION_MAX, BOOST_NETWORK_MAX, BOOST_PASSPHRASE_MAX, BOOST_PASSPHRASE_MIN, CHUNK_BYTES_WIFI, FRAME_AGAIN_MAX,
+    FRAME_CHAIN_MAX, FRAME_JOIN_MAX, FRAME_PICTURE_MAX, FRAME_SYNC_MAX, FRAME_TEXT_MAX, FRAME_THUMBNAIL_MAX,
+    HASHES_PER_FRAME, LEAF_BYTES, PART_BYTES_MAX, RANGES_PER_FIELD,
 };
 use crate::types::{tag, FrameType};
 
@@ -13,6 +14,10 @@ pub const REQUIRED: u8 = 1 << 0;
 pub const BOOLEAN: u8 = 1 << 1;
 /// A list of 16-byte IDs.
 pub const MULTIPLE_OF_16: u8 = 1 << 2;
+/// A list of 32-byte hashes.
+pub const MULTIPLE_OF_32: u8 = 1 << 3;
+/// A list of 8-byte block ranges.
+pub const MULTIPLE_OF_8: u8 = 1 << 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldRule {
@@ -31,7 +36,9 @@ impl FieldRule {
         if self.flags & BOOLEAN != 0 && value[0] > 1 {
             return false;
         }
-        !(self.flags & MULTIPLE_OF_16 != 0 && length % 16 != 0)
+        !((self.flags & MULTIPLE_OF_16 != 0 && length % 16 != 0)
+            || (self.flags & MULTIPLE_OF_32 != 0 && length % 32 != 0)
+            || (self.flags & MULTIPLE_OF_8 != 0 && length % 8 != 0))
     }
 
     pub fn required(&self) -> bool {
@@ -86,8 +93,11 @@ const OFFER: &[FieldRule] = &[
     rule(tag::SIZE, 8, 8, REQUIRED),
     rule(tag::DIGEST, 32, 32, REQUIRED),
     rule(tag::VIA_ASSISTANT, 1, 1, BOOLEAN),
+    rule(tag::TREE_ROOT, 32, 32, 0),
+    rule(tag::BLOCK_SHIFT, 1, 1, 0),
 ];
-const OFFER_REPLY: &[FieldRule] = &[ID, rule(tag::ACCEPT, 1, 1, REQUIRED | BOOLEAN), rule(tag::OFFSET, 8, 8, 0)];
+const OFFER_REPLY: &[FieldRule] =
+    &[ID, rule(tag::ACCEPT, 1, 1, REQUIRED | BOOLEAN), rule(tag::OFFSET, 8, 8, 0), rule(tag::BLOCKS, 1, 1, BOOLEAN)];
 const CHUNK: &[FieldRule] = &[ID, rule(tag::OFFSET, 8, 8, REQUIRED), rule(tag::DATA, 1, CHUNK_BYTES_WIFI, REQUIRED)];
 const PROGRESS: &[FieldRule] = &[ID, rule(tag::OFFSET, 8, 8, REQUIRED)];
 const DONE: &[FieldRule] = &[ID, rule(tag::DIGEST, 32, 32, REQUIRED)];
@@ -102,6 +112,48 @@ const CHAIN: &[FieldRule] = &[rule(tag::CHAIN, 3, FRAME_CHAIN_MAX, REQUIRED)];
 const JOIN: &[FieldRule] = &[rule(tag::JOIN, 1, FRAME_JOIN_MAX, REQUIRED)];
 const SYNC: &[FieldRule] = &[rule(tag::SYNC, 1, FRAME_SYNC_MAX, REQUIRED)];
 const AGAIN: &[FieldRule] = &[rule(tag::AGAIN, 1, FRAME_AGAIN_MAX, REQUIRED)];
+const RANGES_MAX: usize = RANGES_PER_FIELD * 8;
+const HASHES: &[FieldRule] = &[
+    ID,
+    rule(tag::INDEX, 4, 4, REQUIRED),
+    rule(tag::HASHES, LEAF_BYTES, HASHES_PER_FRAME * LEAF_BYTES, REQUIRED | MULTIPLE_OF_32),
+];
+/// WANT carries Ranges, Pieces or both: at least one ([`requires_one_of`]).
+const WANT: &[FieldRule] =
+    &[ID, rule(tag::RANGES, 8, RANGES_MAX, MULTIPLE_OF_8), rule(tag::PIECES, 8, RANGES_MAX, MULTIPLE_OF_8)];
+const PART: &[FieldRule] = &[
+    ID,
+    rule(tag::OFFSET, 8, 8, REQUIRED),
+    rule(tag::DATA, 1, PART_BYTES_MAX, REQUIRED),
+    rule(tag::CODEC, 1, 1, 0),
+    rule(tag::LENGTH, 4, 4, 0),
+];
+const HAVE: &[FieldRule] = &[
+    ID,
+    rule(tag::RANGES, 8, RANGES_MAX, MULTIPLE_OF_8),
+    rule(tag::DURABLE, 8, RANGES_MAX, MULTIPLE_OF_8),
+    rule(tag::PIECES, 8, RANGES_MAX, MULTIPLE_OF_8),
+];
+/// BOOST (ADR 0019): the transfer it is for, the step, and per step what it carries (HOST: the link; END and
+/// DECLINE: why). Which fields a step needs is the boost's own check; the codec bounds each one.
+const BOOST: &[FieldRule] = &[
+    ID,
+    rule(tag::REASON, 1, 1, 0),
+    rule(tag::STEP, 1, 1, REQUIRED),
+    rule(tag::ABILITIES, 1, 1, 0),
+    rule(tag::NETWORK, 1, BOOST_NETWORK_MAX, 0),
+    rule(tag::PASSPHRASE, BOOST_PASSPHRASE_MIN, BOOST_PASSPHRASE_MAX, 0),
+    rule(tag::ADDRESS, 4, 16, 0),
+    rule(tag::PORT, 2, 2, 0),
+];
+
+/// Fields of which a type needs at least one, beyond each field's own rule: WANT names blocks, pieces or both.
+pub fn requires_one_of(frame_type: FrameType) -> &'static [u8] {
+    match frame_type {
+        FrameType::Want => &[tag::RANGES, tag::PIECES],
+        _ => &[],
+    }
+}
 
 /// Every field any handshake payload may carry; which ones a given message needs is the channel's check.
 pub const HANDSHAKE_PAYLOAD: &[FieldRule] = &[
@@ -117,6 +169,7 @@ pub const HANDSHAKE_PAYLOAD: &[FieldRule] = &[
     rule(tag::CAPABILITIES, 4, 4, 0),
     rule(tag::ROUTE_CLASS, 1, 1, 0),
     rule(tag::ATTESTATION, 1, ATTESTATION_MAX, 0),
+    rule(tag::LANE, 16, 16, 0),
 ];
 
 /// The rules for a frame type. HELLO, RECEIVED, REKEY and PING define no fields: RECEIVED is fixed-size on purpose,
@@ -145,6 +198,11 @@ pub fn for_type(frame_type: FrameType) -> &'static [FieldRule] {
         Join => JOIN,
         Sync => SYNC,
         Again => AGAIN,
+        Hashes => HASHES,
+        Want => WANT,
+        Part => PART,
+        Have => HAVE,
+        Boost => BOOST,
     }
 }
 

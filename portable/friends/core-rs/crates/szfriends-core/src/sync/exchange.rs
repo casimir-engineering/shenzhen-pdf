@@ -8,6 +8,8 @@
 //! 4 WANT    id length u8 | id | offset u64 | parts u16
 //! 5 PART    id length u8 | id | offset u64 | last u8 | bytes
 //! 6 NONE    id length u8 | id
+//! 7 WANT BLOCKS    id length u8 | id | shift u8 | ranges   (ADR 0018 § 4; fast-transfer sessions only)
+//! 8 BLOCKS FOLLOW  id length u8 | id | root (32) | shift u8; HASHES and PARTs follow on the session
 //! ```
 //!
 //! Sans-IO: what to send collects in [`SyncExchange::take_messages`].
@@ -22,6 +24,8 @@ use super::{label_is_valid, SyncError, BODY_MAX, FILE_PART_MAX, MESSAGE_MAX, WIN
 use crate::store::sync_files::{self, SyncFile};
 use crate::store::sync_log::Vector;
 use crate::store::Store;
+use crate::transfer::block_copy::{remove_copy, BlockCopy, CopyPart};
+use crate::transfer::copies::{self, CopyMessage};
 
 const COPY_PARTS: u16 = 8;
 const COPY_AHEAD: u64 = 16;
@@ -40,6 +44,17 @@ struct Copy {
     handle: std::fs::File,
     received: u64,
     requested: u64,
+    /// By blocks, on a session with fast transfers (ADR 0018 § 4), resumed from its map.
+    blocks: Option<BlockCopy>,
+}
+
+/// A file this device serves by blocks to the other: the leaves and the blocks asked for, cut from `path`.
+#[derive(Debug)]
+pub struct ServeBlocks {
+    pub transfer_id: String,
+    pub serve: crate::transfer::BlockServe,
+    pub path: PathBuf,
+    pub root: [u8; 32],
 }
 
 pub struct SyncExchange {
@@ -53,6 +68,15 @@ pub struct SyncExchange {
     hello_received: bool,
     outgoing: Vec<Vec<u8>>,
     serving: Option<(String, f64)>,
+    /// The session negotiated fast transfers: the other device may ask for files by blocks.
+    fast: bool,
+    /// This device asks for its copies by blocks (and the other answers them).
+    request_blocks: bool,
+    /// The helper copies by blocks from every holder at once (`pulled`): this exchange starts no copy of its own.
+    pulled: bool,
+    /// HAVE frames of a copy by blocks, and files to serve by blocks, for the session to send.
+    frames: Vec<szfriends_wire::Frame>,
+    serve_blocks: Vec<ServeBlocks>,
 }
 
 impl std::fmt::Debug for SyncExchange {
@@ -110,7 +134,48 @@ impl SyncExchange {
             hello_received: false,
             outgoing: Vec::new(),
             serving: None,
+            fast: false,
+            request_blocks: false,
+            pulled: false,
+            frames: Vec::new(),
+            serve_blocks: Vec::new(),
         }
+    }
+
+    /// The session negotiated fast transfers (ADR 0018 § 4): the other device may ask for files by blocks, and with
+    /// `request_blocks` this one asks for its copies so.
+    pub fn set_fast(&mut self, fast: bool, request_blocks: bool) {
+        self.fast = fast;
+        self.request_blocks = fast && request_blocks;
+    }
+
+    /// The helper pulls this device's copies from every holder at once (ADR 0018 § 9.6): no copy starts here.
+    pub fn set_pulled(&mut self, pulled: bool) {
+        self.pulled = pulled;
+    }
+
+    /// A copy elsewhere finished this file: one in progress here stops (what arrived waits, as after Cancel).
+    pub fn stop_copy(&mut self, transfer_id: &str) {
+        if self.copy.as_ref().is_some_and(|c| c.file.transfer_id == transfer_id) {
+            if let Some(blocks) = self.copy.take().and_then(|c| c.blocks) {
+                blocks.pause();
+            }
+        }
+    }
+
+    /// HAVE frames for the copy by blocks, to send after the messages.
+    pub fn take_frames(&mut self) -> Vec<szfriends_wire::Frame> {
+        std::mem::take(&mut self.frames)
+    }
+
+    /// Files to serve by blocks, which the session takes over (it sends their leaves, then the blocks).
+    pub fn take_serve_blocks(&mut self) -> Vec<ServeBlocks> {
+        std::mem::take(&mut self.serve_blocks)
+    }
+
+    /// The transfer copying by blocks now, whose HASHES and PARTs this exchange takes.
+    pub fn copying_by_blocks(&self) -> Option<&str> {
+        self.copy.as_ref().filter(|c| c.blocks.is_some()).map(|c| c.file.transfer_id.as_str())
     }
 
     pub fn peer_key(&self) -> &[u8; 32] {
@@ -141,11 +206,14 @@ impl SyncExchange {
 
     pub fn copying(&self) -> Option<(&str, f64)> {
         self.copy.as_ref().map(|c| {
-            let fraction = if c.file.size > 0 { c.received as f64 / c.file.size as f64 } else { 0.0 };
+            let received = c.blocks.as_ref().map_or(c.received, BlockCopy::received_bytes);
+            let fraction = if c.file.size > 0 { received as f64 / c.file.size as f64 } else { 0.0 };
             (c.file.transfer_id.as_str(), fraction)
         })
     }
 
+    /// The file this exchange streams to the other device now (PART after PART), and how much of it went. A file
+    /// served by blocks is the session's to report (`take_serve_blocks`).
     pub fn serving(&self) -> Option<(&str, f64)> {
         self.serving.as_ref().map(|(id, fraction)| (id.as_str(), *fraction))
     }
@@ -153,7 +221,9 @@ impl SyncExchange {
     /// The session ended: partial copies stay for the next one.
     pub fn stop(&mut self) {
         self.stopped = true;
-        self.copy = None;
+        if let Some(blocks) = self.copy.take().and_then(|c| c.blocks) {
+            blocks.pause();
+        }
     }
 
     /// A message from the peer; an error means it broke the protocol: end the session.
@@ -171,6 +241,9 @@ impl SyncExchange {
             WANT => self.receive_want(engine, store, message),
             PART => self.receive_part(engine, store, message),
             NONE => self.receive_none(engine, store, message),
+            copies::SYNC_WANT_BLOCKS | copies::SYNC_BLOCKS_FOLLOW if self.fast => {
+                self.receive_blocks_message(engine, store, message)
+            }
             _ => Err(SyncError::Malformed("an unknown sync message")),
         }
     }
@@ -305,160 +378,7 @@ impl SyncExchange {
         }
         self.start_next_copy(engine, store);
     }
-
-    fn start_next_copy(&mut self, engine: &SyncEngine, store: &Store) {
-        if self.copy.is_some() || self.stopped {
-            return;
-        }
-        for file in engine.files_wanted(store) {
-            if !file.holders.contains(&self.peer_key) || self.unavailable.contains(&file.transfer_id) {
-                continue;
-            }
-            let partial = engine.received_dir.join(".partial");
-            if std::fs::create_dir_all(&partial).is_err() {
-                continue;
-            }
-            let path = partial.join(format!("sync-{}", file.transfer_id));
-            let Ok(mut handle) =
-                std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&path)
-            else {
-                continue;
-            };
-            let mut held = handle.seek(SeekFrom::End(0)).unwrap_or(0);
-            if held > file.size {
-                let _ = handle.set_len(0);
-                let _ = handle.seek(SeekFrom::Start(0));
-                held = 0;
-            }
-            self.copy = Some(Copy { file, path, handle, received: held, requested: held });
-            self.request_more();
-            return;
-        }
-    }
-
-    fn request_more(&mut self) {
-        let Some(copy) = self.copy.as_mut() else { return };
-        let size = copy.file.size;
-        let mut first = copy.requested == copy.received;
-        while (copy.requested < size || (size == 0 && first))
-            && copy.requested - copy.received < COPY_AHEAD * FILE_PART_MAX as u64
-        {
-            let mut want = vec![WANT];
-            put_id(&mut want, &copy.file.transfer_id);
-            want.extend_from_slice(&copy.requested.to_be_bytes());
-            want.extend_from_slice(&COPY_PARTS.to_be_bytes());
-            self.outgoing.push(want);
-            copy.requested = size.min(copy.requested + u64::from(COPY_PARTS) * FILE_PART_MAX as u64);
-            if size == 0 {
-                break;
-            }
-            first = false;
-        }
-    }
-
-    fn receive_want(&mut self, engine: &mut SyncEngine, store: &Store, message: &[u8]) -> Result<(), SyncError> {
-        let mut offset = 1;
-        let id = get_id(message, &mut offset).filter(|_| offset + 10 == message.len());
-        let id = id.ok_or(SyncError::Malformed("a WANT that does not decode"))?;
-        let start = u64::from_be_bytes(message[offset..offset + 8].try_into().expect("8"));
-        let parts = u64::from(u16::from_be_bytes([message[offset + 8], message[offset + 9]])).min(COPY_AHEAD);
-        let path = engine.local_path_of_file(store, &id);
-        let size = path.as_ref().and_then(|_| sync_files::transfer(&store.conn, &id).ok().flatten()).map(|t| t.size);
-        let handle = path.and_then(|p| std::fs::File::open(p).ok());
-        let (Some(mut handle), Some(size)) = (handle, size.filter(|s| start <= *s)) else {
-            let mut none = vec![NONE];
-            put_id(&mut none, &id);
-            self.outgoing.push(none);
-            if size.is_none() {
-                // Listed as holding it and it is gone (moved or deleted here): every device hears so now.
-                if engine.capture_local_changes(store) > 0 {
-                    self.pump(engine, store);
-                }
-            }
-            return Ok(());
-        };
-        let _ = handle.seek(SeekFrom::Start(start));
-        let mut at = start;
-        for _ in 0..parts {
-            let length = (FILE_PART_MAX as u64).min(size - at) as usize;
-            let mut bytes = vec![0u8; length];
-            let read = handle.read(&mut bytes).unwrap_or(0);
-            bytes.truncate(read);
-            let last = at + bytes.len() as u64 >= size;
-            let mut part = vec![PART];
-            put_id(&mut part, &id);
-            part.extend_from_slice(&at.to_be_bytes());
-            part.push(u8::from(last));
-            part.extend_from_slice(&bytes);
-            self.outgoing.push(part);
-            at += bytes.len() as u64;
-            if last || bytes.is_empty() {
-                break;
-            }
-        }
-        let fraction = if size > 0 { at as f64 / size as f64 } else { 1.0 };
-        self.serving = (at < size).then_some((id, fraction));
-        Ok(())
-    }
-
-    fn receive_part(&mut self, engine: &mut SyncEngine, store: &Store, message: &[u8]) -> Result<(), SyncError> {
-        let mut offset = 1;
-        let id = get_id(message, &mut offset).filter(|_| offset + 9 <= message.len());
-        let id = id.ok_or(SyncError::Malformed("a PART that does not decode"))?;
-        let at = u64::from_be_bytes(message[offset..offset + 8].try_into().expect("8"));
-        let last = message[offset + 8] != 0;
-        let bytes = &message[offset + 9..];
-        let Some(copy) = self.copy.as_mut() else { return Ok(()) };
-        if copy.file.transfer_id != id || at != copy.received {
-            return Ok(());
-        }
-        let end = copy.received + bytes.len() as u64;
-        if end > copy.file.size || (last && end != copy.file.size) {
-            self.abandon_copy(true);
-            return Ok(());
-        }
-        if copy.handle.write_all(bytes).is_err() {
-            // No room left here: what arrived goes, and so does the Get; the item offers Get, which then says so.
-            self.abandon_copy(true);
-            let _ = engine.cancel_file_request(store, &id);
-            return Ok(());
-        }
-        copy.received = end;
-        if copy.received < copy.file.size {
-            self.request_more();
-            return Ok(());
-        }
-        let copy = self.copy.take().expect("present");
-        let _ = copy.handle.sync_all();
-        drop(copy.handle);
-        if matches_digest(&copy.path, copy.file.size, &copy.file.digest) {
-            let _ = engine.adopt_copied_file(store, &id, &copy.path);
-        } else {
-            let _ = std::fs::remove_file(&copy.path);
-            self.unavailable.insert(id);
-        }
-        self.start_next_copy(engine, store);
-        Ok(())
-    }
-
-    fn receive_none(&mut self, engine: &mut SyncEngine, store: &Store, message: &[u8]) -> Result<(), SyncError> {
-        let mut offset = 1;
-        let id = get_id(message, &mut offset).filter(|_| offset == message.len());
-        let id = id.ok_or(SyncError::Malformed("a NONE that does not decode"))?;
-        self.unavailable.insert(id.clone());
-        if self.copy.as_ref().is_some_and(|c| c.file.transfer_id == id) {
-            self.abandon_copy(false);
-        }
-        self.start_next_copy(engine, store);
-        Ok(())
-    }
-
-    fn abandon_copy(&mut self, discard: bool) {
-        if let Some(copy) = self.copy.take() {
-            if discard {
-                let _ = std::fs::remove_file(&copy.path);
-            }
-            self.unavailable.insert(copy.file.transfer_id);
-        }
-    }
 }
+
+#[path = "exchange_copies.rs"]
+mod own_copies;

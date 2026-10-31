@@ -57,6 +57,7 @@
 #import "SPDFMacMarkdownDelegatePrivate.h"
 #import "SPDFMacTranslationEnablement.h"
 #import "SPDFMacTranslationChoice.h"
+#import "SPDFMacTranslatedPDF.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacPaletteResults.h"
 #import "SPDFMacPaletteActivation.h"
@@ -302,15 +303,6 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if ([title isEqualToString:@"Finder"] || [title isEqualToString:@"Shenzhen Files"]) return @"folder";
     if ([title isEqualToString:@"Move & Resize Window"]) return @"rectangle.arrowtriangle.2.inward";
     return nil;
-}
-
-static NSString* SPDFTextByCollapsingWhitespace(NSString* text) {
-    NSString* trimmed = [text ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (trimmed.length == 0) return @"";
-    return [trimmed stringByReplacingOccurrencesOfString:@"[\\s\\u00a0]+"
-                                              withString:@" "
-                                                 options:NSRegularExpressionSearch
-                                                   range:NSMakeRange(0, trimmed.length)];
 }
 
 static NSString* SPDFAppleScriptStringLiteral(NSString* text) {
@@ -2705,7 +2697,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     _translateButton = [self buttonWithTitle:@"" action:@selector(translateDocument:)];
     _translateButton.image = spdf_translate_toolbar_image();
     _translateButton.imagePosition = NSImageOnly;
-    _translateButton.toolTip = @"Translate selected text or the document";
+    _translateButton.toolTip = @"Translate this document";
     _translateButton.accessibilityLabel = @"Translate Document";
     [_translateButton.widthAnchor constraintEqualToConstant:32].active = YES;
     [_translateButton setContentHuggingPriority:NSLayoutPriorityRequired
@@ -2998,23 +2990,6 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     if (size.width <= 1.0) size.width = NSWidth(_documentContainer.bounds);
     if (size.height <= 1.0) size.height = NSHeight(_documentContainer.bounds);
     return size;
-}
-
-- (CGFloat)zoomForFitMode:(SPDFFitMode)fitMode
-                 pageSize:(NSSize)pageSize
-                 clipSize:(NSSize)clipSize
-             fallbackZoom:(CGFloat)fallbackZoom {
-    fallbackZoom = fallbackZoom > 0 ? fallbackZoom : 1.0;
-    if (fitMode == SPDFFitModeCustom) return MAX(kMinZoom, MIN(kMaxZoom, fallbackZoom));
-    if (fitMode == SPDFFitModeActual) return 1.0;
-    if (pageSize.width <= 0.0 || pageSize.height <= 0.0 || clipSize.width <= 0.0 || clipSize.height <= 0.0)
-        return MAX(kMinZoom, MIN(kMaxZoom, fallbackZoom));
-
-    CGFloat widthZoom = clipSize.width / pageSize.width;
-    CGFloat heightZoom = clipSize.height / pageSize.height;
-    if (fitMode == SPDFFitModeWidth) return MAX(kMinZoom, MIN(kMaxZoom, widthZoom));
-    if (fitMode == SPDFFitModeHeight) return MAX(kMinZoom, MIN(kMaxZoom, heightZoom));
-    return MAX(kMinZoom, MIN(kMaxZoom, MIN(widthZoom, heightZoom)));
 }
 
 - (SPDFRenderedPage*)renderedPageAtIndex:(NSInteger)pageIndex
@@ -4880,10 +4855,15 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _visibleCropRenderSequence++;
     _renderGeneration++;
     NSUInteger generation = _renderGeneration;
-    _zoom = [self zoomForFitMode:_fitMode pageIndex:MAX(0, pageIndex)];
     NSMutableArray<SPDFRenderedPage*>* pages = [NSMutableArray arrayWithCapacity:(NSUInteger)spdf_page_count(_doc)];
     char err[1024];
     NSInteger pageCount = spdf_page_count(_doc);
+    // A re-render that keeps the view (restoreOrigin: a comment, a theme, a tab's saved place) keeps the page the zoom
+    // was fitted to: refitting to the page shown changes the zoom when pages differ in size, and the origin would then
+    // show another page (SPDFDocumentTab.fitPageIndex). Anything else fits the page it goes to.
+    BOOL keepFit = restoreOrigin && _fitPageIndex >= 0 && _fitPageIndex < pageCount;
+    _fitPageIndex = keepFit ? _fitPageIndex : MAX(0, pageIndex);
+    _zoom = [self zoomForFitMode:_fitMode pageIndex:_fitPageIndex];
     pageIndex = MAX(0, MIN(pageIndex, pageCount - 1));
     double launchRenderStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
     SPDFRenderedPage* preferredPage = nil;
@@ -5054,6 +5034,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         CGFloat newZoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
         if (isfinite(newZoom) && newZoom > 0.0 && fabs(newZoom - _zoom) > 0.0001) {
             _zoom = newZoom;
+            _fitPageIndex = _pageIndex;
             _pageView.zoom = _zoom;
         }
     }
@@ -6093,6 +6074,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.zoom = _zoom;
     tab.customZoom = _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom;
     tab.fitMode = _fitMode;
+    tab.fitPageIndex = _fitPageIndex;
     tab.showSidebar = _sidebarPreferredVisible;
     tab.showMinimap = _minimapPreferredVisible;
     tab.hasMinimapPreference = YES;
@@ -6912,6 +6894,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         SPDFMacInactivePreload* preloadResult = [SPDFMacInactivePreload new];
         _preloadResults[standardized] = preloadResult;
         NSInteger preferredPage = MAX(0, tab.pageIndex);
+        NSInteger fitPage = spdf_tab_fit_page_index(tab, preferredPage, NSIntegerMax);
         SPDFFitMode fitMode = tab.fitMode;
         CGFloat fallbackZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
         NSSize clipSize = [self documentClipSizeForLayout];
@@ -7056,8 +7039,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                       spdf_close(doc);
                   return;
               }
+              float fitWidth = pageWidth, fitHeight = pageHeight; // the zoom it will show: spdf_tab_fit_page_index
+              if (fitPage != pageIndex && fitPage < pageCount)
+                  spdf_page_size(doc, (int)fitPage, &fitWidth, &fitHeight, err, sizeof(err));
               CGFloat zoom = [self zoomForFitMode:fitMode
-                                         pageSize:NSMakeSize(pageWidth, pageHeight)
+                                         pageSize:NSMakeSize(fitWidth, fitHeight)
                                          clipSize:clipSize
                                      fallbackZoom:fallbackZoom];
               err[0] = '\0';
@@ -7811,9 +7797,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self prepareSelectedTabViewState:tab path:path];
     [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
     _pageIndex = MAX(0, MIN(tab.pageIndex, pageCount - 1));
+    _fitPageIndex = spdf_tab_fit_page_index(tab, _pageIndex, pageCount);
     _fitMode = tab.fitMode;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
-    _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
+    _zoom = [self zoomForFitMode:_fitMode pageIndex:_fitPageIndex];
     _renderGeneration++;
     // Bumping the generation invalidates any minimap thumbnail renders that were
     // enqueued for the outgoing tab (or earlier in this switch) — their
@@ -7874,7 +7861,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
           // reads "Fit Page" while the rendered zoom is stale. Custom/Actual
           // don't depend on clip width, so they're left untouched.
           if ([self isAutoFitMode:self->_fitMode]) {
-              CGFloat fit = [self zoomForFitMode:self->_fitMode pageIndex:self->_pageIndex];
+              CGFloat fit = [self zoomForFitMode:self->_fitMode pageIndex:self->_fitPageIndex];
               if (isfinite(fit) && fit > 0.0 && fabs(fit - self->_zoom) > 0.0001) {
                   self->_zoom = fit;
                   self->_pageView.zoom = self->_zoom;
@@ -8331,10 +8318,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
         [self loadInitialSidebarMetadataForSelectedTabIfNeeded];
     }
     _pageIndex = MAX(0, MIN(tab.pageIndex, pageCount - 1));
+    _fitPageIndex = spdf_tab_fit_page_index(tab, _pageIndex, pageCount);
     _renderGeneration++;
     _rememberedCustomZoom = tab.customZoom > 0 ? tab.customZoom : (tab.zoom > 0 ? tab.zoom : 1.0);
     _fitMode = tab.fitMode;
-    _zoom = [self zoomForFitMode:_fitMode pageIndex:_pageIndex];
+    _zoom = [self zoomForFitMode:_fitMode pageIndex:_fitPageIndex];
 
     _statusLabel.stringValue = @"Opening...";
     NSClipView* clipView = _pageScrollView.contentView;
@@ -8381,7 +8369,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                           alignTop:YES
                                         generation:layoutGeneration
                                               path:layoutPath];
+    // Once more after the run loop has laid the window out, unless the view moved since: a page turned right after
+    // the switch (this pass can come tens of ms later on a busy machine) is where the person is, not the tab's place.
+    NSPoint settledOrigin = _pageScrollView.contentView.bounds.origin;
     dispatch_async(dispatch_get_main_queue(), ^{
+      if (!NSEqualPoints(self->_pageScrollView.contentView.bounds.origin, settledOrigin)) return;
       [self stabilizeDocumentLayoutWithRestoreOrigin:restoreOrigin
                                             alignTop:YES
                                           generation:layoutGeneration
@@ -10575,7 +10567,9 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (NSString*)currentTextForTranslationUsingSelection:(BOOL*)usingSelection error:(NSString**)errorOut {
     _pendingTranslationItems = nil;
-    BOOL hasSelection = _selectedText.length > 0 && _selectionPageIndex >= 0 && [self currentSelectionRects].count > 0;
+    _pendingTranslationChapters = nil;
+    // The picker translates the whole document, whatever is selected.
+    BOOL hasSelection = ![self localTranslationRequest] && _selectedText.length > 0 && _selectionPageIndex >= 0 && [self currentSelectionRects].count > 0;
     if (hasSelection) {
         NSRect bounds = NSZeroRect;
         BOOL hasBounds = NO;
@@ -10644,179 +10638,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     }
     _pendingTranslationItems = items;
     return text;
-}
-
-// Whole-document translation: per-item translate/skip decision shared with
-// the core (script of the item's text vs. the selected languages; a Chinese
-// or Latin-script source takes precedence, otherwise the target decides).
-// Skipped blocks are left completely untouched -- not sent to Argos and no
-// overlay drawn. Rebuilds _pendingTranslationItems in lockstep and returns
-// the filtered source text (empty when nothing passes).
-- (NSString*)sourceTextByKeepingTranslatableLines:(NSString*)sourceText
-                                     sourceScript:(spdf_translation_script)sourceScript
-                                     targetScript:(spdf_translation_script)targetScript {
-    NSArray<NSString*>* sourceLines =
-        [sourceText componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
-    NSArray<NSDictionary*>* items = _pendingTranslationItems ?: @[];
-    NSMutableArray<NSDictionary*>* keptItems = [NSMutableArray arrayWithCapacity:items.count];
-    NSMutableString* keptText = [NSMutableString string];
-    for (NSUInteger i = 0; i < items.count; ++i) {
-        NSString* line = i < sourceLines.count ? sourceLines[i] : @"";
-        if (!spdf_translation_should_translate(line.UTF8String, sourceScript, targetScript)) continue;
-        [keptItems addObject:items[i]];
-        [keptText appendString:line];
-        [keptText appendString:@"\n"];
-    }
-    _pendingTranslationItems = keptItems;
-    return keptText;
-}
-
-// Chapter (outline) titles and comment texts join the same batched Argos
-// pipeline as body blocks: one source line per item, appended after the body
-// lines under the same per-item translate/skip decision. Titles and comment
-// texts are collapsed to single lines so the one-line-per-item mapping
-// through Argos holds. "index" identifies the entry for the core writer
-// (spdf_load_outline pre-order index / visible comment index); "page" only
-// groups the items into spawn batches after the last body page.
-- (NSString*)sourceTextByAppendingOutlineAndCommentItems:(NSString*)sourceText
-                                            sourceScript:(spdf_translation_script)sourceScript
-                                            targetScript:(spdf_translation_script)targetScript {
-    if (!_doc) return sourceText;
-    NSMutableArray<NSDictionary*>* items = [_pendingTranslationItems mutableCopy] ?: [NSMutableArray array];
-    NSMutableString* text = [sourceText mutableCopy] ?: [NSMutableString string];
-    int pageCount = spdf_page_count(_doc);
-    char err[512];
-
-    spdf_outline outline;
-    memset(&outline, 0, sizeof(outline));
-    if (spdf_load_outline(_doc, &outline, err, sizeof(err))) {
-        for (int i = 0; i < outline.count; ++i) {
-            NSString* title = outline.items[i].title ? [NSString stringWithUTF8String:outline.items[i].title] : nil;
-            title = SPDFTextByCollapsingWhitespace(title ?: @"");
-            if (title.length == 0) continue;
-            if (!spdf_translation_should_translate(title.UTF8String, sourceScript, targetScript)) continue;
-            [items addObject:@{@"kind" : @"outline", @"index" : @(i), @"page" : @(pageCount)}];
-            [text appendString:title];
-            [text appendString:@"\n"];
-        }
-        spdf_free_outline(&outline);
-    }
-
-    spdf_comments comments;
-    memset(&comments, 0, sizeof(comments));
-    if (spdf_load_comments(_doc, &comments, err, sizeof(err))) {
-        for (int i = 0; i < comments.count; ++i) {
-            NSString* body = comments.items[i].text ? [NSString stringWithUTF8String:comments.items[i].text] : nil;
-            body = SPDFTextByCollapsingWhitespace(body ?: @"");
-            if (body.length == 0) continue;
-            if (!spdf_translation_should_translate(body.UTF8String, sourceScript, targetScript)) continue;
-            [items
-                addObject:@{@"kind" : @"comment", @"index" : @(comments.items[i].index), @"page" : @(pageCount + 1)}];
-            [text appendString:body];
-            [text appendString:@"\n"];
-        }
-        spdf_free_comments(&comments);
-    }
-
-    _pendingTranslationItems = items;
-    return text;
-}
-
-- (BOOL)writeTranslatedPDFWithText:(NSString*)text
-                        sourcePath:(NSString*)sourcePath
-                        outputPath:(NSString*)outputPath
-                             error:(NSError**)errorOut {
-    (void)sourcePath;
-    if (text.length == 0 || outputPath.length == 0 || _pendingTranslationItems.count == 0) return NO;
-
-    NSArray<NSString*>* outputLines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
-    NSMutableArray<NSString*>* mappedText = [NSMutableArray arrayWithCapacity:_pendingTranslationItems.count];
-    if (_pendingTranslationItems.count == 1) {
-        [mappedText addObject:text];
-    } else {
-        for (NSUInteger i = 0; i < _pendingTranslationItems.count; ++i) {
-            NSString* translated = i < outputLines.count ? outputLines[i] : @"";
-            [mappedText addObject:translated.length ? translated : @" "];
-        }
-        if (outputLines.count > _pendingTranslationItems.count && mappedText.count > 0) {
-            NSMutableString* tail = [mappedText.lastObject mutableCopy];
-            for (NSUInteger i = _pendingTranslationItems.count; i < outputLines.count; ++i) {
-                NSString* extra = outputLines[i];
-                if (extra.length == 0) continue;
-                if (tail.length > 0) [tail appendString:@"\n"];
-                [tail appendString:extra];
-            }
-            mappedText[mappedText.count - 1] = tail;
-        }
-    }
-
-    NSUInteger count = MIN(_pendingTranslationItems.count, mappedText.count);
-    spdf_translated_line* lines = (spdf_translated_line*)calloc(count ? count : 1, sizeof(spdf_translated_line));
-    spdf_translated_text* outlineTitles =
-        (spdf_translated_text*)calloc(count ? count : 1, sizeof(spdf_translated_text));
-    spdf_translated_text* commentTexts = (spdf_translated_text*)calloc(count ? count : 1, sizeof(spdf_translated_text));
-    if (!lines || !outlineTitles || !commentTexts) {
-        free(lines);
-        free(outlineTitles);
-        free(commentTexts);
-        return NO;
-    }
-    // Keeps the collapsed/trimmed strings (and their UTF8String buffers)
-    // alive until the core call below returns.
-    NSMutableArray<NSString*>* retainedTexts = [NSMutableArray arrayWithCapacity:count];
-    NSUInteger lineCount = 0;
-    NSUInteger outlineCount = 0;
-    NSUInteger commentCount = 0;
-    for (NSUInteger i = 0; i < count; ++i) {
-        NSDictionary* item = _pendingTranslationItems[i];
-        NSString* kind = item[@"kind"];
-        if ([kind isEqualToString:@"outline"]) {
-            // Titles must stay single-line; keep the original when Argos
-            // produced nothing for this line.
-            NSString* title = SPDFTextByCollapsingWhitespace(mappedText[i]);
-            if (title.length == 0) continue;
-            [retainedTexts addObject:title];
-            outlineTitles[outlineCount].index = [item[@"index"] intValue];
-            outlineTitles[outlineCount].text = title.UTF8String;
-            outlineCount++;
-        } else if ([kind isEqualToString:@"comment"]) {
-            NSString* body =
-                [mappedText[i] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            if (body.length == 0) continue;
-            [retainedTexts addObject:body];
-            commentTexts[commentCount].index = [item[@"index"] intValue];
-            commentTexts[commentCount].text = body.UTF8String;
-            commentCount++;
-        } else {
-            NSRect rect = [item[@"rect"] rectValue];
-            lines[lineCount].page_index = [item[@"page"] intValue];
-            lines[lineCount].bounds.x0 = (float)NSMinX(rect);
-            lines[lineCount].bounds.y0 = (float)NSMinY(rect);
-            lines[lineCount].bounds.x1 = (float)NSMaxX(rect);
-            lines[lineCount].bounds.y1 = (float)NSMaxY(rect);
-            lines[lineCount].font_size = [item[@"font"] floatValue];
-            lines[lineCount].opaque_background = SPDF_TRANSLATION_BACKGROUND_OPAQUE;
-            lines[lineCount].text = mappedText[i].UTF8String;
-            lineCount++;
-        }
-    }
-
-    char err[1024];
-    BOOL ok =
-        spdf_save_translated_copy_full(_doc, outputPath.fileSystemRepresentation, lines, (int)lineCount, outlineTitles,
-                                       (int)outlineCount, commentTexts, (int)commentCount, err, sizeof(err));
-    (void)retainedTexts;
-    free(lines);
-    free(outlineTitles);
-    free(commentTexts);
-    if (!ok && errorOut) {
-        NSString* detail = [NSString stringWithUTF8String:err[0] ? err : "Could not save translated PDF."];
-        *errorOut =
-            [NSError errorWithDomain:@"ShenzhenPDFTranslation"
-                                code:1
-                            userInfo:@{NSLocalizedDescriptionKey : detail ?: @"Could not save translated PDF."}];
-    }
-    return ok;
 }
 
 - (NSString*)currentCommentAuthor {
@@ -12785,6 +12606,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     _translationCancelRequested = NO;
     _translateButton.enabled = NO;
     _statusLabel.stringValue = @"Translating with Argos...";
+    NSString* besidePath = [_path copy];
+    // A Markdown, text or EPUB document was translated as a PDF made from it: said so when it is done.
+    BOOL fromRendition = _translatingMadePDF;
 
     NSArray<NSDictionary*>* items = [_pendingTranslationItems copy] ?: @[];
     NSUInteger totalUnits = MAX((NSUInteger)1, items.count);
@@ -12945,9 +12769,10 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         }
 
         [strongSelf finishTranslationProgressWithDetail:@"Translation complete." keepVisible:NO];
-        [strongSelf openPath:outputPath];
+        [strongSelf openTranslation:outputPath besidePath:besidePath];
         strongSelf->_statusLabel.stringValue =
-            [NSString stringWithFormat:@"Translation saved: %@", outputPath.lastPathComponent];
+            [NSString stringWithFormat:fromRendition ? @"Translation saved as a PDF: %@" : @"Translation saved: %@",
+                                       outputPath.lastPathComponent];
       });
     });
 }
@@ -13005,9 +12830,28 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                          }];
 }
 - (void)translateDocumentLocally:(id)sender {
-    if (![self beginTranslateCommandForSender:sender]) return;
+    // From the picker (SPDFMacTranslationChoice.h): the whole document into its language, named "<name> (<Language>)".
+    NSDictionary* request = [self localTranslationRequest];
+    if (![self beginTranslateCommandForSender:sender]) {
+        [self clearLocalTranslationRequest];
+        return;
+    }
+    // A Markdown or EPUB document is translated as a PDF made from it; this runs again once that is open, with the
+    // request still there.
     if ([self beginWholeDocumentTranslationForMarkdown] || [self beginNativeDocumentTranslation]) return;
-    if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) return;
+    [self clearLocalTranslationRequest];
+    _translatingMadePDF = [request[@"madePDF"] boolValue];
+    if (request) {
+        // The document itself is only read: a read-only one stays where it is. Only its permissions can refuse.
+        if (spdf_is_password_protected(_doc) && !spdf_has_permission(_doc, 'e')) {
+            [self showError:@"Operation is not allowed"
+                     detail:@"This PDF's user permissions do not allow translation. Open it with the owner password to "
+                            @"continue."];
+            return;
+        }
+    } else if (![self ensureActivePDFCanBeModifiedForOperation:@"translation"]) {
+        return;
+    }
 
     BOOL usingSelection = NO;
     NSString* textError = nil;
@@ -13020,7 +12864,22 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     // and comments may still be translatable, so keep going until the
     // per-item filter below has seen them too.
 
-    NSDictionary* options = [self promptForTranslationOptionsUsingSelection:usingSelection];
+    NSDictionary* options = nil;
+    if (request) {
+        NSString* target = request[@"target"];
+        NSString* source = [self localTranslationSourceForText:sourceText target:target];
+        if (!source) {
+            [self showError:@"Nothing to translate"
+                     detail:[NSString stringWithFormat:@"This document already seems to be in %@.", request[@"language"]]];
+            return;
+        }
+        _translationSourceLanguage = source;
+        _translationTargetLanguage = target;
+        [self savePersistentState];
+        options = @{@"source" : source, @"target" : target};
+    } else {
+        options = [self promptForTranslationOptionsUsingSelection:usingSelection];
+    }
     if (!options) return;
 
     NSString* sourceLanguage = options[@"source"];
@@ -13042,7 +12901,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
             return;
         }
     }
-    NSString* outputPath = [self translatedOutputPathForPath:_path targetLanguage:targetLanguage];
+    NSString* outputPath = request ? [self localTranslationOutputPathInDirectory:[self localTranslationDirectory]
+                                                                         request:request]
+                                   : [self translatedOutputPathForPath:_path targetLanguage:targetLanguage];
     [self runArgosTranslationWithTool:[self argosToolPath]
                            sourceText:sourceText
                        sourceLanguage:sourceLanguage

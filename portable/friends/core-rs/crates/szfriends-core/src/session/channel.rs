@@ -7,9 +7,12 @@ use std::time::Duration;
 
 use szfriends_crypto::noise::{Handshake, Transport};
 use szfriends_wire::consts::{RESPONDER_HANDSHAKE_MAX, SESSION_MAJOR};
-use szfriends_wire::{Fields, Pattern, RouteMethod};
+use szfriends_wire::{Fields, NoiseCipher, Pattern, RouteMethod};
 
 use super::{ChannelConfig, ChannelIdentity, Event, PublicProfile, ReplayCache, SessionError, SessionRandom};
+
+/// Complete transport messages opened together at most (ADR 0018 § 9.2).
+const BATCH_MESSAGES: usize = 8;
 
 /// The responder's view of IK or NN message 1, or XX message 3, before any reply: whether this remote may continue
 /// (`SZFriendsRemoteKeyPolicy`). Arguments: the remote identity key (none for NN), the pattern, and the token an IK
@@ -49,11 +52,25 @@ pub struct HandshakeOptions {
     pub request_token: Option<Vec<u8>>,
     /// XX against a public entry: stop after message 2 unless a [`ProfileDecision`] says to continue.
     pub browse_only: bool,
+    /// IK: a lane of a live session's group (ADR 0018 § 6), its 16-byte token in message 1's payload.
+    pub lane: Option<[u8; 16]>,
+    /// A lane's cipher: AES-256-GCM when the group's first session had both sides set capability bit 1 (ADR 0018
+    /// § 9.2, [`SecureChannel::aes_lanes`]); ChaChaPoly for everything else.
+    pub cipher: NoiseCipher,
 }
 
 impl HandshakeOptions {
     pub fn new(pattern: Pattern, route: RouteMethod) -> Self {
-        Self { pattern, route, remote_static: None, expected_identity: None, request_token: None, browse_only: false }
+        Self {
+            pattern,
+            route,
+            remote_static: None,
+            expected_identity: None,
+            request_token: None,
+            browse_only: false,
+            lane: None,
+            cipher: NoiseCipher::ChaChaPoly,
+        }
     }
 }
 
@@ -92,6 +109,7 @@ pub struct SecureChannel {
     pub(super) hooks: Option<Box<dyn ListenerHooks>>,
     pub(super) state: State,
     pub(super) pattern: Pattern,
+    pub(super) cipher: NoiseCipher,
     pub(super) handshake: Option<Handshake>,
     pub(super) transport: Option<Transport>,
     pub(super) inbound: Vec<u8>,
@@ -128,8 +146,11 @@ pub struct SecureChannel {
     pub(super) remote_attestation: Option<Vec<u8>>,
     pub(super) remote_static: Option<[u8; 32]>,
     pub(super) presented_token: Option<Vec<u8>>,
+    pub(super) presented_lane: Option<[u8; 16]>,
     pub(super) handshake_hash: Option<[u8; 64]>,
     pub(super) negotiated_minor: u16,
+    pub(super) liveness: super::liveness::Liveness,
+    pub(super) remote_capabilities: u32,
 }
 
 impl std::fmt::Debug for SecureChannel {
@@ -153,6 +174,7 @@ impl SecureChannel {
             hooks: None,
             state: State::Idle,
             pattern,
+            cipher: NoiseCipher::ChaChaPoly,
             handshake: None,
             transport: None,
             inbound: Vec::new(),
@@ -188,14 +210,19 @@ impl SecureChannel {
             remote_attestation: None,
             remote_static: None,
             presented_token: None,
+            presented_lane: None,
             handshake_hash: None,
             negotiated_minor: 0,
+            liveness: Default::default(),
+            remote_capabilities: 0,
         }
     }
 
     pub fn initiator(identity: ChannelIdentity, options: HandshakeOptions) -> Self {
-        let (pattern, route) = (options.pattern, options.route);
-        Self::with_role(Role::Initiator { options, on_profile: None }, identity, pattern, route)
+        let (pattern, route, cipher) = (options.pattern, options.route, options.cipher);
+        let mut channel = Self::with_role(Role::Initiator { options, on_profile: None }, identity, pattern, route);
+        channel.cipher = cipher;
+        channel
     }
 
     /// `public_profile`: PROFILE fields served in XX message 2 while this listener's public entry is on; `None` for a
@@ -242,63 +269,6 @@ impl SecureChannel {
         self.local_attestation = attestation;
     }
 
-    pub fn is_initiator(&self) -> bool {
-        matches!(self.role, Role::Initiator { .. })
-    }
-
-    pub fn pattern(&self) -> Pattern {
-        self.pattern
-    }
-
-    pub fn is_established(&self) -> bool {
-        self.state == State::Established
-    }
-
-    pub fn is_closed(&self) -> bool {
-        self.state == State::Closed
-    }
-
-    /// The route the initiator declared (the session race and the chunk sizes use it).
-    pub fn initiator_route(&self) -> RouteMethod {
-        self.initiator_route
-    }
-
-    /// Ed25519 identity key from the peer's certificate; `None` for NN.
-    pub fn remote_identity(&self) -> Option<&[u8; 32]> {
-        self.remote_identity.as_ref()
-    }
-
-    /// The verified 96-byte certificate the peer presented; `None` for NN.
-    pub fn remote_certificate(&self) -> Option<&[u8]> {
-        self.remote_certificate.as_deref()
-    }
-
-    /// The peer's attestation, unverified.
-    pub fn remote_attestation(&self) -> Option<&[u8]> {
-        self.remote_attestation.as_deref()
-    }
-
-    pub fn remote_static(&self) -> Option<&[u8; 32]> {
-        self.remote_static.as_ref()
-    }
-
-    /// Responder: the token an IK callback presented.
-    pub fn presented_token(&self) -> Option<&[u8]> {
-        self.presented_token.as_deref()
-    }
-
-    pub fn handshake_hash(&self) -> Option<&[u8; 64]> {
-        self.handshake_hash.as_ref()
-    }
-
-    pub fn negotiated_minor(&self) -> u16 {
-        self.negotiated_minor
-    }
-
-    pub fn rekeys(&self) -> (u64, u64) {
-        (self.rekeys_sent, self.rekeys_received)
-    }
-
     pub fn poll_event(&mut self) -> Option<Event> {
         self.events.pop_front()
     }
@@ -330,7 +300,10 @@ impl SecureChannel {
         match self.state {
             State::Idle | State::Closed => None,
             State::Refusing => self.refusal_deadline,
-            State::Established | State::Closing => Some(self.established_at + self.config.max_age),
+            State::Established | State::Closing => {
+                let age = self.established_at + self.config.max_age;
+                Some(self.liveness_deadline().map_or(age, |at| at.min(age)))
+            }
             _ => Some(self.started_at + self.config.handshake_timeout),
         }
     }
@@ -344,7 +317,9 @@ impl SecureChannel {
                 }
             }
             State::Established | State::Closing => {
-                self.check_session_age(now);
+                if self.check_session_age(now) {
+                    self.check_liveness(now);
+                }
             }
             State::Idle | State::Closed => {}
             _ => {
@@ -377,6 +352,7 @@ impl SecureChannel {
         }
         // Before any work on these bytes: a refusal they cause closes a fixed time after this moment.
         self.input_arrived_at = now;
+        self.note_heard(now);
         self.inbound.extend_from_slice(bytes);
         let mut offset = 0;
         while !matches!(self.state, State::Closed | State::Refusing) {
@@ -408,6 +384,30 @@ impl SecureChannel {
             if available < 2 + length {
                 break;
             }
+            if self.state == State::Established && self.config.crypto_batches {
+                // Every complete message here, opened together (`handle_transport_messages`).
+                let mut spans = vec![(offset + 2, length)];
+                let mut next = offset + 2 + length;
+                while spans.len() < BATCH_MESSAGES && self.inbound.len() >= next + 2 {
+                    let length = usize::from(u16::from_be_bytes([self.inbound[next], self.inbound[next + 1]]));
+                    if length == 0 || self.inbound.len() < next + 2 + length {
+                        break;
+                    }
+                    spans.push((next + 2, length));
+                    next += 2 + length;
+                }
+                if spans.len() > 1 {
+                    let inbound = std::mem::take(&mut self.inbound);
+                    let messages: Vec<&[u8]> = spans.iter().map(|&(at, length)| &inbound[at..at + length]).collect();
+                    let handled = self.handle_transport_messages(&messages, now);
+                    self.inbound = inbound;
+                    if handled == 0 {
+                        break;
+                    }
+                    offset = spans.get(handled).map_or(next, |&(at, _)| at - 2);
+                    continue;
+                }
+            }
             let message = self.inbound[offset + 2..offset + 2 + length].to_vec();
             offset += 2 + length;
             match self.state {
@@ -422,7 +422,12 @@ impl SecureChannel {
         self.inbound.drain(..offset);
     }
 
-    pub(super) fn preamble_bytes(pattern: Pattern) -> [u8; 4] {
-        [b'S', b'Z', SESSION_MAJOR, pattern as u8]
+    pub(super) fn preamble_bytes(pattern: Pattern, cipher: NoiseCipher) -> [u8; 4] {
+        let preamble = szfriends_wire::stream::Preamble { pattern, cipher }.bytes();
+        debug_assert_eq!(preamble[2], SESSION_MAJOR);
+        preamble
     }
 }
+
+#[path = "channel_state.rs"]
+mod state;

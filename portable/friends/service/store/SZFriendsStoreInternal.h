@@ -192,11 +192,35 @@ NSString *_Nullable SZFriendsTransferRowPartialPath(SZFriendsStoreDB *db, NSStri
 // ADR 0003 § Crash recovery for files: finish publishing, truncate staging files to their durable count, delete
 // files no row references.
 - (BOOL)recoverWithError:(NSError **)error;
+// Shared with the block downloads (SZFriendsBlockDownloads.m), on the store queue.
+@property(nonatomic, readonly) SZFriendsStore *store;
+@property(nonatomic, readonly) NSString *partialDirectory;
+@property(nonatomic, readonly) NSMutableDictionary<NSString *, id> *blockDownloads; // transfer id -> download
+- (BOOL)onWriter:(BOOL (^)(SZFriendsStoreDB *db, NSError **error))body error:(NSError **)error;
+- (BOOL)publish:(SZFriendsTransferRecord *)record from:(NSString *)partial db:(SZFriendsStoreDB *)db
+          error:(NSError **)error;
+- (BOOL)failMismatched:(NSString *)transferID partial:(NSString *)partial db:(SZFriendsStoreDB *)db
+                 error:(NSError **)error;
 @end
 
 @interface SZFriendsTransfers ()
 @property(nonatomic, readonly) SZFriendsTransferReceiver *receiver; // tests drive its clock
 @property(nonatomic, readonly) SZFriendsStore *store;              // for the Thumbnails category
+@property(nonatomic, readonly) NSString *partialDirectory;         // received/.partial
+@end
+
+// SZFriendsTransfers+Accepting.m.
+@interface SZFriendsTransfers (Accepting)
+- (BOOL)acceptIn:(SZFriendsStoreDB *)db
+        transfer:(NSString *)transferID
+   automatically:(BOOL)automatically
+       freeBytes:(uint64_t)freeBytes
+           error:(NSError **)error;
+- (nullable NSString *)heldCopyIn:(SZFriendsStoreDB *)db record:(SZFriendsTransferRecord *)record;
+- (BOOL)fillFromHeldCopyIn:(SZFriendsStoreDB *)db
+                    record:(SZFriendsTransferRecord *)record
+                   partial:(NSString *)partial
+                 freeBytes:(uint64_t)freeBytes;
 @end
 
 // File previews (SZFriendsTransferThumbnails.m). After a transfer's state changes inside a write: the picture of an

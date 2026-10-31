@@ -2,6 +2,17 @@
 # `--config <path>`, beside the `phone` profile's settings (Cargo.toml) in the app's own release profile.
 # tools/embedded-size.sh measures with it, and run-device-tests.sh runs the Android suites with it.
 #
+# The ciphers' arm64 backends (ADR 0018 § 9.2): chacha20 0.9's NEON code, and the ARMv8 AES and PMULL code of aes and
+# polyval, are switched on by these flags only (x86_64 picks AVX2 or SSE2 at run time by itself). A cfg section, so
+# cargo joins it with a target's own rustflags (the Tauri CLI sets CARGO_TARGET_<TRIPLE>_RUSTFLAGS for Android).
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["--cfg", "chacha20_force_neon", "--cfg", "aes_armv8", "--cfg", "polyval_armv8"]
+
+# Android: the library's dynamic relocations packed in Android's own format (its loader reads them from API 23; the
+# apps' floor is 24), about 200 KB less on arm64. Cargo joins these with the section above on arm64 Android.
+[target.'cfg(target_os = "android")']
+rustflags = ["-C", "link-arg=-Wl,--pack-dyn-relocs=android"]
+
 # The bundled SQLite (Android; iOS uses the system's) without what the store never asks of it: FTS3, R*Tree, dbstat,
 # STAT4, soundex, column metadata, extensions, JSON, shared cache, progress callbacks and declared types, with some of
 # SQLite's own recommended trims. FTS5, for the trigram search index, stays. The same value is in .cargo/config.toml,
@@ -14,3 +25,12 @@ LIBSQLITE3_FLAGS = """\
 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_OMIT_PROGRESS_CALLBACK -DSQLITE_OMIT_COMPLETE -DSQLITE_OMIT_GET_TABLE \
 -DSQLITE_OMIT_TCL_VARIABLE -DSQLITE_OMIT_DECLTYPE -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_MAX_EXPR_DEPTH=0 \
 -DSQLITE_LIKE_DOESNT_MATCH_BLOBS"""
+
+# C compiled through the cc crate on Android (the bundled SQLite, BLAKE3's NEON) without unwind tables, as
+# szfriends-datachannel-sys builds its C libraries: about 125 KB of an arm64 library, SQLite's nearly all of it.
+# Nothing unwinds through that C: a panic aborts (the phone profile, and the apps' phone builds), and no C++ calls it.
+# A build that sets its own CFLAGS for the target keeps them (cargo's [env] does not override the environment).
+CFLAGS_aarch64_linux_android = "-fno-asynchronous-unwind-tables -fno-unwind-tables"
+CFLAGS_armv7_linux_androideabi = "-fno-asynchronous-unwind-tables -fno-unwind-tables"
+CFLAGS_i686_linux_android = "-fno-asynchronous-unwind-tables -fno-unwind-tables"
+CFLAGS_x86_64_linux_android = "-fno-asynchronous-unwind-tables -fno-unwind-tables"

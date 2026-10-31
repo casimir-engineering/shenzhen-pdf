@@ -10,6 +10,9 @@ typedef NS_OPTIONS(uint8_t, SZFriendsFieldRuleFlags) {
     SZFriendsFieldRuleRequired = 1 << 0,
     SZFriendsFieldRuleBoolean = 1 << 1,      // one byte, 0 or 1
     SZFriendsFieldRuleMultipleOf16 = 1 << 2, // a list of 16-byte IDs
+    SZFriendsFieldRuleMultipleOf32 = 1 << 3, // a list of 32-byte hashes
+    SZFriendsFieldRuleMultipleOf8 = 1 << 4,  // a list of 8-byte block ranges
+    SZFriendsFieldRuleOneOf = 1 << 5,        // at least one of the fields with this flag (WANT: Ranges or Pieces)
 };
 
 typedef struct {

@@ -131,6 +131,21 @@
         else [self closeLink:link after:SZFriendsByIDSessionLife]; // a responder waits briefly for REQUEST_BY_ID
         return;
     }
+    if (!channel.isInitiator && channel.presentedLane != nil) {
+        [self admitLane:link]; // another session with a device we already have one with (+Blocks)
+        return;
+    }
+    if (channel.isInitiator && link.laneHead != nil) {
+        // One of our lanes (+Blocks): it joins its group, never the race.
+        SZFriendsPeerLink *head = link.laneHead;
+        if (head.closed || !channel.fastTransfers || head.blocks == nil) {
+            [head.blocks laneDown:link.laneSerial];
+            [channel closeWithReason:SZFriendsCloseReasonNormal];
+            return;
+        }
+        [self joinLane:link toHead:head];
+        return;
+    }
     if ([self chainRefusesLiveLink:link]) return; // a device its owner removed, whichever side dialed (+Chain)
     if ([self syncAdoptsLiveLink:link]) return;   // another device of ours: it carries sync, nothing else (+Sync)
     NSData *remoteKey = channel.remoteIdentityKey;
@@ -367,6 +382,23 @@ static BOOL SZFriendsEndWasSupersededByPeer(NSError *error) {
     link.closed = YES;
     [link cancelTimers];
     [self.links removeObject:link];
+    [self pullLinkClosed:link]; // a holder of the file being pulled leaves (+Pulls)
+    if (link.lane || link.laneHead != nil) {
+        // A lane ends alone: the group goes on with its first session (ADR 0018 § 6).
+        [link.laneHead.lanes removeObject:link];
+        [link.laneHead.blocks laneDown:link.laneSerial];
+        if (link.dialKey != nil) [self.dialing removeObject:link.dialKey];
+        return;
+    }
+    NSString *conversationID = link.conversationID;
+    BOOL wasActive = conversationID != nil && self.activeLinks[conversationID] == link;
+    // The group goes on without its first session when a lane lives (ADR 0018 § 6): that lane becomes the
+    // conversation's session below; otherwise the lanes end with it.
+    SZFriendsPeerLink *heir = wasActive && link.live && !link.superseded ? [self handOverGroupOfLink:link] : nil;
+    [self boostLinkClosed:link]; // ADR 0019: a boost of this group ends here (the Mac comes back)
+    if (heir == nil) {
+        for (SZFriendsPeerLink *lane in link.lanes.allObjects) [lane.channel closeWithReason:SZFriendsCloseReasonNormal];
+    }
     [self syncLinkClosed:link];
     [link.againExchange stop];
     // Faults only, and never a key, name or address: which kind of session ended, on which route, and why.
@@ -380,11 +412,10 @@ static BOOL SZFriendsEndWasSupersededByPeer(NSError *error) {
                                : @"");
     }
     if (link.dialKey != nil) [self.dialing removeObject:link.dialKey];
-    NSString *conversationID = link.conversationID;
-    BOOL wasActive = conversationID != nil && self.activeLinks[conversationID] == link;
     if (wasActive) [self.activeLinks removeObjectForKey:conversationID];
-    // Every received byte durable before anything resumes elsewhere (ADR 0003 § Durable progress).
+    // Every received byte durable before anything resumes elsewhere (ADR 0003 § Durable progress; ADR 0018 § 4).
     if (link.receivers.count > 0) [self.services.transfers flushProgressWithError:NULL];
+    [link.blocks sessionEnded];
     [self requeueEntriesOfLink:link];
     if (link.purpose == SZFriendsLinkPurposeBrowse && error != nil && link.endpointID != nil) {
         [self browseOfEndpointFailed:link.endpointID];
@@ -403,10 +434,13 @@ static BOOL SZFriendsEndWasSupersededByPeer(NSError *error) {
         if (link.live) [self noteEndOfLink:link];
         else if (link.channel.isInitiator) [self noteFailureForConversation:conversationID];
     }
-    if (wasActive) {
+    if (heir != nil) {
+        [self adoptLink:heir]; // what the first session carried resumes on it, as on any new session
+    } else if (wasActive) {
         // A standby session (the responder's copy of a double dial) takes over at once.
         for (SZFriendsPeerLink *other in self.links) {
-            if (other.live && !other.superseded && [other.conversationID isEqualToString:conversationID]) {
+            if (other.live && !other.superseded && !other.lane &&
+                [other.conversationID isEqualToString:conversationID]) {
                 [self adoptLink:other];
                 break;
             }

@@ -265,6 +265,7 @@
     NSUInteger _visibleCropRenderSequence;
     NSTimeInterval _lastDocumentPanLiveCropRenderTime;
     NSUInteger _viewportMovementGeneration;
+    NSInteger _fitPageIndex; // the page the fit-mode zoom on screen was computed for (SPDFDocumentTab.fitPageIndex)
     BOOL _minimapPrecisionViewportDragActive;
     // Horizontal scroll lock: narrow pages (width <= viewport) block horizontal
     // panning and stay centered; wide pages unlock it. Crossing from a wide page
@@ -334,6 +335,8 @@
     BOOL _needsDeferredPersistentStateSave;
     BOOL _updatingSidebarFilterField;
     NSArray<NSDictionary*>* _pendingTranslationItems;
+    NSArray<NSDictionary*>* _pendingTranslationChapters;  // written as the translation's outline (SPDFMacTranslateChapters.h)
+    BOOL _translatingMadePDF;  // the local translation works on a PDF made from a Markdown, text or EPUB document
     BOOL _restoringSidebarLayout;
     BOOL _allowSidebarWidthPersistence;
     CGFloat _sidebarWidth;
@@ -608,8 +611,6 @@
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacUIReaderConformance) <SPDFMacDocumentViewReader>
-- (BOOL)documentTypeToSearchKeyDown:(NSEvent*)event;
-- (BOOL)documentEscapeKeyDown:(NSEvent*)event;
 @end
 
 // Implemented in SPDFMacLinkNavigation.mm: instant, reversible in-document link
