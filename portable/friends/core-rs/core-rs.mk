@@ -45,6 +45,16 @@
 #                           Rust and Objective-C peers, each its own process, through a proxy emulating each route's
 #                           rate, delay and loss, then a cut and a silence; JSON lines to transfer-bench.jsonl in the
 #                           build tree and a table (MB/s, share of the link, CPU s/GB, recovery). BENCH_* narrow it.
+#   friends-relay-rule-check
+#                           in friends-suite, release-blocking: the owner's relay rule (ADR 0020) in both helpers. The
+#                           scheduler's scenario table (relay rows) and the racer's backoffs in the Rust core, the
+#                           online order's retries while relayed (Rust; the Objective-C ones are friends-order-check's,
+#                           its table friends-transfer-check's), then the bench's relay cases (BENCH_RELAY) for every
+#                           pairing of the two helpers: the relay carries nothing beside a working direct route and a
+#                           route that appears carries within a second; then two whole Rust helpers through the local
+#                           host and a real coturn (FRIENDS_TEST_COTURN, Homebrew's found by itself): relayed, then
+#                           direct as soon as it works, and the owner's route order nearby and online. Never skips:
+#                           fails without cargo, Node.js 22.16 or coturn. About two minutes.
 #   friends-transfer-interop
 #                           on demand, not in any suite: the interop matrix (examples/transfer_interop.rs): peers
 #                           built from the release tags (tools/released-peers.sh) against today's, and today's against
@@ -307,6 +317,38 @@ friends-transfer-bench: friends-session-peer friends-transfer-examples
 	SZFRIENDS_OBJC_PEER="$(abspath $(FRIENDS_SESSION_PEER))" \
 		BENCH_OUT="$${BENCH_OUT:-$(abspath $(FRIENDS_CORE_RS_BUILD))/transfer-bench.jsonl}" \
 		"$(FRIENDS_TRANSFER_EXAMPLES)/transfer_bench"
+
+FRIENDS_TEST_TARGETS += friends-relay-rule-check
+.PHONY: friends-relay-rule-check
+friends-relay-rule-check: friends-session-peer friends-transfer-examples friends-host-node \
+		$$(FRIENDS_HOST_SERVER_DIR)/node_modules/.package-lock.json
+	@command -v cargo >/dev/null || { echo "friends-relay-rule-check: cargo is needed (ADR 0020 checks both helpers)" >&2; exit 1; }
+	@test -x "$(FRIENDS_TEST_COTURN)" || { echo "friends-relay-rule-check: a coturn is needed for the whole helpers' \
+	relay cases (brew install coturn, or FRIENDS_TEST_COTURN=<turnserver>); this gate never skips them" >&2; exit 1; }
+	CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" cargo test $(FRIENDS_CORE_RS_MANIFEST) --locked --release \
+		-p szfriends-core --test scheduler_scenarios --test nearby_discovery
+	CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" cargo test $(FRIENDS_CORE_RS_MANIFEST) --locked --release \
+		-p szfriends-online --lib order::
+	@rm -f "$(FRIENDS_CORE_RS_BUILD)/relay-rule.jsonl"
+	@# Every pairing of the two helpers; Bluetooth's case, 5 to 7 s a pairing, each helper with itself only.
+	SZFRIENDS_OBJC_PEER="$(abspath $(FRIENDS_SESSION_PEER))" BENCH_OUT="$(abspath $(FRIENDS_CORE_RS_BUILD))/relay-rule.jsonl" \
+		BENCH_LOGS="$(abspath $(FRIENDS_CORE_RS_BUILD))/relay-rule-logs" BENCH_ROUTES=none BENCH_LOSS=none BENCH_MULTI=none \
+		BENCH_RELAY=relay-then-lan,relay-then-p2p,relay+lan-late,relay+p2p_wifi-late,lan+relay-cut-lan-back \
+		"$(FRIENDS_TRANSFER_EXAMPLES)/transfer_bench"
+	SZFRIENDS_OBJC_PEER="$(abspath $(FRIENDS_SESSION_PEER))" BENCH_OUT="$(abspath $(FRIENDS_CORE_RS_BUILD))/relay-rule.jsonl" \
+		BENCH_LOGS="$(abspath $(FRIENDS_CORE_RS_BUILD))/relay-rule-logs" BENCH_ROUTES=none BENCH_LOSS=none BENCH_MULTI=none \
+		BENCH_RELAY=relay+bt-late BENCH_PAIRS=rust-rust,objc-objc "$(FRIENDS_TRANSFER_EXAMPLES)/transfer_bench"
+	@# Whole helpers through the local host and coturn; SZFRIENDS_TEST_RELAY_REQUIRED turns a skip into a failure.
+	@# Of the online suite, only its relay case (its links cases are friends-core-rs-online-check's).
+	SZFRIENDS_TEST_RELAY_REQUIRED=1 SZFRIENDS_HOST_SERVER_DIR="$(abspath $(FRIENDS_HOST_SERVER_DIR))" \
+		FRIENDS_TEST_COTURN="$(FRIENDS_TEST_COTURN)" CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" \
+		cargo test $(FRIENDS_CORE_RS_MANIFEST) --locked --release -p szfriends-helper \
+		--test online -- --nocapture --exact two_helpers_reach_each_other_online_directly_and_through_the_relay
+	SZFRIENDS_TEST_RELAY_REQUIRED=1 SZFRIENDS_HOST_SERVER_DIR="$(abspath $(FRIENDS_HOST_SERVER_DIR))" \
+		FRIENDS_TEST_COTURN="$(FRIENDS_TEST_COTURN)" CARGO_TARGET_DIR="$(abspath $(FRIENDS_CORE_RS_BUILD))/target" \
+		cargo test $(FRIENDS_CORE_RS_MANIFEST) --locked --release -p szfriends-helper \
+		--test route_order --test profile_routes -- --nocapture
+	@echo "friends-relay-rule-check passed"
 
 .PHONY: friends-transfer-interop
 friends-transfer-interop: friends-session-peer friends-transfer-examples

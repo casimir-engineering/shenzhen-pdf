@@ -73,6 +73,7 @@
     // The link is captured strongly: the channel drops every callback when it terminates, which breaks the cycle.
     channel.onEstablished = ^{ [weakSelf linkWentLive:link]; };
     channel.onFrame = ^(SZFriendsFrame *frame) { [weakSelf link:link receivedFrame:frame]; };
+    channel.onFrameQueued = ^(SZFriendsFrame *frame) { [weakSelf link:link meterFrame:frame]; };
     channel.onClose = ^(NSError *error) { [weakSelf link:link closedWithError:error]; };
     if (link.purpose == SZFriendsLinkPurposeBrowse) {
         channel.onPublicProfile = ^BOOL(NSDictionary<NSNumber *, NSData *> *profile) {
@@ -332,6 +333,7 @@
     [self deliverPendingOnLink:link];
     [self startAgainOnLink:link]; // files asked for again (+Again)
     [self onlineRoutesChanged];
+    [self relayProbeIfRelayed];
     [self changed];
 }
 
