@@ -1,5 +1,7 @@
+#import "SPDFMacCommentActions.h"
 #import "SPDFMacAIIntegration.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacPresentationViewport.h"
 #import "SPDFMacSidebarChapters.h"
 #import "SPDFMacTranslationEnablement.h"
 
@@ -213,6 +215,7 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
       tab.zoom = zoom;
       tab.customZoom = fitMode == SPDFMacMarkdownPageFitCustom ? zoom : tab.customZoom;
       tab.fitMode = (SPDFFitMode)fitMode;
+      [strongSelf keepNormalViewInPresentedTab:tab];
       // Its hover thumbnail follows the page shown, once the page settles.
       [strongSelf spdf_noteTabHoverPreviewSourcesChanged];
       // Capture the live scroll origin and checkpoint session.yaml after
@@ -292,6 +295,8 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
 
     NSString* anchor = tab.markdownAnchor;
     tab.markdownAnchor = nil;
+    // Before activating: a session already rendered completes at once, and its completion re-points the watcher.
+    [self teardownActiveFileWatcher];
     __weak ShenzhenMacDelegate* weakSelf = self;
     __weak SPDFMacMarkdownSession* weakSession = session;
     [session activateInHostView:state.hostView
@@ -336,7 +341,6 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
                        [strongSelf savePersistentState];
                      }];
     [self rebuildSidebar];
-    [self teardownActiveFileWatcher]; // re-pointed by the completion above
     [self rememberRecentlyOpenedPath:path];
     [self savePersistentState];
 }
@@ -401,17 +405,20 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     BOOL loading = !model && session.state == SPDFMacMarkdownSessionLoading;
     BOOL hasChapters = model.chapterItems.count > 0 || [self aiGeneratedChapterRows].count > 0;
     BOOL hasSearch = [self markdownHasSearchSidebar];
+    BOOL hasComments = !loading && [self markdownCommentCount] > 0;
     BOOL hasSidebar = _sidebarModeControl != nil;
 
     [self syncSidebarModeControlSegmentsForSearchAvailability:hasSearch];
     if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && !hasSearch)
-        _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeChapters;
-    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments)
+        _sidebarModeControl.spdf_selectedSidebarMode = hasChapters || !hasComments ? SPDFSidebarModeChapters
+                                                                                   : SPDFSidebarModeComments;
+    else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments && !hasComments)
         _sidebarModeControl.spdf_selectedSidebarMode = hasChapters ? SPDFSidebarModeChapters : SPDFSidebarModeSearch;
     else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeChapters && !hasChapters && hasSearch)
         _sidebarModeControl.spdf_selectedSidebarMode = SPDFSidebarModeSearch;
 
     [_sidebarModeControl spdf_setEnabled:hasChapters forSidebarMode:SPDFSidebarModeChapters];
+    [_sidebarModeControl spdf_setEnabled:hasComments forSidebarMode:SPDFSidebarModeComments];
     if (hasSearch) [_sidebarModeControl spdf_setEnabled:YES forSidebarMode:SPDFSidebarModeSearch];
     [self syncSidebarFilterField];
 
@@ -421,6 +428,8 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
         [_sidebarItems addObjectsFromArray:[model searchSidebarItemsForMatches:session.searchMatches
                                                                          query:_searchField.stringValue ?: @""
                                                                      searching:_findSearchInProgress]];
+    } else if (hasSidebar && _sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments) {
+        [self appendMarkdownCommentSidebarItemsMatchingFilter:_commentFilterText ?: @""];
     } else if (hasChapters) {
         [_sidebarItems addObjectsFromArray:[model chapterItemsMatchingQuery:_chapterFilterText ?: @""]];
         [self appendAIGeneratedChaptersMatchingFilter:_chapterFilterText];
@@ -441,6 +450,8 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     NSString* kind = item[@"kind"];
     if ([kind isEqualToString:@"findResult"]) {
         [self.markdownState.activeSession goToSearchMatchAtIndex:[item[@"findIndex"] integerValue]];
+    } else if ([kind isEqualToString:@"comment"]) {
+        [self revealMarkdownCommentAtIndex:[item[@"commentIndex"] integerValue]];
     } else if ([kind isEqualToString:@"chapter"]) {
         NSValue* rangeValue = item[@"range"];
         if ([rangeValue isKindOfClass:NSValue.class])
@@ -448,25 +459,6 @@ static CGFloat spdf_mac_clamped_markdown_font_scale(CGFloat scale) {
     }
     [self updateControlsForActiveMarkdown];
     [self selectCurrentSidebarRow];
-}
-
-- (void)printActiveMarkdown {
-    SPDFMacMarkdownSession* session = self.markdownState.activeSession;
-    // Always the LIGHT rendition, like every other export (see
-    // SPDFMacMarkdownSession.exportPaginationPlan). Free while the reader is
-    // light: these ARE the live plan and string.
-    SPDFMarkdownPaginationPlan* plan = session.exportPaginationPlan;
-    NSAttributedString* text = session.exportAttributedString;
-    if (![self isMarkdownActive] || !text || !plan) {
-        NSBeep();
-        return;
-    }
-    NSPrintOperation* operation =
-        [SPDFMacMarkdownPrintAdapter printOperationForPaginationPlan:plan
-                                                    attributedString:text
-                                                           printInfo:[NSPrintInfo.sharedPrintInfo copy]];
-    operation.jobTitle = _path.lastPathComponent ?: @"Markdown Document";
-    [operation runOperationModalForWindow:_window delegate:nil didRunSelector:NULL contextInfo:NULL];
 }
 
 - (void)saveActiveMarkdownAsPDF {

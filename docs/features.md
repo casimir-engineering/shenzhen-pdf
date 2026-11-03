@@ -141,6 +141,9 @@ does not re-trigger the macOS access prompt.
   the next newly opened document (or batch of documents) goes into it. Its name
   starts selected in the popup. Empty groups and the next-open destination survive
   relaunch in session YAML and remain manageable from the tab strip and Groups panel.
+- **New documents join the group you are in** — however a document is opened (Finder, Open…, a drop, a link,
+  Recent, Collection or the assistant), its tab joins the group the window shows. A document that is already open
+  is brought forward in its own group instead of opening twice.
 - **Group controls** — hover a group name for the hide eye; right-click **Rename Group…**
   opens the name popup anchored to the group. The All Groups
   picker has an eye toggle for showing or hiding each group without closing documents.
@@ -182,6 +185,7 @@ does not re-trigger the macOS access prompt.
 - Supported group, reader, comment, rename, metadata and chat-organization actions have guarded Undo/Redo. The assistant can rename any open document: a file it can't rename (read-only, in a folder that can't be changed, larger than 32 MB) keeps its name, the new name shows in its tab, the window title and Collection, and the assistant says so. Requested OCR, translation and PDF jobs create separate outputs, from any open document, read-only ones included. Everything the assistant makes, including charts you save, goes to Downloads under a clear name (never replacing a file) and into Collection as **Made by the assistant**. Stop cancels future work; completed changes remain until undone.
 - Four-step setup covers file access, Collection, OpenRouter and per-format default-reader choices. Keys remain in Keychain; cloud analysis waits for completed setup and a connected account. Usage spends provider credits and can be disabled.
 - The [document assistant guide](../portable/docs/document-assistant.md) specifies privacy routing, model requirements, action limits and local job dependencies. The [CLI/MCP guide](../portable/docs/agent-interface.md) is a separate interface; chat tool names are not external MCP commands.
+- **szpdf, the command-line tool** — opens documents in the running reader at a page or heading without bringing it forward (unless `--front`), reloads and closes them, lists open windows and documents, takes a picture of a window or of any page, lists headings, finds text, adds, answers and resolves comments and waits for new ones, and checks what a Markdown file will look like (`szpdf check`, `szpdf features`); every command prints JSON, and `szpdf help <command>` explains each. Installed from Settings › General, or run from `ShenzhenPDF.app/Contents/MacOS/szpdf`. `open -g` leaves ShenzhenPDF in the background too. [Reference](../portable/docs/agent-interface.md#szpdf)
 
 ## <a id="reading"></a>Reading and navigation
 
@@ -389,12 +393,51 @@ fence the renderer cannot draw keeps its ordinary highlighted code box.
 
 - **Highlight comments** — select text, add a comment anchored to the
   highlighted rectangles.
+- **Add Comment** — ⌘J comments on the selection (Edit › Add Comment…);
+  right-click the page to comment where you clicked.
 - **Text comments** — drop a comment at a point on the page.
 - **Edit and delete** existing comments.
-- **Comment author** — set once (*Set Author for Comments…*) and reused.
-- **Comments panel** — every comment listed with its page, filterable, click to
-  jump.
+- **Comment box** — opens at once beside the passage; Return starts a new line,
+  ⌘↩ adds the comment, Esc or a click elsewhere closes it.
+- **Your name on comments** — point at your name in a new comment's box, or on
+  one of your comments in the Comments panel, and click it (or its pencil) to
+  change it: Return or a click elsewhere keeps the new name, Esc the old one.
+  It is the name in Settings › Reading & access; comments already written keep
+  the name they were written under.
+- **Comment author** — your Mac's name unless you set another in Settings ›
+  Reading & access (*Your name on comments*); every comment carries it.
+- **Comments panel** — each comment a card: who wrote it and when, the passage
+  it is on, the comment in full, replies indented under it (in Markdown
+  documents too). Click a card to jump to the passage, which flashes; hover it
+  for Resolve (or Reopen), Edit and Delete. A resolved comment's card is dimmed
+  and marked *Resolved*. Filterable.
 - Comments are saved into the PDF immediately, so any other reader sees them.
+- **Markdown comments** — the same commands and Comments panel on a Markdown
+  document. They are kept beside it in *<title> - comments.md*, a plain
+  Markdown file listing each comment in document order with its line, its
+  headings and the quoted passage, so anyone can read them in any viewer.
+  Each byline shows the time to the minute; the exact time, with seconds and
+  time zone, is kept in a hidden note beside it, so it survives every rewrite.
+  Comments follow their words when the document is edited; one whose words are
+  gone is listed under *Unplaced*. **Copy Comments File** copies that file, and
+  **Copy Document and Comments** copies both.
+- **Versions** **mac** — *New Version…* (File menu or the tab's menu) keeps the
+  document as it is now as v1, with its comments, in *<name> v1.md* (or *.pdf*)
+  beside it, and the document itself becomes v2, so editors and agents keep
+  writing to the same file. Its open comments come along to v2 unless you
+  untick them; resolved ones stay on v1. *Versions* opens any version, and
+  *Compare v1 with* shows any two side by side with their changes.
+- **Earlier text kept** **mac** — when another app rewrites a document you have
+  commented on, the text your comments were made on is kept as the previous
+  version with them. Turn it off in Settings › Reading & access.
+- **Comments for scripts and agents** — `szpdf comments` lists a document's
+  comments as JSON (line or page, quoted text, headings, author, date, open or
+  resolved, replies); `szpdf comment add` adds one on a line, passage, heading
+  or page, `szpdf comment reply` and `szpdf comment resolve` answer and close
+  them, in PDFs and Markdown alike, and `szpdf comments --wait-new` waits for
+  the next one; `--version N` reads an earlier
+  version's. `szpdf version new`, `list` and `compare` do what New Version…
+  and Versions do.
 
 ## <a id="ocr"></a>OCR — on-device **mac · linux**
 

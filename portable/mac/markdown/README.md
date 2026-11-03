@@ -121,8 +121,8 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   pending placeholder box (the render's image width budget x
   remoteImagePlaceholderHeight, theme-gray with the alt text) that reserves
   layout space; targets in
-  `failedRemoteImageTargets`, undecodable bytes, and over-budget bytes render
-  the stable `[Image: alt]` text placeholder.
+  `failedRemoteImageTargets`, undecodable bytes, and bytes over the per-file
+  limit render the stable `[Image: alt]` text placeholder.
 - The session layer (`SPDFMacMarkdownSession+RemoteImages.mm` +
   `SPDFMacMarkdownSessionImageLoader`) downloads lazily: fetches start only
   when a document containing remote images is the ACTIVE tab, run at most 4 at
@@ -133,14 +133,46 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   URL downloads at most once; arrivals coalesce (~300 ms or batch completion)
   into a single viewport-preserving rerender. Print/export/copy reuse the live
   plan, so they include exactly the images loaded at that moment.
-- A render caches each unique decoded image. The default aggregate budgets are
-  64 MiB of resource bytes and 32 million decoded pixels, shared between local
-  and remote images; over-budget or invalid images become stable text
-  placeholders rather than consuming unbounded memory. Bytes that ImageIO
-  cannot identify — notably SVG badges (shields.io) — get one NSImage decode
-  attempt (macOS rasterizes SVG data natively on modern systems) under the
-  same pixel budget; where that fails too, the text placeholder stands. No
-  SVG library is vendored.
+- Pictures are decoded at the size they are drawn, never at layout
+  (`SPDFMarkdownPicture.h`). A render shares one `SPDFMarkdownPictureRep` per
+  unique picture, sized from the file's header alone; each page draw asks for
+  the device pixels the destination covers (display size x backing scale x
+  zoom) and gets an ImageIO thumbnail of at least that size (1.25x headroom),
+  so a 4000 x 3000 photo shown 440 pt wide on a Retina screen decodes to about
+  1 MP; a picture at most twice the size wanted draws from the file as it is
+  (ImageIO's own decode, kept up to 128 MB). Zooming in past a decode decodes again, sharper, when the page is next
+  drawn. Print and PDF export decode for 300 dpi, handing over the file itself
+  (a JPEG's own bytes) when it is at most twice that, and re-encoding a smaller
+  JPEG copy otherwise. Nothing decodes past 8192 px a side; a bigger picture
+  draws from a smaller copy. Decodes live in purgeable memory behind one
+  256 MB cost-limited cache, shared by every document, and compressed bytes
+  are not kept: a local picture is read again through a duplicate of the
+  verified root descriptor. So pictures never run out: the only limit is
+  `maximumResourceBytes` (64 MiB) per picture file; missing, oversized or
+  unreadable pictures become stable text placeholders. Bytes that ImageIO
+  cannot identify go to `SPDFMarkdownImageFromData`: SVG (charts, shields.io
+  badges) to the decoder the reader installs (`mac/SPDFMacSVGImage.mm`), which
+  draws it with MuPDF's SVG renderer, as the Windows reader does, into a
+  one-page vector PDF; anything else, or SVG in a process without the decoder
+  (the Collection companion, the engine's test binaries), to one NSImage
+  decode attempt. Where that fails too, the text placeholder stands.
+- Vector pictures (an SVG made into a PDF page, or a PDF) are never decoded
+  to pixels: each draw draws the page itself into the destination
+  (`SPDFMarkdownVectorPicture.h`), so a chart is as sharp at 5x zoom, in
+  presentation mode, in print and in an exported PDF (as vectors) as at 1x.
+  The dark theme, when it recolours pictures, draws a copy of the PDF whose
+  colours, images and shadings went through the same LUMA_REMAP
+  (`spdf_svg_image_pdf_dark`, installed by `mac/SPDFMacSVGImage.mm`), so it
+  looks as a recoloured bitmap did and stays vector. A page whose vector draw
+  takes over 12 ms (a 60,000-point scatter made each redraw take half a second) is drawn
+  on screen from a bitmap of the page at the pixels it covers (1.25x
+  headroom, at most 8192 px a side, in a 256 MB cache), made again when a zoom
+  needs more; print and export still get its vectors. A chart's text stays
+  text that copies right in an exported PDF: Quartz drops the ToUnicode map of
+  MuPDF's bare CFF fonts when it writes the page again, so the SVG's PDF draws
+  its text in OpenType fonts with a cmap (`core/spdf_svg_font.h`). Those fonts
+  hold only the glyphs the chart draws (`core/spdf_cff_subset.h`): a chart
+  with Chinese text is about 12 KB, not the 19 MB of the whole CJK font.
 - Display SIZE is budgeted by the destination page. When the render carries a
   page (`SPDFMarkdownRenderOptions.pageContentSize` — see the Diagrams section
   for the page-box policy), an image's display size caps at that page's
@@ -148,9 +180,14 @@ their descendants, preventing repeated subtree strings and quadratic indexes.
   placeholder box and image-row fitting use the same printable width, and the
   table renderer's provisional column distribution uses the very formula the
   paginator rebinds with. Turning the paper therefore re-fits images and
-  tables exactly like diagrams. A page-less render (`NSZeroSize`, the default)
-  keeps the constant `maximumImageWidth` x `maximumImageHeight` caps (440 x
-  320 by default) everywhere, unchanged.
+  tables exactly like diagrams. The width an image may use is what is left of
+  its line: the page width net of the list or quote indent and, in a list
+  item, the marker. An image in a table cell is measured against the page
+  first (so it claims its column's share), then fitted into its own column
+  once the columns are known, so an HTML `width="440"` in a half-page cell is
+  a maximum, not a fixed size. Fitting only ever shrinks. A page-less render
+  (`NSZeroSize`, the default) keeps the constant `maximumImageWidth` x
+  `maximumImageHeight` caps (440 x 320 by default) everywhere, unchanged.
 
 Tables retain column count and per-cell left/center/right alignment in the
 model, and lay out content-aware columns (GFM's `| --- |` separator line is

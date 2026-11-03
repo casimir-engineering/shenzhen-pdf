@@ -60,6 +60,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownParser.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownHTML.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownHTMLBlocks.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownResources.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownPicture.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownLanguage.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownHighlighter.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownLexerSupport.mm
@@ -93,6 +94,7 @@ $ROOT/portable/mac/markdown/SPDFMarkdownImageRowBand.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownPaginator.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownPlanLocationIndex.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownPaginatorDrawing.mm
+$ROOT/portable/mac/markdown/SPDFMarkdownVectorPicture.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownImageRecolor.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownAsync.mm
 $ROOT/portable/mac/markdown/SPDFMarkdownDocument.mm

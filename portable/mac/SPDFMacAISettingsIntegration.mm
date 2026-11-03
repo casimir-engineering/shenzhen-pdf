@@ -1,3 +1,4 @@
+#import "SPDFMacCommentActions.h"
 #import "SPDFMacAIIntegration.h"
 #import "SPDFMacUnifiedSettings.h"
 #import "SPDFMacAISettings.h"
@@ -7,8 +8,10 @@
 #import "SPDFMacAIModelCatalog.h"
 #import "SPDFMacDefaultFormats.h"
 #import "SPDFMacCollectionStore.h"
+#import "SPDFMacDocumentVersionsIntegration.h"
 #import "SPDFMacTabGroups.h"
 #import "SPDFMacAppearanceMode.h"
+#import "SPDFMacCommandLineTool.h"
 #import "SPDFMacAppearanceSettings.h"
 #import "SPDFMacCollectionIntegration.h"
 #import <objc/runtime.h>
@@ -16,6 +19,9 @@
 #import <fcntl.h>
 #import <unistd.h>
 #import <math.h>
+@interface SPDFMacUnifiedSettingsController (SPDFMacCommentAuthorShown)
+- (void)showCommentAuthor:(NSString*)stored; // SPDFMacCommentAuthorSettings.mm
+@end
 @interface ShenzhenMacDelegate (AISettingsHost)
 - (void)makeDefaultPDFReader:(id)sender;
 - (BOOL)hasActiveDocument;
@@ -102,7 +108,13 @@ static NSDictionary* PaletteState(void) {
         @"showShortcutsOnLaunch":@(_showShortcutHelpOnLaunch),@"keepImageColors":@(_darkThemePreservesImagesDefault)}
         mutableCopy];
     [state addEntriesFromDictionary:[self aiCapabilitiesSettingsState:ai]];
+    state[@"keepVersionsWhenChanged"]=@(SPDFDocumentVersionsKeepWhenChanged()); state[@"commentAuthor"]=_commentAuthor ?: @""; state[@"commentAuthorDefault"]=SPDFDefaultCommentAuthor();
+    state[@"commandLineTool"]=SPDFMacCommandLineToolStatus(NSBundle.mainBundle.bundlePath,NSHomeDirectory());
     [state addEntriesFromDictionary:PaletteState()]; state[@"appearanceMode"]=spdf_appearance_mode(); return state;
+}
+// Your name on comments changed elsewhere (a byline, another window): an open Settings shows it.
+- (void)refreshCommentAuthorInSettings {
+    [(SPDFMacUnifiedSettingsController*)objc_getAssociatedObject(self,&settingsControllerKey) showCommentAuthor:_commentAuthor ?: @""];
 }
 - (void)showUnifiedSettings:(id)sender {
     (void)sender; [self showUnifiedSettingsMode:NO];
@@ -193,6 +205,8 @@ static NSDictionary* PaletteState(void) {
         [SPDFMacCollectionStore.defaultStore updateSettings:storage error:&error];
         [(SPDFMacUnifiedSettingsController*)objc_getAssociatedObject(self,&settingsControllerKey) updateState:[self unifiedSettingsState]];
     }
+    if (changes[@"commentAuthor"]) { [self rememberCommentAuthor:changes[@"commentAuthor"]]; [self commentAuthorChanged]; }
+    if (changes[@"keepVersionsWhenChanged"]) { SPDFDocumentVersionsSetKeepWhenChanged([changes[@"keepVersionsWhenChanged"] boolValue]); [self savePersistentState]; }
     if (changes[@"keepImageColors"]) { _darkThemePreservesImagesDefault=[changes[@"keepImageColors"] boolValue]; [self savePersistentState]; }
     if (changes[@"appearanceMode"] && !spdf_appearance_mode_set(changes[@"appearanceMode"]))
         error=[NSError errorWithDomain:@"ShenzhenPDF.Appearance" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Light or dark could not be saved. ShenzhenPDF will follow the system again when it restarts."}];
@@ -231,6 +245,10 @@ static NSDictionary* PaletteState(void) {
     }
     if([self performAICapabilitiesSettingsAction:action controller:controller]) return;
     if([action isEqual:@"requestModels"]) { [self requestAIModels]; return; }
+    if([action isEqual:@"installCommandLineTool"]) { // the szpdf link in ~/.local/bin (SPDFMacCommandLineTool.h)
+        [controller updateState:@{@"commandLineTool":SPDFMacInstallCommandLineTool(NSBundle.mainBundle.bundlePath,
+            NSHomeDirectory(),NULL)}]; [controller selectSection:@"overview"]; return;
+    }
     if([action isEqual:@"setCollectionLocation"]) {
         NSOpenPanel* panel=[NSOpenPanel openPanel]; panel.canChooseDirectories=YES; panel.canChooseFiles=NO;
         [panel beginSheetModalForWindow:controller.window completionHandler:^(NSModalResponse response) {

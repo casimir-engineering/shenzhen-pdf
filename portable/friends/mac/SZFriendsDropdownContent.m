@@ -2,9 +2,11 @@
 
 #import "mac/SZFriendsDropdownInternal.h"
 
+#import "mac/SZFriendsConversationCache.h"
 #import "mac/SZFriendsConversationPage.h"
 #import "mac/SZFriendsDetailsPage.h"
 #import "mac/SZFriendsDevices.h"
+#import "mac/SZFriendsKeyFocus.h"
 #import "mac/SZFriendsLinkPage.h"
 
 CGFloat SZFriendsDropdownHeight(CGFloat spaceBelowButton, CGFloat maxHeight) {
@@ -108,12 +110,17 @@ CGFloat SZFriendsDropdownHeight(CGFloat spaceBelowButton, CGFloat maxHeight) {
 
 @implementation SZFriendsDropdownContent {
     NSMutableArray<SZFriendsPage *> *_pages;
+    // Conversations left by Back, built and ready to show again at once; least recently left first.
+    NSMutableArray<SZFriendsConversationPage *> *_keptPages;
     NSArray<NSDictionary *> *_sendFiles;
     SZFriendsFlippedView *_statusStrip;
     NSTextField *_statusLabel;
+    SZFriendsStartView *_start;
 }
 
 static const CGFloat SZFStatusStripHeight = 28;
+// Each holds its history's views (up to 200 items): a few cover going back and forth between the people one talks to.
+static const NSUInteger SZFKeptPages = 4;
 
 - (instancetype)initWithContext:(SZFriendsContext *)context {
     if (!(self = [super initWithFrame:NSMakeRect(0, 0, context.appearance.dropdownWidth,
@@ -129,6 +136,7 @@ static const CGFloat SZFStatusStripHeight = 28;
     self.fillColor = context.appearance.backgroundColor;
     _listPage = [[SZFriendsListPage alloc] initWithContext:context];
     _pages = [NSMutableArray arrayWithObject:_listPage];
+    _keptPages = [NSMutableArray array];
     [self addSubview:_listPage];
     _statusStrip = [SZFriendsFlippedView new];
     _statusStrip.fillColor = context.appearance.fieldBackgroundColor;
@@ -137,14 +145,30 @@ static const CGFloat SZFStatusStripHeight = 28;
     _statusLabel.maximumNumberOfLines = 1;
     [_statusStrip addSubview:_statusLabel];
     [self addSubview:_statusStrip];
+    _start = [[SZFriendsStartView alloc] initWithContext:context];
+    _start.hidden = YES;
+    _start.onTryAgain = ^{ [weakSelf.context.link retry]; };
+    [self addSubview:_start];
     // Not Ready: every page keeps its last snapshot, and this one line says why nothing changes (the link's
     // contract); intents fail at once with not_ready meanwhile, so nothing waits behind the person's back.
     [context.link addObserver:self forKeyPath:@"state" options:NSKeyValueObservingOptionInitial context:NULL];
+    [context.link addObserver:self forKeyPath:@"stalled" options:0 context:NULL];
+    // A history deleted, or someone removed or blocked: no kept page may show what went, even for a moment.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(forgetKeptPages)
+                                               name:SZFriendsConversationCacheDidForgetNotification
+                                             object:context.conversations];
     return self;
 }
 
 - (void)dealloc {
     [_context.link removeObserver:self forKeyPath:@"state"];
+    [_context.link removeObserver:self forKeyPath:@"stalled"];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+- (void)forgetKeptPages {
+    for (SZFriendsPage *page in _keptPages) [page removeFromSuperview];
+    [_keptPages removeAllObjects];
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change
@@ -153,9 +177,36 @@ static const CGFloat SZFStatusStripHeight = 28;
     SZFriendsHelperLink *link = self.context.link;
     NSString *text = link.state == SZFriendsLinkStateReady ? nil : link.statusText;
     _statusText = text.length ? [text copy] : nil;
+    // Pages with something to show keep it under the one status line; before the first snapshot they would show
+    // only a search field and tabs without labels, so the start view stands in for them, as it does whenever
+    // Friends did not start.
+    BOOL ready = link.state == SZFriendsLinkStateReady;
+    BOOL showStart = !ready && (link.stalled || !self.listPage.hasSnapshot);
     _statusLabel.stringValue = _statusText ?: @"";
-    _statusStrip.hidden = _statusText == nil;
+    _statusStrip.hidden = _statusText == nil || showStart;
+    if (showStart) [_start showLink:link];
+    [self showStart:showStart];
     [self setNeedsLayout:YES];
+}
+
+- (SZFriendsStartView *)startView {
+    return _start.hidden ? nil : _start;
+}
+
+- (void)showStart:(BOOL)show {
+    BOOL wasShown = !_start.hidden;
+    _start.hidden = !show;
+    // Hidden too, so nothing under it can be typed into or found by VoiceOver.
+    for (SZFriendsPage *page in _pages) page.hidden = show || page != self.topPage;
+    if (show == wasShown) return;
+    NSWindow *window = self.window;
+    if (show) {
+        NSResponder *responder = window.firstResponder;
+        if ([responder isKindOfClass:NSView.class] && [(NSView *)responder isDescendantOf:self])
+            [window makeFirstResponder:self];
+    } else if (_presented) {
+        [self focusTopPage];
+    }
 }
 
 - (NSArray<SZFriendsPage *> *)stack {
@@ -188,8 +239,13 @@ static const CGFloat SZFStatusStripHeight = 28;
 }
 
 - (void)focusTopPage {
+    if (!_start.hidden) {
+        if (self.window) [self.window makeFirstResponder:self]; // Escape still closes; nothing hidden takes typing
+        return;
+    }
+    // A page with nowhere to type keeps the focus here (Tab enters it), never in a page now hidden.
     NSView *responder = [self.topPage preferredFirstResponder];
-    if (responder && self.window) [self.window makeFirstResponder:responder];
+    if (self.window && !(responder && SZFriendsFocus(responder))) [self.window makeFirstResponder:self];
 }
 
 #pragma mark - Stack
@@ -199,8 +255,9 @@ static const CGFloat SZFStatusStripHeight = 28;
     self.topPage.hidden = YES;
     [_pages addObject:page];
     page.frame = [self pageFrame];
-    if (self.confirmation) [self addSubview:page positioned:NSWindowBelow relativeTo:self.confirmation];
-    else [self addSubview:page];
+    page.hidden = !_start.hidden;
+    // A kept conversation is still in place, hidden: showing it again draws it, and builds nothing.
+    if (page.superview != self) [self addSubview:page positioned:NSWindowBelow relativeTo:_start];
     if (_presented) {
         [page pageWillAppear];
         [self focusTopPage];
@@ -212,9 +269,10 @@ static const CGFloat SZFStatusStripHeight = 28;
     if (_pages.count < 2) return;
     SZFriendsPage *top = self.topPage;
     if (_presented) [top pageDidDisappear];
-    [top removeFromSuperview];
     [_pages removeLastObject];
-    self.topPage.hidden = NO;
+    if ([top isKindOfClass:SZFriendsConversationPage.class]) [self keepPage:(SZFriendsConversationPage *)top];
+    else [top removeFromSuperview];
+    self.topPage.hidden = !_start.hidden;
     self.topPage.frame = [self pageFrame];
     if (_presented) {
         [self.topPage pageWillAppear];
@@ -227,7 +285,43 @@ static const CGFloat SZFStatusStripHeight = 28;
     while (_pages.count > 1) [self popPage];
 }
 
+// Left hidden in place, its views and their layers kept: removing a history from the window and adding it again costs
+// as much as building it.
+- (void)keepPage:(SZFriendsConversationPage *)page {
+    // Typing must never reach a hidden composer.
+    NSResponder *responder = self.window.firstResponder;
+    if ([responder isKindOfClass:NSView.class] && [(NSView *)responder isDescendantOf:page])
+        [self.window makeFirstResponder:nil];
+    page.hidden = YES;
+    for (SZFriendsConversationPage *kept in [_keptPages copy]) {
+        if (![kept.conversationID isEqualToString:page.conversationID] || kept == page) continue;
+        [kept removeFromSuperview];
+        [_keptPages removeObject:kept];
+    }
+    [_keptPages removeObject:page];
+    [_keptPages addObject:page];
+    if (_keptPages.count <= SZFKeptPages) return;
+    [_keptPages.firstObject removeFromSuperview];
+    [_keptPages removeObjectAtIndex:0];
+}
+
 #pragma mark - Navigator
+
+- (void)prepareConversation:(NSString *)conversationID {
+    if (!_presented || self.topPage != _listPage || _sendFiles || !_start.hidden) return;
+    for (SZFriendsConversationPage *page in _keptPages)
+        if ([page.conversationID isEqualToString:conversationID]) return;
+    NSDictionary *kept = [self.context.conversations snapshotFor:conversationID];
+    if (!kept) return;
+    SZFriendsConversationPage *page = [[SZFriendsConversationPage alloc] initWithContext:self.context
+                                                                         conversationID:conversationID
+                                                                       highlightMessage:nil];
+    page.frame = [self pageFrame];
+    page.hidden = YES;
+    [self addSubview:page positioned:NSWindowBelow relativeTo:_listPage];
+    [page applySnapshotAhead:kept];
+    [self keepPage:page];
+}
 
 - (void)openConversation:(NSString *)conversationID highlightMessage:(NSString *)messageID {
     SZFriendsPage *top = self.topPage;
@@ -237,6 +331,15 @@ static const CGFloat SZFStatusStripHeight = 28;
         return;
     }
     [self popToList];
+    SZFriendsConversationPage *kept = nil;
+    for (SZFriendsConversationPage *page in _keptPages)
+        if (!messageID && [page.conversationID isEqualToString:conversationID]) kept = page;
+    if (kept) {
+        [_keptPages removeObject:kept];
+        [self pushPage:kept];
+        [kept reopenAtEnd];
+        return;
+    }
     [self pushPage:[[SZFriendsConversationPage alloc] initWithContext:self.context conversationID:conversationID
                                                      highlightMessage:messageID]];
 }
@@ -326,7 +429,7 @@ NSString *SZFriendsSendPickerTitle(SZFriendsContext *context, NSArray<NSString *
     view.frame = self.bounds;
     _confirmation = view;
     [self addSubview:view positioned:NSWindowAbove relativeTo:nil];
-    if (self.window) [self.window makeFirstResponder:view.cancelButton];
+    if (self.window) SZFriendsFocus(view.cancelButton);
 }
 
 - (void)dismissConfirmation {
@@ -357,7 +460,7 @@ NSString *SZFriendsSendPickerTitle(SZFriendsContext *context, NSArray<NSString *
 
 - (void)keyDown:(NSEvent *)event {
     if (event.keyCode == 53) [self friendsHandleEscape];
-    else [super keyDown:event];
+    else if (!SZFriendsHandleUnfocusedKey((id)_confirmation ?: self.topPage, event)) [super keyDown:event];
 }
 
 - (BOOL)acceptsFirstResponder {
@@ -386,6 +489,7 @@ NSString *SZFriendsSendPickerTitle(SZFriendsContext *context, NSArray<NSString *
     _statusStrip.frame = NSMakeRect(0, 0, NSWidth(self.bounds), SZFStatusStripHeight);
     _statusLabel.frame = NSMakeRect(12, 6, NSWidth(self.bounds) - 24, 16);
     for (SZFriendsPage *page in _pages) page.frame = [self pageFrame];
+    _start.frame = self.bounds;
     _confirmation.frame = self.bounds;
 }
 

@@ -3,6 +3,8 @@
 #import "SPDFMacMenuText.h"
 #import "SPDFMacClipboardIntegration.h"
 #import "SPDFMacQuitFinishing.h"
+#import "SPDFMacBackgroundOpening.h"
+#import "SPDFMacSzpdf.h"
 #import "SPDFMacStatePrefetch.h"
 #import "SPDFMacWritableCopy.h"
 #import "SPDFMacShortcutHelpStyle.h"
@@ -55,9 +57,13 @@
 #import "SPDFMacMinimapView.h"
 #import "SPDFMacMinimapWindow.h"
 #import "SPDFMacMarkdownDelegatePrivate.h"
+#import "SPDFMacPresentationViewport.h"
 #import "SPDFMacTranslationEnablement.h"
 #import "SPDFMacTranslationChoice.h"
 #import "SPDFMacTranslatedPDF.h"
+#import "SPDFMacCommentActions.h"
+#import "SPDFMacCommentCards.h"
+#import "SPDFMacCommentPanel.h"
 #import "SPDFMacMarkdownRouting.h"
 #import "SPDFMacPaletteResults.h"
 #import "SPDFMacPaletteActivation.h"
@@ -113,8 +119,6 @@ static const CGFloat kTopChromeResizeCornerSize = 16.0;
 // Comment rows carry the full annotation text, so they wrap to a few lines.
 // Size the row to the wrapped text plus a little vertical breathing room above
 // and below (mirroring the comfortable spacing chapter rows get for free).
-static const NSInteger kSidebarCommentMaxLines = 3;
-static const CGFloat kSidebarCommentVerticalPadding = 5.0;
 static const NSInteger kBackgroundRenderBatchSize = 8;
 static const NSInteger kRecentDocumentLimit = 25;  // menu depth, and what Cmd+K can find
 static const NSInteger kRenderedImageKeepRadius = 12;
@@ -249,7 +253,7 @@ static NSString* spdf_menu_symbol_name_for_item(NSMenuItem* item) {
     if (action == @selector(zoomOut:)) return @"minus.magnifyingglass";
     if (action == @selector(actualSize:)) return @"magnifyingglass";
     if (action == @selector(fitPage:) || action == @selector(fitWidth:) || action == @selector(fitHeight:))
-        return @"arrow.up.left.and.arrow.down.right";
+        return action == @selector(fitWidth:) ? @"arrow.left.and.right" : action == @selector(fitHeight:) ? @"arrow.up.and.down" : @"arrow.up.left.and.arrow.down.right";
     if (action == @selector(toggleSidebar:)) return @"sidebar.left";
     if (action == @selector(toggleMinimap:)) return @"map";
     if (action == @selector(togglePresentation:)) return @"play.rectangle";
@@ -549,6 +553,13 @@ static char kSPDFPasswordPromptClosesNewTabKey;
 @property(nonatomic, strong) NSOperationQueue* inactiveTabPreloadQueue;
 - (void)preloadInactiveTabsWithCompletion:(dispatch_block_t _Nullable)completion;
 @end
+@interface ShenzhenMacDelegate (FitViewport)  // SPDFMacFitViewport.mm
+- (void)rememberCurrentZoomForCustomReturn;
+@end
+@interface ShenzhenMacDelegate (SPDFMacPresentationIntegration)  // SPDFMacPresentationIntegration.mm
+- (void)beginPresentationSleepActivityIfNeeded;
+- (void)endPresentationSleepActivity;
+@end
 @implementation ShenzhenMacDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
@@ -773,10 +784,8 @@ static char kSPDFPasswordPromptClosesNewTabKey;
 
     {
         SPDFScopedLaunchPhaseLog launchPhase("makeKeyAndOrderFront");
-        [_window makeKeyAndOrderFront:nil];
+        spdf_mac_show_launch_window(_window, self.restoreWindowID.length == 0); // behind, for `szpdf open`
     }
-    if (self.restoreWindowID.length == 0 && !spdf_launch_activation_suppressed())
-        [NSApp activateIgnoringOtherApps:YES];
     // Post-first-paint launch tail. The async hop reaches the next runloop
     // pass, displayIfNeeded forces the (already fully laid out) first frame
     // onto screen if it has not drawn yet, and only then does the timer for
@@ -879,13 +888,13 @@ static char kSPDFPasswordPromptClosesNewTabKey;
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender {
-    (void)sender;
-    return YES;
+    return (void)sender, YES;
 }
 
 // Every change is saved as it is made, so a quit asks nothing: hide, then write (SPDFMacQuitFinishing.mm).
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
-    if (![self beginQuit]) return (void)sender, NSTerminateLater; // already finishing
+    // Asked again in the same quit (AppKit can: SPDFMacQuitFinishing.mm); AppKit goes on to applicationWillTerminate.
+    if (![self beginQuit]) return (void)sender, NSTerminateNow;
     if (!_terminateOnlyThisProcess && !gSPDFTerminatingAllWindows) {
         gSPDFTerminatingAllWindows = YES;
         for (NSRunningApplication* app in [self otherRunningShenzhenApplications]) [app terminate];
@@ -1130,7 +1139,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
 - (void)loadPersistentState {
     NSDictionary* settings = [self friendsLaunchWithSettings:[self stateObjectFromFile:@"settings.yaml"]];
-    _darkThemePreservesImagesDefault = YES; /* default ON; a stored key overrides below */
+    _darkThemePreservesImagesDefault = YES; SPDFDocumentVersionsLoadSettings(settings); /* default; overridden below */
     if ([settings isKindOfClass:NSDictionary.class]) {
         NSNumber* fit = settings[@"fitMode"];
         /* viewMode is intentionally not read: single-page view mode was removed
@@ -1672,13 +1681,8 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     return [self otherRunningShenzhenApplications].count > 0;
 }
 
-- (void)activateWindowForExternalOpen {
-    if (!_window) return;
-    [NSApp activateIgnoringOtherApps:YES];
-    [_window orderFrontRegardless];
-    [_window makeKeyAndOrderFront:nil];
-    [_window makeMainWindow];
-}
+// Forward when whoever opened the document gave its turn away; `open -g` stays behind (SPDFMacBackgroundOpening.h).
+- (void)activateWindowForExternalOpen { spdf_mac_show_window_for_external_open(_window); }
 
 - (void)dismissTabHoverPanel {
     [_tabStrip dismissHoverPanel];
@@ -1740,7 +1744,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
 
     if (!_suppressSessionWriteOnTerminate) [self writeSessionStateForCurrentWindow];
     CGFloat sidebarWidth = spdf_sane_sidebar_width(_sidebarWidth, 0);
-    [self writeStateObject:SPDFMacFriendsSettingsForSaving(@{
+    [self writeStateObject:SPDFMacFriendsSettingsForSaving(SPDFDocumentVersionsSettingsForSaving(@{
         @"version" : @1,
         @"fitMode" : @(_fitMode),
         /* Always continuous now; kept for backward compat (see SPDFMacModels.mm). */
@@ -1768,7 +1772,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         @"markdownTheme" : _darkReadingTheme ? @"dark" : @"light",
         @"darkThemePreservesImages" : @(_darkThemePreservesImagesDefault),
         @"recentlyOpened" : _recentlyOpenedPaths ?: @[]
-    })
+    }))
                    toFile:@"settings.yaml"];
     [self writeStateObject:_favorites toFile:@"favorites.yaml"];
     [self writeStateObject:_documentStates ?: @{} toFile:@"documents.yaml"];
@@ -2584,7 +2588,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
     // cycles. SPDF_NO_WINDOW_FIRST=1 restores the single-frame launch.
     if (!getenv("SPDF_NO_WINDOW_FIRST")) {
         SPDFScopedLaunchPhaseLog launchPhase("orderFront(bare)");
-        [_window makeKeyAndOrderFront:nil];
+        spdf_mac_order_launch_window(_window); // in front, or behind for `szpdf open` (SPDFMacBackgroundOpening.h)
     }
 
     _tabStrip = [[SPDFTabStripView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth(frame), kTabStripHeight)];
@@ -4842,7 +4846,20 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
                              alignTop:(BOOL)alignTop
                         restoreOrigin:(NSValue*)restoreOrigin {
+    [self renderDocumentAndScrollToPage:pageIndex alignTop:alignTop restoreOrigin:restoreOrigin keepingAnchor:NULL];
+}
+
+// keepingAnchor: a point of a page, taken from the view before the zoom changed, that goes back to the same place in
+// the viewport once the pages are laid out at the new zoom (Fit Width, 100%, a custom zoom: see
+// applyFitModeKeepingPosition:). Its page is the page the zoom is fitted to.
+- (void)renderDocumentAndScrollToPage:(NSInteger)pageIndex
+                             alignTop:(BOOL)alignTop
+                        restoreOrigin:(NSValue*)restoreOrigin
+                        keepingAnchor:(const SPDFPageAnchor*)keepingAnchor {
     if (!_doc || !_uiReady) return;
+    // The anchor's offset is in the viewport as it is now; the relayout can add or remove a scroller and so resize
+    // it. Keep the offset as a share of the viewport.
+    NSSize anchorViewport = _pageScrollView.contentView.bounds.size;
 
     [self resumeBackgroundRenderQueuesAfterLiveZoomCancelingQueuedWork:YES];
     [_window.contentView layoutSubtreeIfNeeded];
@@ -4925,16 +4942,25 @@ static BOOL spdf_page_list_cache_disabled(void) {
           [self clearLiveZoomSeeds];
           [self applySearchHighlightsToCurrentPage];
           [self resizeDocumentView];
-          if (restoreOrigin)
+          if (restoreOrigin) {
               [self scrollDocumentClipViewToOrigin:[self normalizedDocumentScrollOrigin:restoreOrigin.pointValue
                                                                            forPageIndex:pageIndex]
                                             notify:NO];
-          else
+          } else if (keepingAnchor) {
+              SPDFPageAnchor anchor = *keepingAnchor;
+              NSSize viewport = self->_pageScrollView.contentView.bounds.size;
+              anchor.offsetInViewport.x *= viewport.width / MAX(1.0, anchorViewport.width);
+              anchor.offsetInViewport.y *= viewport.height / MAX(1.0, anchorViewport.height);
+              [self scrollToPageAnchor:anchor notify:NO];
+              [self documentScrollPositionChanged];
+              [self updateMinimap];
+          } else {
               [self scrollToPage:pageIndex alignTop:alignTop];
+          }
         }
         completionHandler:nil];
     NSInteger renderCenterPage = pageIndex;
-    if (restoreOrigin) {
+    if (restoreOrigin || keepingAnchor) {
         renderCenterPage = [_pageView pageIndexForVisibleRect:_pageScrollView.contentView.bounds];
         _pageIndex = renderCenterPage;
         _pageView.currentPageIndex = _pageIndex;
@@ -4998,9 +5024,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
     NSSize size = [_pageView documentSizeForClipSize:clipSize];
     // Both scrollers show only when there is something to scroll on their axis:
     // a document that fits the viewport at the current zoom (e.g. a single page
-    // at Fit Page) shows no vertical scroller at all.
+    // at Fit Page) shows no vertical scroller at all. Presentation mode shows
+    // none even when a zoomed page pans.
     BOOL needsVerticalScroller = !_presentationMode && size.height > clipSize.height + 0.5;
-    BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
+    BOOL needsHorizontalScroller = !_presentationMode && size.width > clipSize.width + 0.5;
     if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller ||
         _pageScrollView.hasVerticalScroller != needsVerticalScroller) {
         _pageScrollView.hasHorizontalScroller = needsHorizontalScroller;
@@ -5010,13 +5037,14 @@ static BOOL spdf_page_list_cache_disabled(void) {
         _pageView.viewportWidthHint = MAX(1.0, clipSize.width);
         _pageView.viewportHeightHint = MAX(1.0, clipSize.height);
         size = [_pageView documentSizeForClipSize:clipSize];
-        needsHorizontalScroller = size.width > clipSize.width + 0.5;
+        needsHorizontalScroller = !_presentationMode && size.width > clipSize.width + 0.5;
         _pageScrollView.hasHorizontalScroller = needsHorizontalScroller;
         _pageScrollView.hasVerticalScroller = !_presentationMode && size.height > clipSize.height + 0.5;
     }
-    if (!needsHorizontalScroller) size.width = MAX(size.width, clipSize.width);
+    BOOL scrollsHorizontally = size.width > clipSize.width + 0.5;
+    if (!scrollsHorizontally) size.width = MAX(size.width, clipSize.width);
     [_pageView setFrame:NSMakeRect(0.0, 0.0, size.width, size.height)];
-    if (!needsHorizontalScroller && fabs(NSMinX(clipView.bounds)) > 0.01) {
+    if (!scrollsHorizontally && fabs(NSMinX(clipView.bounds)) > 0.01) {
         NSPoint origin = clipView.bounds.origin;
         origin.x = 0.0;
         [clipView setBoundsOrigin:origin];
@@ -5057,18 +5085,19 @@ static BOOL spdf_page_list_cache_disabled(void) {
     _pageView.backingScale = [self backingScale];
 
     NSSize size = [_pageView documentSizeForClipSize:clipSize];
-    BOOL needsHorizontalScroller = size.width > clipSize.width + 0.5;
+    BOOL scrollsHorizontally = size.width > clipSize.width + 0.5;
+    BOOL needsHorizontalScroller = !_presentationMode && scrollsHorizontally;
     BOOL needsVerticalScroller = !_presentationMode && size.height > clipSize.height + 0.5;
     if (_pageScrollView.hasHorizontalScroller != needsHorizontalScroller ||
         _pageScrollView.hasVerticalScroller != needsVerticalScroller) {
         [self resizeDocumentView];
         return NO;
     }
-    if (!needsHorizontalScroller) size.width = MAX(size.width, clipSize.width);
+    if (!scrollsHorizontally) size.width = MAX(size.width, clipSize.width);
 
     NSRect frame = NSMakeRect(0.0, 0.0, size.width, size.height);
     if (!NSEqualRects(_pageView.frame, frame)) [_pageView setFrame:frame];
-    if (!needsHorizontalScroller && fabs(NSMinX(clipView.bounds)) > 0.01) {
+    if (!scrollsHorizontally && fabs(NSMinX(clipView.bounds)) > 0.01) {
         NSPoint origin = clipView.bounds.origin;
         origin.x = 0.0;
         BOOL previousSuppressScrollCallbacks = _suppressScrollCallbacks;
@@ -5347,16 +5376,18 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return [self clampedDocumentScrollOrigin:origin forPageIndex:pageIndex];
 }
 
-/* Vertically centers a page in the viewport. Used only in presentation mode,
- * where the document view lays out one page at a time. */
+/* Presentation mode, where the document view lays out one page at a time: the
+ * page vertically centered in the viewport, or its top when it is zoomed taller
+ * than the viewport. */
 - (CGFloat)presentationCenteredScrollOriginYForPageIndex:(NSInteger)pageIndex {
     if (_renderedPages.count == 0) return 0.0;
     pageIndex = MAX(0, MIN(pageIndex, (NSInteger)_renderedPages.count - 1));
     NSClipView* clipView = _pageScrollView.contentView;
-    NSRect pageRect = [self continuousDocumentRectForPageAtIndex:pageIndex];
+    NSRect pageRect = [_pageView rectForPageAtIndex:pageIndex];
     if (NSIsEmptyRect(pageRect)) return 0.0;
     CGFloat maxY = MAX(0.0, NSHeight(_pageView.bounds) - NSHeight(clipView.bounds));
-    CGFloat y = NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5;
+    CGFloat y = NSHeight(pageRect) <= NSHeight(clipView.bounds) + 0.5 ? NSMidY(pageRect) - NSHeight(clipView.bounds) * 0.5
+                                                                      : NSMinY(pageRect);
     return spdf_clamp_cg(y, 0.0, maxY);
 }
 
@@ -5434,7 +5465,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
         NSClipView* clipView = _pageScrollView.contentView;
         NSRect visible = clipView.bounds;
         NSPoint origin = visible.origin;
-        if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
         // A page larger than the viewport on an axis has the viewport sitting
         // INSIDE it, so both "page extends past the start" and "page extends
         // past the end" are true at once; the nudges below would then toggle the
@@ -5543,7 +5573,6 @@ static BOOL spdf_page_list_cache_disabled(void) {
                                  NSMinY(pageRect) + relativeY * maxInPageY);
     if (NSWidth(pageRect) <= NSWidth(clipView.bounds) + 0.5)
         origin.x = [self centeredHorizontalScrollOriginXForPageRect:pageRect];
-    if (_presentationMode) origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
@@ -5718,10 +5747,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     else
         origin.x = spdf_clamp_cg(origin.x, NSMinX(pageRect), NSMinX(pageRect) + maxInPageX);
     origin.x = spdf_clamp_cg(origin.x, 0.0, maxDocumentX);
-    if (_presentationMode)
-        origin.y = [self presentationCenteredScrollOriginYForPageIndex:pageIndex];
-    else
-        origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
+    origin.y = spdf_clamp_cg(origin.y, NSMinY(pageRect), NSMinY(pageRect) + maxInPageY);
     origin.y = spdf_clamp_cg(origin.y, 0.0, maxDocumentY);
 
     [self scrollDocumentClipViewToOrigin:origin notify:YES];
@@ -6082,6 +6108,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     tab.scrollOrigin = [self normalizedDocumentScrollOrigin:_pageScrollView.contentView.bounds.origin
                                                forPageIndex:_pageIndex];
     tab.hasScrollOrigin = YES;
+    [self keepNormalViewInPresentedTab:tab];
     [self rememberActiveTabFindState];
     [self saveDocumentStateForTab:tab];
 }
@@ -7495,6 +7522,17 @@ static BOOL spdf_page_list_cache_disabled(void) {
     [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:[NSValue valueWithPoint:origin]];
 }
 
+// Re-renders at the zoom the fit mode now gives, keeping the point of the page under the viewport's centre under its
+// centre (applyFitModeKeepingPosition:), in presentation mode too. NO, and nothing done, before the pages are laid
+// out.
+- (BOOL)renderDocumentKeepingVisibleCenter {
+    if (!_doc || _renderedPages.count == 0) return NO;
+    SPDFPageAnchor anchor = [self pageAnchorForWindowPoint:[self visibleCenterWindowPoint]];
+    if (!anchor.valid) return NO;
+    [self renderDocumentAndScrollToPage:anchor.pageIndex alignTop:NO restoreOrigin:nil keepingAnchor:&anchor];
+    return YES;
+}
+
 - (void)finishLiveZoom:(NSTimer*)timer {
     NSUInteger sequence = [timer.userInfo unsignedIntegerValue];
     _zoomFinishTimer = nil;
@@ -8799,6 +8837,12 @@ static BOOL spdf_page_list_cache_disabled(void) {
     return proposedMaximumPosition;
 }
 
+// Presenting, the sidebar pane is hidden outright (SPDFMacPresentationIntegration.mm) and so is its divider: the
+// document fills the screen edge to edge, with no hairline beside a zoomed page.
+- (BOOL)splitView:(NSSplitView*)splitView shouldHideDividerAtIndex:(NSInteger)dividerIndex {
+    return splitView == _splitView && dividerIndex == 0 && _presentationMode;
+}
+
 - (BOOL)splitView:(NSSplitView*)splitView shouldAdjustSizeOfSubview:(NSView*)view {
     if (splitView == _splitView) return view == _documentContainer || [_documentContainer isDescendantOf:view];
     return YES;
@@ -8860,10 +8904,11 @@ static BOOL spdf_page_list_cache_disabled(void) {
 - (void)syncSidebarTableColumnWidth {
     if (!_sidebarTable || _sidebarTable.tableColumns.count == 0) return;
     if (SPDFSidebarFitTableToViewport(_sidebarTable)) {
-        // Comment rows wrap to the column width, so their heights change with it.
+        // Comment cards wrap to the column width, so their heights change with it.
         NSMutableIndexSet* commentRows = [NSMutableIndexSet indexSet];
         for (NSUInteger i = 0; i < _sidebarItems.count; ++i)
-            if ([_sidebarItems[(NSUInteger)i][@"kind"] isEqualToString:@"comment"]) [commentRows addIndex:i];
+            if ([@[ @"comment", @"commentsEmpty" ] containsObject:_sidebarItems[(NSUInteger)i][@"kind"] ?: @""])
+                [commentRows addIndex:i];
         if (commentRows.count > 0) [_sidebarTable noteHeightOfRowsWithIndexesChanged:commentRows];
     }
 }
@@ -8930,31 +8975,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
         if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeSearch && hasSearch) {
             [self rebuildSearchSidebarItems];
         } else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments && hasComments) {
-            for (int i = 0; i < _comments.count; ++i) {
-                spdf_comment_item item = _comments.items[i];
-                NSString* type = item.type && *item.type ? [NSString stringWithUTF8String:item.type] : @"Comment";
-                NSString* author = item.author && *item.author ? [NSString stringWithUTF8String:item.author] : @"";
-                NSString* text = item.text && *item.text ? [NSString stringWithUTF8String:item.text] : @"";
-                NSString* title = text.length ? text : type;
-                if (author.length) title = [NSString stringWithFormat:@"%@: %@", author, title];
-                NSString* haystack = [NSString
-                    stringWithFormat:@"%@ %@ %@ p.%d", title ?: @"", author ?: @"", type ?: @"", item.page_index + 1];
-                if (![self sidebarSearchText:haystack matchesFilter:filter]) continue;
-                CGFloat width = item.bounds.x1 - item.bounds.x0;
-                CGFloat height = item.bounds.y1 - item.bounds.y0;
-                NSMutableDictionary* sidebarItem = [@{
-                    @"title" : title ?: @"Comment",
-                    @"page" : @(item.page_index),
-                    @"level" : @0,
-                    @"kind" : @"comment",
-                    @"commentIndex" : @(item.index)
-                } mutableCopy];
-                if (width > 0 && height > 0) {
-                    sidebarItem[@"bounds"] =
-                        [NSValue valueWithRect:NSMakeRect(item.bounds.x0, item.bounds.y0, width, height)];
-                }
-                [_sidebarItems addObject:sidebarItem];
-            }
+            [self appendPDFCommentSidebarItemsMatchingFilter:filter];
         } else if (hasChapters) {
             [self appendAIGeneratedChaptersMatchingFilter:filter];
             for (int i = 0; i < _outline.count; ++i) {
@@ -9052,7 +9073,10 @@ static BOOL spdf_page_list_cache_disabled(void) {
         return;
     }
     if (_presentationMode) {
+        // The page shown is the one presented, wherever a zoomed page is panned;
+        // only keep the panned-to part of it sharp.
         [self updateMinimap];
+        [self scheduleScrollViewportMaintenance];
         return;
     }
     if (!_updatingFromScroll) {
@@ -9228,6 +9252,7 @@ static BOOL spdf_page_list_cache_disabled(void) {
     if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) {
         return NO;
     }
+    if ([self presentationArrowKeyDown:event]) return YES;  // pans a page zoomed past the screen
 
     if (_presentationMode && home) {
         [self firstPage:nil];
@@ -9488,11 +9513,7 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
 }
 
 - (BOOL)scrollViewShouldTurnWheelIntoPageChange:(NSEvent*)event {
-    if ([self isMarkdownActive]) return NO;
-    if (!_doc) return NO;
-    NSEventModifierFlags flags = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-    if (flags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) return NO;
-    return _presentationMode;
+    return [self presentationWheelTurnsPage:event];  // SPDFMacPresentationViewport.mm
 }
 
 - (BOOL)isAutoFitMode:(SPDFFitMode)fitMode {
@@ -9645,6 +9666,18 @@ static const NSTimeInterval kKeyScrollTickInterval = 1.0 / 60.0;
                 match = i;
                 break;
             }
+        }
+    } else if (_sidebarModeControl.spdf_selectedSidebarMode == SPDFSidebarModeComments) {
+        // The card the reader picked stays picked while its page is in view; otherwise the first card on that page.
+        NSInteger page = [self isMarkdownActive] ? [self activeMarkdownSession].currentPageIndex : _pageIndex;
+        NSInteger selected = _sidebarTable.selectedRow;
+        if (selected >= 0 && selected < (NSInteger)_sidebarItems.count &&
+            [_sidebarItems[(NSUInteger)selected][@"kind"] isEqualToString:@"comment"] &&
+            [_sidebarItems[(NSUInteger)selected][@"page"] integerValue] == page)
+            match = selected;
+        for (NSInteger i = 0; match < 0 && i < (NSInteger)_sidebarItems.count; ++i) {
+            NSDictionary* item = _sidebarItems[(NSUInteger)i];
+            if ([item[@"kind"] isEqualToString:@"comment"] && [item[@"page"] integerValue] == page) match = i;
         }
     } else if ([self isMarkdownActive]) {
         NSDictionary* current = [self currentMarkdownChapterItem];
@@ -10640,283 +10673,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     return text;
 }
 
-- (NSString*)currentCommentAuthor {
-    NSString* author = [_commentAuthor stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (author.length > 0) return author;
-    NSString* fallback = NSFullUserName();
-    if (fallback.length == 0) fallback = NSUserName();
-    return fallback ?: @"";
-}
-
-- (NSDictionary*)promptForCommentEditorWithTitle:(NSString*)title
-                                     buttonTitle:(NSString*)buttonTitle
-                                          author:(NSString*)author
-                                            text:(NSString*)text {
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = title ?: @"Comment";
-    alert.informativeText = @"Edit the comment author and text.";
-    [alert addButtonWithTitle:buttonTitle ?: @"Save"];
-    [alert addButtonWithTitle:@"Cancel"];
-
-    NSView* accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 420, 188)];
-    NSTextField* authorLabel = [NSTextField labelWithString:@"Author"];
-    authorLabel.frame = NSMakeRect(0, 164, 420, 18);
-    NSTextField* authorField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 136, 420, 24)];
-    authorField.stringValue = author ?: @"";
-
-    NSTextField* commentLabel = [NSTextField labelWithString:@"Comment"];
-    commentLabel.frame = NSMakeRect(0, 112, 420, 18);
-    NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 420, 108)];
-    scroll.hasVerticalScroller = YES;
-    NSTextView* textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 420, 108)];
-    textView.string = text ?: @"";
-    textView.font = [NSFont systemFontOfSize:13.0];
-    textView.verticallyResizable = YES;
-    textView.horizontallyResizable = NO;
-    textView.textContainer.widthTracksTextView = YES;
-    scroll.documentView = textView;
-
-    [accessory addSubview:authorLabel];
-    [accessory addSubview:authorField];
-    [accessory addSubview:commentLabel];
-    [accessory addSubview:scroll];
-    alert.accessoryView = accessory;
-    NSRange commentRange = NSMakeRange(0, textView.string.length);
-    [textView setSelectedRange:commentRange];
-    [alert.window setInitialFirstResponder:textView];
-    [alert.window makeFirstResponder:textView];
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [alert.window makeFirstResponder:textView];
-      [textView setSelectedRange:commentRange];
-    });
-    if ([alert runModal] != NSAlertFirstButtonReturn) return nil;
-
-    NSString* trimmedText =
-        [textView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString* trimmedAuthor =
-        [authorField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (trimmedText.length == 0) return nil;
-    return @{@"author" : trimmedAuthor ?: @"", @"text" : trimmedText};
-}
-
-- (NSString*)promptForCommentTextWithDefault:(NSString*)defaultText {
-    NSDictionary* result = [self promptForCommentEditorWithTitle:@"Add Comment"
-                                                     buttonTitle:@"Add"
-                                                          author:[self currentCommentAuthor]
-                                                            text:defaultText ?: @""];
-    if (result[@"author"]) {
-        _commentAuthor = result[@"author"];
-        [self savePersistentState];
-    }
-    return result[@"text"];
-}
-
-- (void)addComment:(id)sender {
-    (void)sender;
-    if (!_doc || !_path.length) {
-        NSBeep();
-        return;
-    }
-    if (![self ensureActivePDFCanBeModifiedForOperation:@"adding a comment"]) return;
-
-    BOOL hasSelection = _selectedText.length > 0 && _selectionPageIndex >= 0 && [self currentSelectionRects].count > 0;
-    NSInteger pageIndex = hasSelection ? _selectionPageIndex : _contextPageIndex;
-    if (pageIndex < 0 || pageIndex >= (NSInteger)_renderedPages.count) {
-        NSBeep();
-        return;
-    }
-
-    NSString* comment = [self promptForCommentTextWithDefault:hasSelection ? _selectedText : @""];
-    if (!comment) return;
-    comment = [comment stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (comment.length == 0) {
-        NSBeep();
-        return;
-    }
-
-    char err[1024];
-    BOOL ok = NO;
-    if (hasSelection) {
-        NSArray<NSValue*>* values = [self currentSelectionRects];
-        int count = (int)MIN((NSUInteger)256, values.count);
-        spdf_rect rects[256];
-        for (int i = 0; i < count; ++i) {
-            NSRect r = values[(NSUInteger)i].rectValue;
-            rects[i].x0 = NSMinX(r);
-            rects[i].y0 = NSMinY(r);
-            rects[i].x1 = NSMaxX(r);
-            rects[i].y1 = NSMaxY(r);
-        }
-        ok = spdf_add_highlight_comment(_doc, (int)pageIndex, rects, count, comment.UTF8String,
-                                        [self currentCommentAuthor].UTF8String, err, sizeof(err));
-    } else {
-        ok = spdf_add_text_comment(_doc, (int)pageIndex, (float)_contextPagePoint.x, (float)_contextPagePoint.y,
-                                   comment.UTF8String, [self currentCommentAuthor].UTF8String, err, sizeof(err));
-    }
-    if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
-    if (ok) [self collectionDidSavePath:_path];
-    if (!ok) {
-        [self showError:@"Could not add comment" detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-        return;
-    }
-    // Refresh cached mtime/size so the active-file watcher treats this as our
-    // own write and does not self-trigger a reload.
-    [self refreshActiveTabCachedFileAttributesAfterSelfSave];
-
-    _statusLabel.stringValue = @"Comment added.";
-    [self reloadCommentsFromActiveDocument];
-    [self renderDocumentAndScrollToPage:_pageIndex
-                               alignTop:NO
-                          restoreOrigin:[NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin]];
-}
-
-- (void)setCommentAuthor:(id)sender {
-    (void)sender;
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.messageText = @"Set Author for Comments";
-    alert.informativeText = @"New comments will use this author.";
-    [alert addButtonWithTitle:@"Save"];
-    [alert addButtonWithTitle:@"Cancel"];
-    NSTextField* field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 24)];
-    field.stringValue = [self currentCommentAuthor];
-    alert.accessoryView = field;
-    [_window makeFirstResponder:field];
-    if ([alert runModal] != NSAlertFirstButtonReturn) return;
-
-    _commentAuthor =
-        [field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    [self savePersistentState];
-    _statusLabel.stringValue = _commentAuthor.length ? @"Comment author saved." : @"Comment author reset.";
-}
-
-- (spdf_comment_item*)commentItemForIndex:(NSInteger)commentIndex {
-    if (commentIndex < 0) return NULL;
-    for (int i = 0; i < _comments.count; ++i) {
-        if (_comments.items[i].index == commentIndex) return &_comments.items[i];
-    }
-    return NULL;
-}
-
-- (NSNumber*)commentIndexForSidebarRow:(NSInteger)row {
-    if (row < 0 || row >= (NSInteger)_sidebarItems.count) return nil;
-    NSDictionary* item = _sidebarItems[(NSUInteger)row];
-    if (![item[@"kind"] isEqualToString:@"comment"]) return nil;
-    NSNumber* commentIndex = item[@"commentIndex"];
-    return [commentIndex isKindOfClass:NSNumber.class] ? commentIndex : nil;
-}
-
-- (NSInteger)commentIndexForSidebarContextRow {
-    NSNumber* commentIndex = [self commentIndexForSidebarRow:_sidebarTable.clickedRow];
-    return commentIndex ? commentIndex.integerValue : -1;
-}
-
-- (NSInteger)commentIndexAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint {
-    if (pageIndex < 0) return -1;
-    for (NSDictionary* comment in [self commentAnnotationsForPage:pageIndex]) {
-        NSValue* boundsValue = comment[@"bounds"];
-        if (!boundsValue) continue;
-        NSRect bounds = NSInsetRect(boundsValue.rectValue, -3.0, -3.0);
-        if (NSPointInRect(pagePoint, bounds)) return [comment[@"commentIndex"] integerValue];
-    }
-    return -1;
-}
-
-- (NSInteger)commentIndexForEditAction:(id)sender {
-    if ([sender isKindOfClass:NSMenuItem.class]) {
-        id represented = ((NSMenuItem*)sender).representedObject;
-        if ([represented isKindOfClass:NSNumber.class]) return [represented integerValue];
-    }
-    NSInteger sidebarIndex = [self commentIndexForSidebarContextRow];
-    if (sidebarIndex >= 0) return sidebarIndex;
-    return _contextCommentIndex;
-}
-
-- (void)editComment:(id)sender {
-    (void)sender;
-    if (!_doc || !_path.length) return;
-    if (![self ensureActivePDFCanBeModifiedForOperation:@"editing a comment"]) return;
-
-    NSInteger commentIndex = [self commentIndexForEditAction:sender];
-    spdf_comment_item* item = [self commentItemForIndex:commentIndex];
-    if (!item) {
-        NSBeep();
-        return;
-    }
-
-    NSString* author =
-        item->author && *item->author ? [NSString stringWithUTF8String:item->author] : [self currentCommentAuthor];
-    NSString* text = item->text && *item->text ? [NSString stringWithUTF8String:item->text] : @"";
-    NSDictionary* result = [self promptForCommentEditorWithTitle:@"Edit Comment"
-                                                     buttonTitle:@"Save"
-                                                          author:author
-                                                            text:text];
-    if (!result) return;
-
-    _commentAuthor = result[@"author"] ?: @"";
-    char err[1024];
-    BOOL ok = spdf_update_comment(_doc, (int)commentIndex, [result[@"text"] UTF8String], [result[@"author"] UTF8String],
-                                  err, sizeof(err));
-    if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
-    if (ok) [self collectionDidSavePath:_path];
-    if (!ok) {
-        [self showError:@"Could not edit comment"
-                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-        return;
-    }
-    [self refreshActiveTabCachedFileAttributesAfterSelfSave];
-
-    [self savePersistentState];
-    _statusLabel.stringValue = @"Comment updated.";
-    [self reloadCommentsFromActiveDocument];
-    [self renderDocumentAndScrollToPage:_pageIndex
-                               alignTop:NO
-                          restoreOrigin:[NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin]];
-}
-
-- (void)deleteComment:(id)sender {
-    if (!_doc || !_path.length) return;
-    if (![self ensureActivePDFCanBeModifiedForOperation:@"deleting a comment"]) return;
-
-    NSInteger commentIndex = [self commentIndexForEditAction:sender];
-    spdf_comment_item* item = [self commentItemForIndex:commentIndex];
-    if (!item) {
-        NSBeep();
-        return;
-    }
-
-    NSString* text = item->text && *item->text ? [NSString stringWithUTF8String:item->text] : @"";
-    NSString* detail = @"This will permanently remove the comment from the PDF.";
-    if (text.length > 0) {
-        NSString* preview = text.length > 180 ? [[text substringToIndex:180] stringByAppendingString:@"..."] : text;
-        detail = [NSString stringWithFormat:@"%@\n\n%@", detail, preview];
-    }
-
-    NSAlert* alert = [[NSAlert alloc] init];
-    alert.alertStyle = NSAlertStyleWarning;
-    alert.messageText = @"Delete Comment?";
-    alert.informativeText = detail;
-    [alert addButtonWithTitle:@"Delete"];
-    [alert addButtonWithTitle:@"Cancel"];
-    if ([alert runModal] != NSAlertFirstButtonReturn) return;
-
-    [self documentViewEndHoverComment];
-    NSValue* restoreOrigin = [NSValue valueWithPoint:_pageScrollView.contentView.bounds.origin];
-    char err[1024];
-    BOOL ok = spdf_delete_comment(_doc, (int)commentIndex, err, sizeof(err));
-    if (ok) ok = spdf_save_document(_doc, _path.fileSystemRepresentation, err, sizeof(err));
-    if (ok) [self collectionDidSavePath:_path];
-    if (!ok) {
-        [self showError:@"Could not delete comment"
-                 detail:[NSString stringWithUTF8String:err[0] ? err : "Unknown error"]];
-        return;
-    }
-    [self refreshActiveTabCachedFileAttributesAfterSelfSave];
-
-    _statusLabel.stringValue = @"Comment deleted.";
-    [self reloadCommentsFromActiveDocument];
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO restoreOrigin:restoreOrigin];
-}
-
 - (NSString*)shortProvenanceForPath:(NSString*)path {
     return spdf_palette_location_label(path, NSHomeDirectory(), SPDFMacStateDirectoryPath());
 }
@@ -11496,81 +11252,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     [self zoomByFactor:1.0 / 1.20 centeredAtWindowPoint:[self visibleCenterWindowPoint]];
 }
 
-- (void)rememberCurrentZoomForCustomReturn {
-    if (_fitMode == SPDFFitModeCustom && _zoom > 0) _rememberedCustomZoom = _zoom;
-}
-
-- (void)actualSize:(id)sender {
-    (void)sender;
-    if ([self isMarkdownActive]) {
-        [self markdownApplyFitMode:SPDFFitModeActual];
-        return;
-    }
-    if (!_doc) return;
-    [self rememberCurrentZoomForCustomReturn];
-    _fitMode = SPDFFitModeActual;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-    [self persistActiveState];
-}
-
-- (void)fitWidth:(id)sender {
-    (void)sender;
-    if ([self isMarkdownActive]) {
-        [self markdownApplyFitMode:SPDFFitModeWidth];
-        return;
-    }
-    if (!_doc) return;
-    [self rememberCurrentZoomForCustomReturn];
-    _fitMode = SPDFFitModeWidth;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-    [self persistActiveState];
-}
-
-- (void)fitHeight:(id)sender {
-    (void)sender;
-    if ([self isMarkdownActive]) {
-        [self markdownApplyFitMode:SPDFFitModeHeight];
-        return;
-    }
-    if (!_doc) return;
-    [self rememberCurrentZoomForCustomReturn];
-    _fitMode = SPDFFitModeHeight;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-    [self persistActiveState];
-}
-
-- (void)fitPage:(id)sender {
-    (void)sender;
-    if ([self isMarkdownActive]) {
-        [self markdownApplyFitMode:SPDFFitModePage];
-        return;
-    }
-    if (!_doc) return;
-    [self rememberCurrentZoomForCustomReturn];
-    _fitMode = SPDFFitModePage;
-    [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-    [self persistActiveState];
-}
-
-- (void)fitModePopupChanged:(id)sender {
-    (void)sender;
-    NSInteger selectedTag = _fitModePopup.selectedItem.tag;
-    SPDFFitMode selected = (SPDFFitMode)MAX(0, MIN(4, selectedTag));
-    if ([self isMarkdownActive]) {
-        [self markdownApplyFitMode:selected];
-    } else if (_doc) {
-        if (selected == SPDFFitModeCustom)
-            _zoom = MAX(kMinZoom, MIN(kMaxZoom, _rememberedCustomZoom > 0 ? _rememberedCustomZoom : _zoom));
-        else
-            [self rememberCurrentZoomForCustomReturn];
-        _fitMode = selected;
-        [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-        [self persistActiveState];
-    } else {
-        _fitMode = selected;
-    }
-}
-
 - (void)toggleSidebar:(id)sender {
     (void)sender;
     BOOL canShowSidebar = _sidebarModeControl != nil;
@@ -11590,7 +11271,7 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     BOOL hasItems = NO;
     if ([self isMarkdownActive]) {
         hasItems = mode == SPDFSidebarModeChapters ? [self markdownHasChapters]
-                                                   : (mode == SPDFSidebarModeSearch && [self markdownHasSearchSidebar]);
+                                                   : (mode == SPDFSidebarModeSearch ? [self markdownHasSearchSidebar] : [self markdownCommentCount] > 0);
     } else {
         hasItems = mode == SPDFSidebarModeChapters
                        ? _outline.count > 0
@@ -11624,102 +11305,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
 
 - (BOOL)windowIsFullScreen {
     return (_window.styleMask & NSWindowStyleMaskFullScreen) != 0;
-}
-
-- (NSRect)presentationScreenFrame {
-    NSScreen* screen = _window.screen ?: NSScreen.mainScreen;
-    return screen ? screen.frame : _window.frame;
-}
-
-- (void)enterPresentationWindowChrome {
-    if (_presentationUsingBorderlessWindow || !_window) return;
-    if ([self windowIsFullScreen]) {
-        [_window makeKeyAndOrderFront:nil];
-        [_window makeMainWindow];
-        [NSApp activateIgnoringOtherApps:YES];
-        return;
-    }
-
-    _presentationPreviousWindowFrame = _window.frame;
-    _presentationPreviousWindowStyleMask = _window.styleMask;
-    _presentationPreviousWindowLevel = _window.level;
-    _presentationPreviousCollectionBehavior = _window.collectionBehavior;
-    _presentationPreviousTitleVisibility = _window.titleVisibility;
-    _presentationPreviousTitlebarAppearsTransparent = _window.titlebarAppearsTransparent;
-    _presentationPreviousMovable = _window.movable;
-    _presentationPreviousMovableByWindowBackground = _window.movableByWindowBackground;
-    _presentationPreviousHasShadow = _window.hasShadow;
-
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-      context.duration = 0.0;
-      _window.styleMask = NSWindowStyleMaskBorderless;
-      _window.titleVisibility = NSWindowTitleHidden;
-      _window.titlebarAppearsTransparent = YES;
-      _window.movable = NO;
-      _window.movableByWindowBackground = NO;
-      _window.hasShadow = NO;
-      _window.level = NSPopUpMenuWindowLevel;
-      _window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                   NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary;
-      [_window setFrame:[self presentationScreenFrame] display:YES animate:NO];
-    }];
-    [_window makeKeyAndOrderFront:nil];
-    [_window makeMainWindow];
-    [NSApp activateIgnoringOtherApps:YES];
-    _presentationUsingBorderlessWindow = YES;
-}
-
-- (void)restorePresentationWindowChrome {
-    if (!_presentationUsingBorderlessWindow || !_window) return;
-
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
-      context.duration = 0.0;
-      _window.level = _presentationPreviousWindowLevel;
-      _window.collectionBehavior = _presentationPreviousCollectionBehavior;
-      _window.styleMask = _presentationPreviousWindowStyleMask;
-      _window.titleVisibility = _presentationPreviousTitleVisibility;
-      _window.titlebarAppearsTransparent = _presentationPreviousTitlebarAppearsTransparent;
-      _window.movable = _presentationPreviousMovable;
-      _window.movableByWindowBackground = _presentationPreviousMovableByWindowBackground;
-      _window.hasShadow = _presentationPreviousHasShadow;
-      [_window setFrame:_presentationPreviousWindowFrame display:YES animate:NO];
-    }];
-    _presentationUsingBorderlessWindow = NO;
-    [_window makeKeyAndOrderFront:nil];
-    [_window makeMainWindow];
-}
-
-- (void)installPresentationEventMonitor {
-    if (_presentationEventMonitor) return;
-    __weak ShenzhenMacDelegate* weakSelf = self;
-    NSEventMask mask = NSEventMaskKeyDown;
-    if (!_presentationEventMonitor) {
-        _presentationEventMonitor =
-            [NSEvent addLocalMonitorForEventsMatchingMask:mask
-                                                  handler:^NSEvent*(NSEvent* event) {
-                                                    ShenzhenMacDelegate* strongSelf = weakSelf;
-                                                    if (!strongSelf || !strongSelf->_presentationMode ||
-                                                        ![strongSelf hasActiveDocument])
-                                                        return event;
-                                                    if (event.window && event.window != strongSelf->_window)
-                                                        return event;
-
-                                                    if ([strongSelf handlePresentationEvent:event]) return nil;
-
-                                                    return event;
-                                                  }];
-    }
-}
-
-- (void)removePresentationEventMonitor {
-    if (_presentationEventMonitor) {
-        [NSEvent removeMonitor:_presentationEventMonitor];
-        _presentationEventMonitor = nil;
-    }
-    if (_presentationGlobalEventMonitor) {
-        [NSEvent removeMonitor:_presentationGlobalEventMonitor];
-        _presentationGlobalEventMonitor = nil;
-    }
 }
 
 - (void)applyPresentationChrome {
@@ -11766,92 +11351,6 @@ static const int kSPDFCursorRegionMaxLinkRects = 512;
     }
     [_window.contentView layoutSubtreeIfNeeded];
     if (presentation && _presentationOverlayView) [_window makeFirstResponder:_presentationOverlayView];
-}
-
-- (void)beginPresentationSleepActivityIfNeeded {
-    if (_presentationSleepActivityToken) return;
-    NSActivityOptions options =
-        NSActivityIdleSystemSleepDisabled | NSActivityIdleDisplaySleepDisabled | NSActivityUserInitiated;
-    _presentationSleepActivityToken =
-        [[NSProcessInfo processInfo] beginActivityWithOptions:options reason:@"ShenzhenPDF presentation mode"];
-}
-
-- (void)endPresentationSleepActivity {
-    if (!_presentationSleepActivityToken) return;
-    [[NSProcessInfo processInfo] endActivity:_presentationSleepActivityToken];
-    _presentationSleepActivityToken = nil;
-}
-
-- (void)enterPresentationMode:(id)sender {
-    if (![self hasActiveDocument] || _presentationMode) return;
-
-    BOOL markdown = [self isMarkdownActive];
-    [self stopKeyboardScrollAnimation];
-    [self rememberCurrentZoomForCustomReturn];
-    _presentationPreviousFitMode = _fitMode;
-    _presentationPreviousSidebarPreferredVisible = _sidebarPreferredVisible;
-    _presentationPreviousMinimapPreferredVisible = _minimapPreferredVisible;
-    _presentationEnteredFullScreen = NO;
-    _presentationMode = YES;
-    _lastPresentationEventTimestamp = 0;
-    _lastPresentationEventType = (NSEventType)0;
-    _lastPresentationEventKeyCode = -1;
-    _lastPresentationEventButtonNumber = -1;
-
-    [self enterPresentationWindowChrome];
-    _sidebarPreferredVisible = NO;
-    _minimapPreferredVisible = NO;
-    _fitMode = SPDFFitModePage;
-    if (!markdown) _pageView.currentPageIndex = _pageIndex;
-    [self applyPresentationChrome];
-    if (markdown) [self.activeMarkdownSession applyFitMode:SPDFMacMarkdownPageFitPage];
-    [self rebuildSidebar];
-    [self setMinimapActuallyVisible:NO];
-    [self installPresentationEventMonitor];
-    [NSApp activateIgnoringOtherApps:YES];
-    [_window orderFrontRegardless];
-    [_window makeKeyWindow];
-    [_window makeMainWindow];
-    [_window
-        makeFirstResponder:_presentationOverlayView ?: (markdown ? self.activeMarkdownSession.rootView : _pageView)];
-    if (markdown)
-        [self.activeMarkdownSession goToPageAtIndex:_pageIndex];
-    else
-        [self renderDocumentAndScrollToPage:_pageIndex alignTop:YES];
-    if (_preventSleepInPresentation) [self beginPresentationSleepActivityIfNeeded];
-}
-
-- (void)leavePresentationModeAndExitFullScreen:(BOOL)exitFullScreen sender:(id)sender {
-    if (!_presentationMode) return;
-    [self endPresentationSleepActivity];
-
-    BOOL markdown = [self isMarkdownActive];
-    BOOL shouldExitFullScreen = exitFullScreen && _presentationEnteredFullScreen && [self windowIsFullScreen];
-    _presentationMode = NO;
-    _presentationEnteredFullScreen = NO;
-    [self removePresentationEventMonitor];
-    _sidebarPreferredVisible = _presentationPreviousSidebarPreferredVisible;
-    _minimapPreferredVisible = _presentationPreviousMinimapPreferredVisible;
-    _fitMode = _presentationPreviousFitMode;
-    if (!markdown) _pageView.currentPageIndex = _pageIndex;
-    [self applyPresentationChrome];
-    [self restorePresentationWindowChrome];
-    [self rebuildSidebar];
-    [self setMinimapActuallyVisible:_minimapPreferredVisible];
-    if (markdown) {
-        [self markdownApplyFitMode:_presentationPreviousFitMode];
-        [self.activeMarkdownSession goToPageAtIndex:_pageIndex];
-    } else if (_doc)
-        [self renderDocumentAndScrollToPage:_pageIndex alignTop:NO];
-    [self persistActiveState];
-    if (shouldExitFullScreen) [_window toggleFullScreen:sender];
-}
-
-- (void)togglePresentation:(id)sender {
-    if (_presentationMode)
-        [self leavePresentationModeAndExitFullScreen:YES sender:sender];
-    else
-        [self enterPresentationMode:sender];
 }
 
 - (void)toggleFullScreen:(id)sender {
@@ -14033,28 +13532,6 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     return (NSInteger)_sidebarItems.count;
 }
 
-// Height of a comment sidebar row: the wrapped annotation text (capped at
-// kSidebarCommentMaxLines) plus kSidebarCommentVerticalPadding above and below.
-// Single-line comments fall back to the standard row height so they read just
-// like chapter rows.
-- (CGFloat)sidebarCommentRowHeightForText:(id)text {
-    NSString* string = [text isKindOfClass:NSString.class] ? text : @"";
-    CGFloat columnWidth = _sidebarTable.tableColumns.firstObject.width;
-    if (!isfinite(columnWidth) || columnWidth <= 0.0) columnWidth = NSWidth(_sidebarTable.bounds);
-    // 8pt leading + 6pt trailing inset, matching the SidebarCell text constraints.
-    CGFloat available = MAX(40.0, columnWidth - 14.0);
-    NSFont* font = [NSFont systemFontOfSize:13];
-    NSMutableParagraphStyle* paragraph = [[NSMutableParagraphStyle alloc] init];
-    paragraph.lineBreakMode = NSLineBreakByWordWrapping;
-    NSRect rect =
-        [string boundingRectWithSize:NSMakeSize(available, CGFLOAT_MAX)
-                             options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
-                          attributes:@{NSFontAttributeName : font, NSParagraphStyleAttributeName : paragraph}];
-    CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);
-    CGFloat textHeight = MIN(ceil(NSHeight(rect)), lineHeight * (CGFloat)kSidebarCommentMaxLines);
-    return MAX(_sidebarTable.rowHeight, textHeight + 2.0 * kSidebarCommentVerticalPadding);
-}
-
 - (CGFloat)tableView:(NSTableView*)tableView heightOfRow:(NSInteger)row {
     if (tableView == _shortcutHelpTable) {
         if (row < 0 || row >= (NSInteger)_shortcutHelpRows.count) return 48.0;
@@ -14070,7 +13547,12 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
                 CGFloat visibleHeight = NSHeight(tableView.enclosingScrollView.contentView.bounds);
                 return MAX(36.0, floor(visibleHeight));
             }
-            if ([kind isEqualToString:@"comment"]) return [self sidebarCommentRowHeightForText:item[@"title"]];
+            if ([kind isEqualToString:@"comment"] || [kind isEqualToString:@"commentsEmpty"]) {
+                CGFloat width = _sidebarTable.tableColumns.firstObject.width;
+                if (!isfinite(width) || width <= 0.0) width = NSWidth(_sidebarTable.bounds);
+                return [kind isEqualToString:@"comment"] ? SPDFCommentCardRowHeight(item, width)
+                                                         : SPDFCommentsEmptyRowHeight(item, width);
+            }
         }
         return _sidebarTable.rowHeight;
     }
@@ -14086,7 +13568,9 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
           (void)stop;
           if (idx >= self->_sidebarItems.count) return;
           NSString* kind = self->_sidebarItems[idx][@"kind"];
-          if ([kind isEqualToString:@"findDivider"] || [kind isEqualToString:@"findStatus"]) return;
+          if ([kind isEqualToString:@"findDivider"] || [kind isEqualToString:@"findStatus"] ||
+              [kind isEqualToString:@"commentsEmpty"])
+              return;
           [filtered addIndex:idx];
         }];
         return filtered;
@@ -14120,21 +13604,14 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return SPDFSidebarFindCell(tableView,item,matches);
     }
 
+    if ([kind isEqualToString:@"comment"])
+        return SPDFCommentCardCell(tableView, [self isMarkdownActive] ? item : [self pdfCommentCardItemForRow:row], self);
+    if ([kind isEqualToString:@"commentsEmpty"]) return SPDFCommentsEmptyCell(tableView, item);
+
     NSTableCellView* cell = [self sidebarCellForTableView:tableView];
-
-    // Cells are reused across comment and chapter rows, so set the line behavior
-    // every time. Comments wrap to a few lines (the row is sized to match in
-    // -sidebarCommentRowHeightForText:); chapters stay a single truncated line.
-    if ([item[@"kind"] isEqualToString:@"comment"]) {
-        cell.textField.lineBreakMode = NSLineBreakByWordWrapping;
-        cell.textField.maximumNumberOfLines = kSidebarCommentMaxLines;
-        cell.textField.cell.usesSingleLineMode = NO;
-    } else {
-        cell.textField.lineBreakMode = NSLineBreakByTruncatingTail;
-        cell.textField.maximumNumberOfLines = 1;
-        cell.textField.cell.usesSingleLineMode = YES;
-    }
-
+    cell.textField.lineBreakMode = NSLineBreakByTruncatingTail;
+    cell.textField.maximumNumberOfLines = 1;
+    cell.textField.cell.usesSingleLineMode = YES;
     [self styleSidebarCell:cell item:item];
     return cell;
 }
@@ -14249,7 +13726,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(toggleChaptersPanel:) || action == @selector(toggleCommentsPanel:)) {
         BOOL chapters = action == @selector(toggleChaptersPanel:);
         BOOL hasItems = chapters ? (markdown ? [self markdownHasChapters] : _outline.count > 0)
-                                 : (!markdown && _comments.count > 0);
+                                 : (markdown ? [self markdownCommentCount] > 0 : _comments.count > 0);
         NSString* panelName = chapters ? @"Chapters Panel" : @"Comments Panel";
         BOOL selectedVisible = _sidebarVisible && _sidebarModeControl.spdf_selectedSidebarMode ==
                                                       (chapters ? SPDFSidebarModeChapters : SPDFSidebarModeComments);
@@ -14288,9 +13765,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     if (action == @selector(copySelection:))
         return [self trimmedSelectedTextForCommand].length > 0 ||
                (markdown && [self.activeMarkdownSession selectionContainsImage]);
-    if (action == @selector(addComment:)) return !markdown && hasDoc && (_selectedText.length > 0 || _contextPageIndex >= 0);
-    if (action == @selector(editComment:)) return !markdown && hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
-    if (action == @selector(deleteComment:)) return !markdown && hasDoc && [self commentIndexForEditAction:menuItem] >= 0;
+    if (action == @selector(addComment:)) return [self canAddCommentNow];
+    if (action == @selector(editComment:) || action == @selector(deleteComment:)) return [self canEditCommentForSender:menuItem];
     if (action == @selector(rotateClockwise:) || action == @selector(rotateAnticlockwise:))
         return [self canRotateActivePage];
     if (action == @selector(ocrDocument:)) return hasDoc && SPDFOCRPathSupported(_path);
@@ -14304,7 +13780,7 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
         return markdown || (hasDoc && SPDFOCRPathSupported(_path));
     if (action == @selector(showInFolder:)) return hasDoc && _path.length > 0;
     if (action == @selector(copyCurrentDocumentPath:)) return hasDoc && _path.length > 0;
-    if (action == @selector(copyCurrentDocumentFile:)) return hasDoc && _path.length > 0;
+    if (action == @selector(copyCurrentDocumentFile:)) return [self validateCopyDocumentItem:menuItem];
     if (action == @selector(copyCurrentPageAsPDF:)) return [self canCopyCurrentPageAsPDF];
     if (action == @selector(copyCurrentPageImage:)) return [self canCopyCurrentPageImage];
     if (action == @selector(showProperties:)) return [self selectedTab].path.length > 0;
@@ -14338,6 +13814,7 @@ int main(int argc, const char* argv[]) {
         // harness having to record the spawn itself.
         spdf_launch_profile_log(@"main enter (spawn @%.1f, +%.1fms)", spdf_process_spawn_time_ms(),
                                 spdf_zoom_profile_now_ms() - spdf_process_spawn_time_ms());
+        if (SPDFMacIsSzpdfInvocation(argv[0])) return SPDFMacRunSzpdf(argc, argv); // the szpdf tool (SPDFMacSzpdf.h)
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--collection-companion") == 0) return SPDFRunCollectionCompanion();
             if (strcmp(argv[i], "--agent-command") == 0)

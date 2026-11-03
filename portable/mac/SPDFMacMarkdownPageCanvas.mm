@@ -183,7 +183,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
     CGContextRef context = NSGraphicsContext.currentContext.CGContext;
     for (NSInteger pageIndex = first; pageIndex <= last; ++pageIndex) {
         NSRect pageFrame = [self frameForPageAtIndex:(NSUInteger)pageIndex];
-        if (!NSIntersectsRect(pageFrame, dirtyRect)) continue;
+        if (!NSIntersectsRect(pageFrame, dirtyRect) || (self.presentationMode && pageIndex != self.presentationPageIndex)) continue;
         [self drawPaperBackgroundInFrame:pageFrame];
         CGContextSaveGState(context);
         CGContextTranslateCTM(context, NSMinX(pageFrame), NSMaxY(pageFrame));
@@ -199,6 +199,7 @@ static const CGFloat kSPDFMarkdownCanvasInset = 24.0;
                  rounded:YES
                   onPage:page
                pageFrame:pageFrame];
+        [self drawCommentHighlightsOnPage:page pageFrame:pageFrame];
         if (_selectedRange.length)
             [self drawRanges:@[ [NSValue valueWithRange:_selectedRange] ]
                        color:[NSColor.selectedTextBackgroundColor colorWithAlphaComponent:0.42]

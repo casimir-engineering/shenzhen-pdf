@@ -3,6 +3,9 @@
 #
 #   make friends-ui-e2e                                     every flow, light and dark, normal and narrow
 #   make friends-ui-e2e FRIENDS_UI_E2E_VARIANTS=dark-narrow FRIENDS_UI_E2E_FLOWS=solo     one look, one group
+#   make friends-ui-e2e FRIENDS_UI_E2E_FLOWS=pair,starting SPDF_OPT_IN_CHECKS=1           pair's keyboard step and the
+#                                                                                         starting group, which the
+#                                                                                         release does not run
 #
 # It needs a logged-in macOS session (a window server), but shows nothing: every window it opens stays off every
 # screen, and none takes focus from other apps. Screenshots of every step, and flows.tsv with each flow's
@@ -17,7 +20,8 @@ FRIENDS_UI_E2E_SHOTS := $(FRIENDS_UI_E2E_BUILD)/screenshots
 FRIENDS_UI_E2E_SRCS := $(addprefix $(FRIENDS_UI_E2E_DIR)/,SPDFMacFriendsUIE2ETests.mm SPDFMacFriendsUIDriver.mm \
 	SPDFMacFriendsUIOffscreen.mm SPDFMacFriendsUIViewTree.mm SPDFMacFriendsUIFlows.mm SPDFMacFriendsUISettingsFlows.mm \
 	SPDFMacFriendsUIPermissionFlows.mm SPDFMacFriendsUIPairFlows.mm SPDFMacFriendsUIRemoveFlows.mm \
-	SPDFMacFriendsUIFoundFlows.mm SPDFMacFriendsUIPhoneFlows.mm SPDFMacFriendsUIJoinFlows.mm)
+	SPDFMacFriendsUIKeyboardFlows.mm SPDFMacFriendsUIFoundFlows.mm SPDFMacFriendsUIPhoneFlows.mm \
+	SPDFMacFriendsUIJoinFlows.mm SPDFMacFriendsUIStartFlows.mm)
 # The reader's side of Friends as the app links it: the host adapter, its title-bar placement and appearance.
 FRIENDS_UI_E2E_HOST_SRCS := $(sort $(HOST_ADAPTER_REVISION_SRCS) $(addprefix $(HOST_ADAPTER_DIR)/,\
 	SPDFMacFriendsAttachItems.mm SPDFMacFriendsHost.mm SPDFMacFriendsShareMenu.mm SPDFMacFriendsLaunch.mm \

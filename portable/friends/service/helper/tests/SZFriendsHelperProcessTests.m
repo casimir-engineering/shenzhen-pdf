@@ -25,6 +25,7 @@ BOOL SZFHTestForgedHandover(SZFHHarness *harness);
 BOOL SZFHTestAddByIDKeepsKeyedRows(SZFHHarness *harness);
 BOOL SZFHTestAddByIDBroadcastsPastClaims(SZFHHarness *harness);
 BOOL SZFHTestMessageStatus(SZFHHarness *harness);
+BOOL SZFHTestConversationPreview(SZFHHarness *harness);
 BOOL SZFHTestMentionsWritten(SZFHHarness *harness);
 BOOL SZFHTestAddFromMention(SZFHHarness *harness);
 BOOL SZFHTestBlockAndRemoveDropPreviews(SZFHHarness *harness);
@@ -238,13 +239,20 @@ int main(int argc, const char *argv[]) {
             {"You: a message to yourself through the helper", SZFHTestYouIntents},
             {"Reset Friends from an identity it cannot read", SZFHTestResetUnreadableIdentity},
             {"an identity readable again starts what needs it", SZFHTestIdentityReadableAgain},
+        }, optInTests[] = {
+            // Opt-in, not run by the release: SZFRIENDS_OPT_IN_CHECKS=1 (the host's make sets it with its own opt-in switch).
+            {"conversation preview reads nothing", SZFHTestConversationPreview},
         };
+        const char *optIn = getenv("SZFRIENDS_OPT_IN_CHECKS");
+        size_t count = sizeof(tests) / sizeof(tests[0]);
+        size_t optInCount = optIn && strcmp(optIn, "1") == 0 ? sizeof(optInTests) / sizeof(optInTests[0]) : 0;
         int failed = 0;
-        for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
+        for (size_t i = 0; i < count + optInCount; i++) {
+            __typeof__(tests[0]) *test = i < count ? &tests[i] : &optInTests[i - count];
             SZFHLastStateDirectory = nil;
             NSDate *start = [NSDate date];
-            BOOL passed = tests[i].run(harness);
-            printf("%s %s (%.1f s)\n", passed ? "ok  " : "FAIL", tests[i].name, -start.timeIntervalSinceNow);
+            BOOL passed = test->run(harness);
+            printf("%s %s (%.1f s)\n", passed ? "ok  " : "FAIL", test->name, -start.timeIntervalSinceNow);
             if (!passed) {
                 failed++;
                 if (SZFHLastStateDirectory) {

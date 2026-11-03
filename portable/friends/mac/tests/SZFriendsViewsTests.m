@@ -181,6 +181,12 @@ int main(int argc, const char *argv[]) {
         SZFTestLinkRouting();
         SZFTestFixtureConstruction();
         SZFTestHistoryFollow();
+        // Opt-in, not run by the release: SZFRIENDS_OPT_IN_CHECKS=1 (the host's make sets it with its own opt-in switch).
+        const char *optIn = getenv("SZFRIENDS_OPT_IN_CHECKS");
+        if (optIn && strcmp(optIn, "1") == 0) {
+            SZFTestChatOpen();
+            SZFTestKeyboard();
+        }
         SZFTestHitTesting();
         SZFTestControls();
         SZFTestRowActions();

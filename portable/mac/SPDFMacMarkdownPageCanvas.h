@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, weak, nullable) id<SPDFMacUIReader> reader;
 @property(nonatomic, readonly) NSUInteger pageCount;
 @property(nonatomic) BOOL presentationMode;
+@property(nonatomic) NSInteger presentationPageIndex;  // the only page drawn in presentation mode
 @property(nonatomic) NSRange selectedRange;
 @property(nonatomic, copy) NSArray<NSValue*>* searchRanges;
 // Current find match, drawn as the PDF view's animated red outline. {0,0}
@@ -121,6 +122,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary<NSNumber*, NSArray<NSValue*>*>*)pageLocalRectsForRanges:(NSArray<NSValue*>*)ranges;
 // The canvas's plan and text, for computing search rects off the main thread.
 @property(nonatomic, readonly) SPDFMarkdownSearchGeometry* searchGeometry;
+@end
+
+// Implemented in SPDFMacMarkdownPageCanvas+Comments.mm.
+@interface SPDFMacMarkdownPageCanvas (Comments)
+// Commented passages: {range, title, text} each, drawn as a highlight; hovering one shows its comment.
+@property(nonatomic, copy, nullable) NSArray<NSDictionary*>* commentHighlights;
 @end
 
 // Ranges sorted for overlap lookups, so mapping N matches onto F fragments

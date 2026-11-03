@@ -77,12 +77,6 @@ static int token_canceled(const spdf_render_token* token) {
     return token && token->cookie.abort;
 }
 
-typedef struct comment_builder {
-    spdf_comment_item* items;
-    int count;
-    int capacity;
-} comment_builder;
-
 typedef struct text_line_builder {
     spdf_text_line* items;
     int count;
@@ -1238,52 +1232,8 @@ void spdf_free_text_lines(spdf_text_lines* lines) {
 }
 
 #include "spdf_outline_read.h"
-
-static int append_comment_item(comment_builder* builder, const char* author, const char* text, const char* type,
-                               int comment_index, int page_index, fz_rect bounds) {
-    spdf_comment_item* next_items;
-    char* author_copy;
-    char* text_copy;
-    char* type_copy;
-    int next_capacity;
-
-    if (builder->count == builder->capacity) {
-        next_capacity = builder->capacity ? builder->capacity * 2 : 32;
-        next_items = (spdf_comment_item*)realloc(builder->items, (size_t)next_capacity * sizeof(spdf_comment_item));
-        if (!next_items) return 0;
-        builder->items = next_items;
-        builder->capacity = next_capacity;
-    }
-
-    author_copy = copy_string(author && *author ? author : "");
-    text_copy = copy_string(text && *text ? text : "");
-    type_copy = copy_string(type && *type ? type : "Annotation");
-    if (!author_copy || !text_copy || !type_copy) {
-        free(author_copy);
-        free(text_copy);
-        free(type_copy);
-        return 0;
-    }
-    builder->items[builder->count].author = author_copy;
-    builder->items[builder->count].text = text_copy;
-    builder->items[builder->count].type = type_copy;
-    builder->items[builder->count].index = comment_index;
-    builder->items[builder->count].page_index = page_index;
-    builder->items[builder->count].bounds.x0 = bounds.x0;
-    builder->items[builder->count].bounds.y0 = bounds.y0;
-    builder->items[builder->count].bounds.x1 = bounds.x1;
-    builder->items[builder->count].bounds.y1 = bounds.y1;
-    builder->count++;
-    return 1;
-}
-
-static int annot_type_should_surface(enum pdf_annot_type type) {
-    return type != PDF_ANNOT_LINK && type != PDF_ANNOT_POPUP && type != PDF_ANNOT_WIDGET && type != PDF_ANNOT_SCREEN;
-}
-
-static int comment_annotation_should_surface(const char* contents, const char* author, enum pdf_annot_type annot_type) {
-    return (contents && *contents) || (author && *author) || annot_type_should_surface(annot_type);
-}
+#include "spdf_comment_read.h"
+#include "spdf_comment_review.h"
 
 static const char* dict_text_or_empty(fz_context* ctx, pdf_obj* obj, pdf_obj* key) {
     const char* text;
@@ -1406,10 +1356,12 @@ int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t
                     if (!popup) popup = popup_for_parent(doc->ctx, annots, obj);
                     if (!contents || !*contents) contents = dict_text_or_empty(doc->ctx, popup, PDF_NAME(Contents));
                     author = comment_author_or_empty(doc->ctx, obj, popup);
-                    if (!comment_annotation_should_surface(contents, author, annot_type)) continue;
+                    if (!comment_annotation_should_surface(doc->ctx, obj, contents, author, annot_type)) continue;
                     bounds = annot_bounds(doc->ctx, annot);
                     if (!append_comment_item(&builder, author, contents, type, builder.count, i, bounds))
                         fz_throw(doc->ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                    note_comment_metadata(doc->ctx, &builder, annot, obj);
+                    builder.items[builder.count - 1].resolved = comment_is_resolved(doc->ctx, annots, obj);
                 }
                 pdf_drop_page(doc->ctx, page);
                 page = NULL;
@@ -1419,12 +1371,17 @@ int spdf_load_comments(spdf_document* doc, spdf_comments* out, char* err, size_t
     fz_catch(doc->ctx) {
         set_error(err, err_len, fz_caught_message(doc->ctx));
         if (page) pdf_drop_page(doc->ctx, page);
+        free(builder.object_numbers);
+        free(builder.reply_numbers);
         out->items = builder.items;
         out->count = builder.count;
         spdf_free_comments(out);
         return 0;
     }
 
+    resolve_comment_replies(&builder);
+    free(builder.object_numbers);
+    free(builder.reply_numbers);
     out->items = builder.items;
     out->count = builder.count;
     return 1;
@@ -1877,7 +1834,7 @@ int spdf_update_comment(spdf_document* doc, int comment_index, const char* text,
                 if (!popup) popup = popup_for_parent(doc->ctx, annots, obj);
                 if (!contents || !*contents) contents = dict_text_or_empty(doc->ctx, popup, PDF_NAME(Contents));
                 current_author = comment_author_or_empty(doc->ctx, obj, popup);
-                if (!comment_annotation_should_surface(contents, current_author, annot_type)) continue;
+                if (!comment_annotation_should_surface(doc->ctx, obj, contents, current_author, annot_type)) continue;
 
                 if (visible_index == comment_index) {
                     set_comment_text_and_author(doc->ctx, annot, popup, text, author);
@@ -1932,7 +1889,7 @@ int spdf_delete_comment(spdf_document* doc, int comment_index, char* err, size_t
                 if (!popup) popup = popup_for_parent(doc->ctx, annots, obj);
                 if (!contents || !*contents) contents = dict_text_or_empty(doc->ctx, popup, PDF_NAME(Contents));
                 current_author = comment_author_or_empty(doc->ctx, obj, popup);
-                if (!comment_annotation_should_surface(contents, current_author, annot_type)) continue;
+                if (!comment_annotation_should_surface(doc->ctx, obj, contents, current_author, annot_type)) continue;
 
                 if (visible_index == comment_index) {
                     remove_popups_for_parent(doc->ctx, annots, obj);
@@ -2555,7 +2512,7 @@ static void apply_comment_text_updates(fz_context* ctx, pdf_document* pdf, int p
                 if (!popup) popup = popup_for_parent(ctx, annots, obj);
                 if (!contents || !*contents) contents = dict_text_or_empty(ctx, popup, PDF_NAME(Contents));
                 author = comment_author_or_empty(ctx, obj, popup);
-                if (!comment_annotation_should_surface(contents, author, annot_type)) continue;
+                if (!comment_annotation_should_surface(ctx, obj, contents, author, annot_type)) continue;
                 if (visible_index == updates[next_update].index) {
                     const char* text = updates[next_update].text ? updates[next_update].text : "";
                     pdf_dict_put_text_string(ctx, obj, PDF_NAME(Contents), text);

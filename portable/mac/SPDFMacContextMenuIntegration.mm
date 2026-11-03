@@ -5,6 +5,8 @@
 #import "SPDFMacCollectionPathPolicy.h"
 #import "SPDFMacTranslationEnablement.h"
 #import "SPDFMacPermanentDeleteIntegration.h"
+#import "SPDFMacCommentActions.h"
+#import "SPDFMacInstantMenuItem.h"
 
 #import <objc/runtime.h>
 
@@ -20,7 +22,6 @@
 @end
 
 @interface ShenzhenMacDelegate (SPDFMacContextMenuPrivate)
-- (NSInteger)commentIndexAtPageIndex:(NSInteger)pageIndex pagePoint:(NSPoint)pagePoint;
 - (NSString*)shortSelectedTextForMenuTitle;
 @end
 
@@ -28,6 +29,7 @@
 
 - (NSMenu*)contextMenuForDocumentView:(NSView*)view event:(NSEvent*)event {
     [self documentViewEndHoverComment];
+    [self noteCommentEditorAnchorAtWindowPoint:event.locationInWindow];
     _contextPageIndex = -1;
     _contextPagePoint = NSZeroPoint;
     _contextCommentIndex = -1;
@@ -40,6 +42,8 @@
         SPDFMacMarkdownPageCanvas* canvas = (SPDFMacMarkdownPageCanvas*)view;
         NSPoint point = [canvas convertPoint:event.locationInWindow fromView:nil];
         _contextPageIndex = [canvas pageIndexAtPoint:point];
+        [self noteMarkdownContextMenuAtLocation:_contextPageIndex >= 0 ? [canvas attributedLocationNearestToPoint:point]
+                                                                       : NSNotFound];
     }
 
     BOOL markdown = [self isMarkdownActive];
@@ -78,20 +82,28 @@
     copy.target = self;
     copy.enabled =
                    (selectedText.length > 0 || (markdown && [self.activeMarkdownSession selectionContainsImage]));
-    if (!markdown && _contextCommentIndex >= 0) {
+    if (_contextCommentIndex >= 0) {
         NSMenuItem* editComment = [menu addItemWithTitle:@"Edit Comment..."
                                                   action:@selector(editComment:)
                                            keyEquivalent:@""];
         editComment.target = self;
         editComment.representedObject = @(_contextCommentIndex);
+        SPDFMacMakeMenuItemInstant(editComment);
         NSMenuItem* deleteComment = [menu addItemWithTitle:@"Delete Comment..."
                                                     action:@selector(deleteComment:)
                                              keyEquivalent:@""];
         deleteComment.target = self;
         deleteComment.representedObject = @(_contextCommentIndex);
     }
-    NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..." action:@selector(addComment:) keyEquivalent:@""];
-    addComment.enabled = !markdown && _doc != NULL && (selectedText.length > 0 || _contextPageIndex >= 0);
+    // Opens the comment box as the button comes up (no blink, no fade), carrying the click it was chosen for. ⌘J is
+    // shown here and answered by the Edit menu's Add Comment… (SPDFMacCommentActions.mm).
+    NSMenuItem* addComment = [menu addItemWithTitle:@"Add Comment..." action:@selector(addComment:) keyEquivalent:@"j"];
+    addComment.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    addComment.enabled = [self canAddCommentNow];
+    addComment.representedObject = SPDFMacPageMenuCommentContext(_contextPageIndex, _contextPagePoint);
+    SPDFMacMakeMenuItemInstant(addComment);
+    [self warmCommentEditorWhileMenuIsOpen];
+    if (markdown && [self hasActiveDocument]) [self addCopyCommentsFileItemToMenu:menu path:_path];
     NSMenuItem* favorite = [menu addItemWithTitle:@"Favorite Page"
                                            action:@selector(favoriteCurrentPage:)
                                     keyEquivalent:@""];
@@ -113,7 +125,7 @@
         openInEditor.target = self;
         openInEditor.enabled = _path.length > 0 && !SPDFMacPathIsCollectionArchive(_path);
     }
-    NSMenuItem* copyDocument = [menu addItemWithTitle:@"Copy Document"
+    NSMenuItem* copyDocument = [menu addItemWithTitle:[self copyDocumentTitleForPath:_path]
                                                action:@selector(copyCurrentDocumentFile:)
                                         keyEquivalent:@""];
     copyDocument.enabled = [self hasActiveDocument] && _path.length > 0;
@@ -141,6 +153,7 @@
                                       keyEquivalent:@""];
     properties.enabled = [self selectedTab].path.length > 0;
     spdf_apply_system_icons_to_menu(menu);
+    [self decorateDocumentMenu:menu];
     if ([self hasActiveDocument] && _path.length) [self addPermanentDeleteItemToMenu:menu path:_path];
     return menu;
 }

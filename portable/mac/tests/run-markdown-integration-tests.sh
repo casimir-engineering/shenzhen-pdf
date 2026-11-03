@@ -46,6 +46,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownParser.mm
 $PORTABLE/mac/markdown/SPDFMarkdownHTML.mm
 $PORTABLE/mac/markdown/SPDFMarkdownHTMLBlocks.mm
 $PORTABLE/mac/markdown/SPDFMarkdownResources.mm
+$PORTABLE/mac/markdown/SPDFMarkdownPicture.mm
 $PORTABLE/mac/markdown/SPDFMarkdownLanguage.mm
 $PORTABLE/mac/markdown/SPDFMarkdownHighlighter.mm
 $PORTABLE/mac/markdown/SPDFMarkdownLexerSupport.mm
@@ -79,6 +80,7 @@ $PORTABLE/mac/markdown/SPDFMarkdownImageRowBand.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPaginator.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPlanLocationIndex.mm
 $PORTABLE/mac/markdown/SPDFMarkdownPaginatorDrawing.mm
+$PORTABLE/mac/markdown/SPDFMarkdownVectorPicture.mm
 $PORTABLE/mac/markdown/SPDFMarkdownImageRecolor.mm
 $PORTABLE/mac/markdown/SPDFMarkdownAsync.mm
 $PORTABLE/mac/markdown/SPDFMarkdownDocument.mm
@@ -133,8 +135,10 @@ $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Decorations.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Navigation.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Pan.mm
 $PORTABLE/mac/SPDFMacMarkdownPageCanvas+Search.mm
+$PORTABLE/mac/SPDFMacMarkdownPageCanvas+Comments.mm
 $PORTABLE/mac/SPDFMacMarkdownPagedView.mm
 $PORTABLE/mac/SPDFMacMarkdownPagedView+Fit.mm
+$PORTABLE/mac/SPDFMacMarkdownPagedView+Presentation.mm
 $PORTABLE/mac/SPDFMacMarkdownClipView.mm
 $PORTABLE/mac/SPDFMacMarkdownCopyText.mm
 $PORTABLE/mac/SPDFMacRenderedPage.mm
@@ -153,6 +157,7 @@ $PORTABLE/mac/SPDFMacMarkdownSession+Search.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+SearchResults.mm
 $PORTABLE/mac/SPDFMacProgressiveSearch.mm
 $PORTABLE/mac/SPDFMacMarkdownSession+ViewSwap.mm
+$PORTABLE/mac/SPDFMacMarkdownSession+Comments.mm
 $PORTABLE/mac/SPDFMacMarkdownSessionImageLoader.mm
 "
 

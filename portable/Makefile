@@ -39,6 +39,13 @@ CPU := $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 # nothing.
 SPDF_TEST_STAMP_TOOL := $(wildcard $(CURDIR)/../../../tools/test-stamp.sh)
 spdf_test_stamp = $(if $(SPDF_TEST_STAMP_TOOL),@"$(SPDF_TEST_STAMP_TOOL)" record pdf/$(1),@:)
+# Checks the release does not run (README.md § Opt-in checks, not run by the release). Off by default;
+# make <suite> SPDF_OPT_IN_CHECKS=1 runs a suite's opt-in cases too. Exported so the test binaries see it.
+SPDF_OPT_IN_CHECKS ?=
+export SPDF_OPT_IN_CHECKS
+# Friends' own tests read it under Friends' name: nothing under friends/ may name the reader (containment-check.sh).
+SZFRIENDS_OPT_IN_CHECKS ?= $(SPDF_OPT_IN_CHECKS)
+export SZFRIENDS_OPT_IN_CHECKS
 
 CORE_SRC := core/shenzhen_pdf_core.c
 CORE_HDR := core/shenzhen_pdf_core.h
@@ -57,8 +64,11 @@ CORE_PAGE_IMAGES_OBJ := $(BUILD)/spdf_page_images.o
 CORE_LINK_OBJ := $(BUILD)/spdf_link.o
 CORE_PROGRESSIVE_OBJ := $(BUILD)/spdf_progressive.o
 CORE_DESTINATION_OBJ := $(BUILD)/spdf_destination.o
+# SVG images in Markdown, drawn by MuPDF (core/spdf_svg_image.h, used by mac/SPDFMacSVGImage.mm).
+CORE_SVG_IMAGE_OBJ := $(BUILD)/spdf_svg_image.o $(BUILD)/spdf_svg_font.o $(BUILD)/spdf_svg_font_subset.o \
+	$(BUILD)/spdf_cff_subset.o
 CORE_OBJS := $(CORE_OBJ) $(CORE_SELECTION_OBJ) $(CORE_SELECTION_SUPPORT_OBJ) $(CORE_RECOLOR_OBJ) $(CORE_IMAGE_PROPERTIES_OBJ) \
-	$(CORE_PAGE_IMAGES_OBJ) $(CORE_LINK_OBJ) $(CORE_PROGRESSIVE_OBJ) $(CORE_DESTINATION_OBJ)
+	$(CORE_PAGE_IMAGES_OBJ) $(CORE_LINK_OBJ) $(CORE_PROGRESSIVE_OBJ) $(CORE_DESTINATION_OBJ) $(CORE_SVG_IMAGE_OBJ)
 YAML_SRC := core/spdf_yaml.c
 YAML_HDR := core/spdf_yaml.h
 YAML_OBJ := $(BUILD)/spdf_yaml.o
@@ -106,6 +116,8 @@ MAC_TAB_LIFECYCLE_TEST := $(BUILD)/SPDFMacTabLifecycleTests
 MAC_TAB_STATE_TEST := $(BUILD)/SPDFMacTabStateTests
 MAC_SIDEBAR_OUTLINE_TEST := $(BUILD)/SPDFMacSidebarOutlineTests
 MAC_PAGE_WHEEL_TEST := $(BUILD)/SPDFMacPageWheelTests
+MAC_MARKDOWN_COMMENTS_TEST := $(BUILD)/SPDFMacMarkdownCommentsTests
+MAC_DOCUMENT_VERSIONS_TEST := $(BUILD)/SPDFMacDocumentVersionsTests
 MAC_FILE_EXPLORER_TEST := $(BUILD)/SPDFMacFileExplorerPreferenceTests
 MAC_SELECTION_CLICK_TEST := $(BUILD)/SPDFMacSelectionClickTests
 MAC_SELECTION_ADAPTER_TEST := $(BUILD)/SPDFMacSelectionAdapterTests
@@ -126,7 +138,7 @@ MAC_APP_OBJ_DIR := $(BUILD)/mac-app
 MAC_APP_OBJS := $(patsubst %.mm,$(MAC_APP_OBJ_DIR)/%.o,$(MAC_SRCS))
 MAC_APP_COMPILE_FLAGS = $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Imac -Icore -I$(MUPDF_DIR)/include
 MAC_APP_FLAGS_FILE := $(MAC_APP_OBJ_DIR)/compile-flags
-MAC_VERSION ?= 26.11.1
+MAC_VERSION ?= 26.11.3
 MAC_BUILD ?= 1
 # The release this app is, as people see it and the updater compares it (mac/Info.plist SZFReleaseTag, which
 # cut-release.sh sets). MAC_BUILD alone is not it: Friends changes raise MAC_BUILD between releases.
@@ -151,19 +163,23 @@ endif
 .PHONY: mac
 mac: mac-app
 
-.PHONY: all mac-app core-outline-tests core-link-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-tab-state-tests mac-sidebar-outline-tests mac-page-wheel-tests mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
+.PHONY: all mac-app core-outline-tests core-link-tests core-password-tests core-recolor-tests core-render-theme-tests core-recolor-probe core-selection-tests icon-tests mac-window-shortcut-tests mac-window-chrome-tests mac-password-tests mac-minimap-window-tests mac-tab-strip-geometry-tests mac-tab-strip-interaction-tests mac-tab-strip-style-tests mac-reading-theme-chrome-tests mac-palette-results-tests mac-find-nearest-tests mac-updater-tests mac-properties-format-tests mac-translation-filter-tests mac-translation-copy-tests mac-cursor-region-tests mac-state-yaml-tests mac-tab-lifecycle-tests mac-tab-state-tests mac-sidebar-outline-tests mac-page-wheel-tests mac-markdown-comments-check mac-document-versions-check mac-file-explorer-tests mac-selection-click-tests mac-selection-adapter-tests mac-launch-work-policy-tests mac-markdown-tests linux-password-tests file-size-ratchet-tests release-pipeline-tests test-binaries release-notes-preview print-release-config dmg notarize staple release-dmg release-dmg-artifact verify-mac-release verify-mac-unsigned print-mac-signing-identities install clean mupdf-libs linux
 
 all: mac-app
 
+# Built once, and again when a MuPDF source is newer than the library: the tree carries its own changes to MuPDF
+# (mupdf/source/svg, for one), which a library built before them must not hide.
 mupdf-libs:
-	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" $(MUPDF_MAC_ARGS) USE_SYSTEM_GLUT=yes brotli=no libs "$(MUPDF_OUT)/libmupdf-third.a"
+	@test -f "$(MUPDF_BUILD)/libmupdf.a" -a -f "$(MUPDF_BUILD)/libmupdf-third.a" -a \
+		-z "$$(find "$(MUPDF_DIR)/source" -path "$(MUPDF_DIR)/source/tools" -prune -o \
+			-newer "$(MUPDF_BUILD)/libmupdf.a" \( -name '*.c' -o -name '*.h' \) -print 2>/dev/null | head -1)" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" $(MUPDF_MAC_ARGS) USE_SYSTEM_GLUT=yes brotli=no libs "$(MUPDF_OUT)/libmupdf-third.a"
 	@test -f "$(MUPDF_BUILD)/libmupdf-pkcs7.a" || $(MAKE) -C "$(MUPDF_DIR)" -j$(CPU) build=release OUT="$(MUPDF_OUT)" $(MUPDF_MAC_ARGS) USE_SYSTEM_GLUT=yes brotli=no "$(MUPDF_OUT)/libmupdf-pkcs7.a"
 
 $(BUILD):
 	mkdir -p "$(BUILD)"
 
 $(CORE_OBJ): $(CORE_SRC) $(CORE_HDR) core/spdf_search_regex.h core/spdf_render_bitmap.h core/spdf_document_info.h core/spdf_translate_redact.h core/spdf_translate_write.h core/spdf_outline_write.h \
-		core/spdf_outline_read.h core/spdf_outline.h \
+		core/spdf_outline_read.h core/spdf_outline.h core/spdf_comment_read.h core/spdf_comment_review.h core/spdf_comment_dates.h \
 		core/spdf_core_document.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Icore -I$(MUPDF_DIR)/include -c "$(CORE_SRC)" -o "$(CORE_OBJ)"
 
@@ -180,6 +196,18 @@ $(CORE_PROGRESSIVE_OBJ): core/spdf_progressive.c core/spdf_progressive.h core/sp
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
 
 $(CORE_DESTINATION_OBJ): core/spdf_destination.c core/spdf_destination.h core/spdf_core_document.h Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
+
+$(BUILD)/spdf_svg_image.o: core/spdf_svg_image.c core/spdf_svg_image.h core/spdf_svg_font.h $(CORE_RECOLOR_HDR) Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
+
+$(BUILD)/spdf_svg_font.o: core/spdf_svg_font.c core/spdf_svg_font.h Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
+
+$(BUILD)/spdf_svg_font_subset.o: core/spdf_svg_font_subset.c core/spdf_svg_font.h core/spdf_cff_subset.h Makefile | $(BUILD)
+	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
+
+$(BUILD)/spdf_cff_subset.o: core/spdf_cff_subset.c core/spdf_cff_subset.h core/spdf_cff_charstring.h Makefile | $(BUILD)
 	clang $(PORTABLE_OPTFLAGS) $(MAC_TARGET_FLAGS) -Wall -Wextra -Werror -Icore -I$(MUPDF_DIR)/include -c $< -o "$@"
 
 $(CORE_LINK_TEST): core/tests/SPDFCoreLinkTests.c $(CORE_LINK_OBJ) | $(BUILD)
@@ -365,12 +393,29 @@ mac-agent-pdf-inspection-tests: $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(B
 	"$(BUILD)/SPDFMacAgentPDFInspectionTests"
 
 # Focused reader-action and on-demand agent contracts; no app launch.
-.PHONY: mac-reader-action-tests mac-agent-tests
+.PHONY: mac-reader-action-tests mac-agent-tests mac-agent-channel-check mac-szpdf-check
 mac-reader-action-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacContextPageTests.mm -framework Cocoa -o "$(BUILD)/SPDFMacContextPageTests"
 	"$(BUILD)/SPDFMacContextPageTests"
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacMarkdownEditorTests.mm mac/SPDFMacMarkdownEditor.mm mac/SPDFMacMarkdownRouting.mm -framework Cocoa -framework UniformTypeIdentifiers -o "$(BUILD)/SPDFMacMarkdownEditorTests"
 	"$(BUILD)/SPDFMacMarkdownEditorTests"
+
+# szpdf's commands that need no window (mac/SPDFMacSzpdfInternal.h), headless, with the Markdown engine they lay out
+# documents with. Opt-in, not run by the release (README.md § Opt-in checks).
+MAC_SZPDF_TEST_SRCS := mac/tests/SPDFMacSzpdfTests.mm mac/SPDFMacSzpdfHelp.mm mac/SPDFMacSzpdfArguments.mm \
+	mac/SPDFMacSzpdfHeadingMatch.mm mac/SPDFMacSzpdfDocument.mm mac/SPDFMacSzpdfCheck.mm mac/SPDFMacSzpdfFeatures.mm \
+	mac/SPDFMacSzpdfChanges.mm mac/SPDFMacAgentComments.mm mac/SPDFMacMarkdownComments.mm \
+	mac/SPDFMacMarkdownCommentAnchors.mm mac/SPDFMacMarkdownPrinting.mm mac/SPDFMacMarkdownRouting.mm \
+	mac/SPDFMacAIFileTransaction.mm $(MAC_MARKDOWN_SRCS)
+mac-szpdf-check: $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include $(MAC_SZPDF_TEST_SRCS) $(CORE_OBJS) $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS) $(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework ImageIO -framework UniformTypeIdentifiers -lm -o "$(BUILD)/SPDFMacSzpdfTests"
+	SPDF_DIAGRAM_LAYOUT_DEADLINE=5 "$(BUILD)/SPDFMacSzpdfTests"
+
+# szpdf's channel to the running app (mac/SPDFMacAgentChannel.h). Opt-in, not run by the release (README.md § Opt-in
+# checks).
+mac-agent-channel-check: $(CORE_OBJS) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore -I$(MUPDF_DIR)/include mac/tests/SPDFMacAgentChannelTests.mm mac/SPDFMacAgentChannel.mm mac/SPDFMacSzpdfArguments.mm mac/SPDFMacSzpdfHelp.mm mac/SPDFMacCommandLineTool.mm mac/SPDFMacAgentComments.mm mac/SPDFMacMarkdownComments.mm mac/SPDFMacAIFileTransaction.mm $(CORE_OBJS) $(MUPDF_LIBS) -framework Cocoa -lm -o "$(BUILD)/SPDFMacAgentChannelTests"
+	"$(BUILD)/SPDFMacAgentChannelTests"
 
 mac-agent-tests: | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacAgentCommandTests.mm mac/SPDFMacAgentValidation.mm -framework Cocoa -o "$(BUILD)/SPDFMacAgentCommandTests"
@@ -514,6 +559,20 @@ $(MAC_PAGE_WHEEL_TEST): mac/tests/SPDFMacPageWheelTests.mm mac/SPDFMacPageWheel.
 mac-page-wheel-tests: $(MAC_PAGE_WHEEL_TEST)
 	"$(MAC_PAGE_WHEEL_TEST)"
 
+$(MAC_MARKDOWN_COMMENTS_TEST): mac/tests/SPDFMacMarkdownCommentsTests.mm mac/SPDFMacMarkdownComments.mm mac/SPDFMacMarkdownCommentAnchors.mm mac/SPDFMacMarkdownComments.h mac/SPDFMacCommentEditor.mm mac/SPDFMacCommentAuthorName.mm | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacMarkdownCommentsTests.mm mac/SPDFMacMarkdownComments.mm mac/SPDFMacMarkdownCommentAnchors.mm mac/SPDFMacCommentEditor.mm mac/SPDFMacCommentAuthorName.mm mac/SPDFMacCollectionStyle.mm -framework Cocoa -framework QuartzCore -o "$(MAC_MARKDOWN_COMMENTS_TEST)"
+
+# Comments on Markdown documents and versions of a document: opt-in, not run by the release (README.md § Opt-in checks).
+mac-markdown-comments-check: $(MAC_MARKDOWN_COMMENTS_TEST)
+	"$(MAC_MARKDOWN_COMMENTS_TEST)"
+
+MAC_DOCUMENT_VERSIONS_SRCS := mac/SPDFMacDocumentVersions.mm mac/SPDFMacMarkdownComments.mm mac/SPDFMacMarkdownCommentAnchors.mm
+$(MAC_DOCUMENT_VERSIONS_TEST): mac/tests/SPDFMacDocumentVersionsTests.mm $(MAC_DOCUMENT_VERSIONS_SRCS) mac/SPDFMacDocumentVersions.h $(CORE_OBJ) $(CORE_RECOLOR_OBJ) mupdf-libs | $(BUILD)
+	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac -Icore mac/tests/SPDFMacDocumentVersionsTests.mm $(MAC_DOCUMENT_VERSIONS_SRCS) "$(CORE_OBJ)" "$(CORE_RECOLOR_OBJ)" $(MUPDF_LIBS) -framework Foundation -lm -o "$@"
+
+mac-document-versions-check: $(MAC_DOCUMENT_VERSIONS_TEST)
+	"$(MAC_DOCUMENT_VERSIONS_TEST)"
+
 $(MAC_FILE_EXPLORER_TEST): mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm mac/SPDFMacFileExplorerPreference.h | $(BUILD)
 	clang++ $(MAC_TARGET_FLAGS) -std=c++17 -fobjc-arc -Wall -Wextra -Werror -Imac mac/tests/SPDFMacFileExplorerPreferenceTests.mm mac/SPDFMacFileExplorerPreference.mm -framework Cocoa -o "$(MAC_FILE_EXPLORER_TEST)"
 
@@ -604,6 +663,8 @@ $(MAC_BIN): $(MAC_APP_OBJS) core/spdf_document_export.h $(MAC_COLLECTION_BIN) mu
 		$(MUPDF_LIBS) -framework Cocoa -framework QuartzCore -framework PDFKit -framework \
 		UniformTypeIdentifiers -framework CoreServices -framework Security -framework LocalAuthentication \
 		-framework ImageIO $(MAC_FRIENDS_FRAMEWORKS) -lm -Wl,-dead_strip -Wl,-x -o "$(MAC_BIN)"
+	# szpdf, the command-line tool, is the app's executable under another name (mac/SPDFMacSzpdf.h).
+	ln -sf ShenzhenPDF "$(MAC_APP)/Contents/MacOS/szpdf"
 	@if otool -L "$(MAC_BIN)" | grep -Eq 'libcrypto|/opt/homebrew|/usr/local'; then \
 		echo "unexpected mutable runtime dependency in $(MAC_BIN)" >&2; \
 		otool -L "$(MAC_BIN)" >&2; \
@@ -728,7 +789,7 @@ test-binaries: $(TEST_BINARIES)
 clean:
 	rm -rf "$(BUILD)" "$(MAC_APP)" "$(MAC_DMG)"
 
-MAC_COLLECTION_PARSER_SRCS := mac/markdown/SPDFMarkdownParser.mm mac/markdown/SPDFMarkdownModel.mm mac/markdown/SPDFMarkdownHTML.mm mac/markdown/SPDFMarkdownHTMLBlocks.mm mac/markdown/SPDFMarkdownResources.mm
+MAC_COLLECTION_PARSER_SRCS := mac/markdown/SPDFMarkdownParser.mm mac/markdown/SPDFMarkdownModel.mm mac/markdown/SPDFMarkdownHTML.mm mac/markdown/SPDFMarkdownHTMLBlocks.mm mac/markdown/SPDFMarkdownResources.mm mac/markdown/SPDFMarkdownPicture.mm
 MAC_COLLECTION_PARSER_LIBS := $(MAC_MD4C_OBJ) $(MAC_GUMBO_OBJS)
 .PHONY: mac-collection-store-tests mac-collection-asset-tests mac-collection-compare-tests mac-previous-tab-tests mac-viewport-checkpoint-tests
 mac-collection-store-tests: $(MAC_COLLECTION_PARSER_LIBS) | $(BUILD)
@@ -967,7 +1028,8 @@ mac-ai-tool-seam-tests: | $(BUILD)
 		-o "$(BUILD)/SPDFMacAIToolSeamTests"
 	"$(BUILD)/SPDFMacAIToolSeamTests"
 # The Settings window as its tests link it: the controller and the pages it builds.
-MAC_SETTINGS_WINDOW_SRCS := mac/SPDFMacUnifiedSettings.mm mac/SPDFMacAppearanceSettings.mm mac/SPDFMacAICapabilitiesSettings.mm \
+MAC_SETTINGS_WINDOW_SRCS := mac/SPDFMacUnifiedSettings.mm mac/SPDFMacAppearanceSettings.mm mac/SPDFMacAICapabilitiesSettings.mm mac/SPDFMacCommentAuthorSettings.mm \
+	mac/SPDFMacSettingsButton.mm mac/SPDFMacCommandLineToolSettings.mm \
 	mac/SPDFMacSearchablePicker.mm mac/SPDFMacCollectionStyle.mm mac/SPDFMacGroupActionButton.mm \
 	mac/friends/SPDFMacFriendsSettingsPage.mm mac/friends/SPDFMacFriendsSettingsPane.mm
 mac-unified-settings-tests: | $(BUILD)

@@ -99,6 +99,7 @@
     _footer = [[SZFriendsFooterView alloc] initWithContext:context];
     _footer.onAddByID = ^{ [weakSelf.context.navigator openProfile]; };
     [self addSubview:_footer];
+    [self setUpKeyboard];
     [self applyStaticStrings];
     return self;
 }
@@ -117,6 +118,10 @@
 
 - (SZFriendsDropdownView)kind {
     return self.showingNearby ? SZFriendsDropdownViewNearby : SZFriendsDropdownViewList;
+}
+
+- (BOOL)hasSnapshot {
+    return _listData != nil;
 }
 
 - (NSArray<SZFriendsRowView *> *)rows {
@@ -208,6 +213,7 @@
 - (void)pageWillAppear {
     [super pageWillAppear];
     [self subscribeVisibleTab];
+    [self restoreKeyRow];
 }
 
 - (void)pageDidDisappear {
@@ -216,6 +222,7 @@
     if (_nearbyToken) [self.context.link unsubscribe:_nearbyToken];
     _listToken = _nearbyToken = nil;
     [_footer cancelEditingName];
+    [self.context.conversations stopFollowing:nil];
 }
 
 - (void)subscribeVisibleTab {
@@ -254,6 +261,7 @@
     [self subscribeVisibleTab];
     NSDictionary *visible = nearby ? _nearbyData : _listData;
     [_footer applyFooter:SZFDict(visible ?: (_listData ?: _nearbyData), @"footer")];
+    [self keyRowsChanged];
     [self setNeedsLayout:YES];
 }
 
@@ -278,6 +286,7 @@
     [self applyDevices:data prompt:prompt];
 
     [self applyRows:SZFArr(data, @"rows")];
+    [self prefetchFirstRows];
     NSDictionary *empty = SZFDict(data, @"empty");
     _emptyTitle.stringValue = SZFStr(empty, @"title") ?: @"";
     _emptyBody.stringValue = SZFStr(empty, @"body") ?: @"";
@@ -312,6 +321,9 @@
     while (_rowViews.count < rows.count) {
         SZFriendsRowView *row = [[SZFriendsRowView alloc] initWithContext:self.context];
         row.onPress = ^(SZFriendsButton *button) { [weakSelf rowPressed:(SZFriendsRowView *)button]; };
+        row.onHoverChange = ^(SZFriendsButton *button, BOOL hovered) {
+            [weakSelf rowHovered:(SZFriendsRowView *)button inside:hovered];
+        };
         row.onDropItems = ^(SZFriendsRowView *target, NSString *conversationID,
                             NSArray<SZFriendsAttachableItem *> *items) {
             (void)target;
@@ -332,6 +344,7 @@
         [self->_rowViews[index] configureWithListRow:row];
     }];
     [self dimRowsThatRefuseFiles];
+    [self keyRowsChanged];
     [self setNeedsLayout:YES];
 }
 
@@ -344,6 +357,7 @@
     [self applyStaticStrings];
     [_nearbyPane applyNearby:data];
     if (_showingNearby) [_footer applyFooter:SZFDict(data, @"footer")];
+    [self keyRowsChanged];
     [self setNeedsLayout:YES];
 }
 
@@ -400,31 +414,14 @@
 #pragma mark - Actions
 
 // Escape turns an armed "Block?" back first: it is the innermost thing open, and closing the dropdown under it
-// would leave the person unsure whether they blocked someone.
+// would leave the person unsure whether they blocked someone. Last, it empties the search before it closes anything.
 - (BOOL)dismissInnermostPicker {
     for (SZFriendsRowView *row in _rowViews)
         if ([row.actionsView disarm]) return YES;
     if (SZFriendsDisarmActionButtons(_devicesView)) return YES; // a join row's "Deny?"
     if ([_footer cancelEditingName]) return YES;
-    return !_namePrompt.hidden && !_namePromptSaved && [_namePrompt.nameEditor cancelTyping];
-}
-
-#pragma mark - Text fields
-
-- (void)controlTextDidChange:(NSNotification *)notification {
-    if (notification.object != _searchField) return;
-    for (NSString *token in @[ _listToken ?: @"", _nearbyToken ?: @"" ])
-        if (token.length) [self.context.link setFilter:_searchField.stringValue forSubscription:token];
-}
-
-- (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command {
-    (void)textView;
-    if (command == @selector(cancelOperation:)) {
-        SZFriendsForwardEscape(self);
-        return YES;
-    }
-    (void)control;
-    return NO;
+    if (!_namePrompt.hidden && !_namePromptSaved && [_namePrompt.nameEditor cancelTyping]) return YES;
+    return [self clearSearch];
 }
 
 #pragma mark - Layout
@@ -465,6 +462,7 @@
     NSRect scrollFrame = NSMakeRect(0, y, width, MAX(0, height - footerHeight - y));
     _scrollView.frame = scrollFrame;
     _nearbyScroll.frame = scrollFrame;
+    [self layOutKeyList:scrollFrame];
 
     CGFloat rowsY = 0;
     for (SZFriendsRowView *row in _rowViews) {

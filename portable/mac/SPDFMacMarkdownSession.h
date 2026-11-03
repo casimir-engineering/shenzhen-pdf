@@ -198,6 +198,8 @@ FOUNDATION_EXPORT BOOL SPDFMacMarkdownCopyCodeSource(SPDFMarkdownDocumentModel* 
 - (void)setPresentationMode:(BOOL)presentationMode;
 - (NSUInteger)pageIndexForRange:(NSRange)range;
 - (void)revealRange:(NSRange)range;
+// Centers the range and flashes it as a find match is: where a comment from the Comments panel is.
+- (void)revealAndFlashRange:(NSRange)range;
 - (void)centerAtDocumentPoint:(NSPoint)point;
 - (void)centerOnPageAtIndex:(NSInteger)pageIndex xFraction:(CGFloat)xFraction yFraction:(CGFloat)yFraction;
 - (void)scrollByDocumentDeltaX:(CGFloat)deltaX deltaY:(CGFloat)deltaY;
@@ -239,6 +241,12 @@ FOUNDATION_EXPORT BOOL SPDFMacMarkdownCopyCodeSource(SPDFMarkdownDocumentModel* 
 // search is running.
 @property(nonatomic, readonly) double searchProgress;
 - (void)invalidateSearchScrollbarMarkers;
+@end
+
+// Implemented in SPDFMacMarkdownSession+Comments.mm: the commented passages the reader draws, kept across rerenders.
+@interface SPDFMacMarkdownSession (Comments)
+// {range, title, text} per comment, in rendered-text coordinates.
+@property(nonatomic, copy, nullable) NSArray<NSDictionary*>* commentHighlights;
 @end
 
 NS_ASSUME_NONNULL_END
