@@ -232,7 +232,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>
@@ -249,9 +249,11 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Friends uses your local network to find people near you and to send them messages and files directly.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>So you can speak your message to the assistant instead of typing it. What you say is turned into text on this Mac.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SZFReleaseTag</key>
-	<string>26.11.3-1</string>
+	<string>26.11.3-2</string>
 </dict>
 </plist>
