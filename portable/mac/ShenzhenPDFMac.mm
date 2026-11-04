@@ -1565,7 +1565,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
         frame = NSMakeRect(floor(NSMidX(visible) - contentSize.width / 2.0),
                            floor(NSMidY(visible) - contentSize.height / 2.0), contentSize.width, contentSize.height);
     }
-    frame = spdf_window_frame_to_persist(_window, spdf_sane_window_frame(frame, _window.screen ?: NSScreen.mainScreen));
+    frame = spdf_window_frame_to_persist(_window, frame); // exactly as left: never clamped onto another display
     if (!_windowSessionID.length) _windowSessionID = NSUUID.UUID.UUIDString;
     return [@{
         @"id" : _windowSessionID,
@@ -2562,11 +2562,7 @@ id spdf_state_object_from_yaml_data(NSData* data) {
                                     floor(NSMidY(screen.visibleFrame) - contentSize.height / 2.0),
                                     contentSize.width, contentSize.height);
     double launchWindowStart = spdf_launch_profile_enabled() ? spdf_zoom_profile_now_ms() : 0.0;
-    _window = [[SPDFWindow alloc] initWithContentRect:spdf_window_content_rect_for_saved_frame(frame)
-                                            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                      NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
-                                              backing:NSBackingStoreBuffered
-                                                defer:NO];
+    _window = spdf_window_create_document_window(SPDFWindow.class, frame); // on its own display at once
     if (launchWindowStart > 0.0)
         spdf_launch_profile_log(@"buildWindow.windowInit %.1fms", spdf_zoom_profile_now_ms() - launchWindowStart);
     _window.titleVisibility = NSWindowTitleHidden;
@@ -12366,12 +12362,8 @@ static NSString* SPDFTranslationBatchScope(NSArray<NSDictionary*>* items, NSUInt
     NSDictionary* options = nil;
     if (request) {
         NSString* target = request[@"target"];
-        NSString* source = [self localTranslationSourceForText:sourceText target:target];
-        if (!source) {
-            [self showError:@"Nothing to translate"
-                     detail:[NSString stringWithFormat:@"This document already seems to be in %@.", request[@"language"]]];
-            return;
-        }
+        NSString* source = [self localTranslationSourceForText:sourceText request:request];
+        if (!source) return;
         _translationSourceLanguage = source;
         _translationTargetLanguage = target;
         [self savePersistentState];
