@@ -71,6 +71,44 @@ static const NSUInteger SZFriendsDeviceNameMaxBytes = 64;
 
 #pragma mark - Your computers
 
+// How another computer is connected now, as a friend's route shows it; nothing for this computer or one that is not.
+- (NSDictionary<NSString *, id> *)routeForDevice:(SZFriendsDeviceFacts *)device {
+    NSDictionary *live = device.thisComputer || !device.connected ? nil : [self routeForLiveMethod:device.routeMethod];
+    return live ?: [self routeForKind:SZFriendsRouteKindNone method:SZFriendsRouteMethodNone];
+}
+
+// The You row's route: the worst way any of the person's other computers is connected now (SZFriendsRouteRank, the
+// relay last), with every connected computer and its route in the tooltip, one per line, so a slow one is never
+// hidden behind a fast one. While none is connected, the crossed-out icon of a route that is not up, saying whether
+// there is no other computer yet or none is connected now. `spoken` gets the same, read aloud.
+- (NSDictionary<NSString *, id> *)youRouteSpoken:(NSString *_Nullable *_Nonnull)spoken {
+    SZFriendsStrings *s = self.strings;
+    SZFriendsRouteMethod worst = SZFriendsRouteMethodNone;
+    NSMutableArray<NSString *> *lines = [NSMutableArray array], *said = [NSMutableArray array];
+    for (SZFriendsDeviceFacts *device in self.devices.computers) {
+        NSDictionary *route = [self routeForDevice:device];
+        NSString *label = [route[@"label"] isKindOfClass:NSString.class] ? route[@"label"] : nil;
+        if (!label.length) continue;
+        if (worst == SZFriendsRouteMethodNone || SZFriendsRouteIsBetter(worst, device.routeMethod))
+            worst = device.routeMethod;
+        [lines addObject:[s text:@"you.route.device" values:@{@"device" : device.name, @"route" : label}]];
+        [said addObject:[s text:@"you.route.spoken"
+                          values:@{@"device" : device.name, @"route" : [s spokenFragment:label]}]];
+    }
+    *spoken = said.count ? [said componentsJoinedByString:@"; "] : nil;
+    NSDictionary *route = [self routeForLiveMethod:worst];
+    if (route == nil) {
+        BOOL others = NO;
+        for (SZFriendsDeviceFacts *device in self.devices.computers) others = others || !device.thisComputer;
+        NSString *label = [s text:others ? @"you.route.none_connected" : @"you.route.alone"];
+        *spoken = [s spokenFragment:label];
+        return @{@"kind" : @"offline", @"method" : [NSNull null], @"label" : label};
+    }
+    NSMutableDictionary *result = [route mutableCopy];
+    result[@"label"] = [lines componentsJoinedByString:@"\n"];
+    return result;
+}
+
 - (NSDictionary<NSString *, id> *)rowForDevice:(SZFriendsDeviceFacts *)device
                                        removed:(BOOL)removed
                                            now:(NSDate *)now {
@@ -129,6 +167,7 @@ static const NSUInteger SZFriendsDeviceNameMaxBytes = 64;
         @"detail" : [s text:@"devices.detail" values:values],
         @"this_computer" : SZFriendsBool(device.thisComputer),
         @"state" : state,
+        @"route" : [self routeForDevice:device],
         @"accessibility_label" : [s text:spokenKey values:said],
         @"rename" : rename,
         @"remove" : remove
@@ -237,6 +276,9 @@ static const NSUInteger SZFriendsDeviceNameMaxBytes = 64;
                                    values:@{@"preview" : preview,
                                             @"time" : [s timeAccessibilityLabelForDate:you.lastInteractionAt now:now]}]
                                : [s text:@"you.row.accessibility.empty"];
+    NSString *spokenRoute = nil;
+    NSDictionary *route = [self youRouteSpoken:&spokenRoute];
+    if (spokenRoute.length) spoken = [NSString stringWithFormat:@"%@, %@", spoken, spokenRoute];
     BOOL drops = [self.audience.capabilities containsObject:@"drop.files"] ||
                  [self.audience.capabilities containsObject:@"send.files"];
     NSMutableDictionary *row = [@{
@@ -246,7 +288,7 @@ static const NSUInteger SZFriendsDeviceNameMaxBytes = 64;
         @"title" : [s text:@"you.title"],
         @"subtitle" : preview ?: [s text:@"you.subtitle.empty"],
         @"time_label" : time,
-        @"route" : [self routeForKind:SZFriendsRouteKindNone method:SZFriendsRouteMethodNone],
+        @"route" : route,
         @"unread" : SZFriendsBool(you.unreadCount > 0),
         @"waiting" : [NSNull null],
         @"blocked" : @NO,

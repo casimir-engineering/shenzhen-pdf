@@ -84,6 +84,14 @@ NSDictionary<NSString *, NSString *> *SZFriendsEnglishCatalogDevices(void) {
         @"you.transfer.status.queued" : @"Copies to your other computers when they connect",
         @"you.transfer.status.sending" : @"Copying to your other computers · {percent}%",
         @"you.transfer.status.delivered" : @"On all your computers",
+        // The You row's route tooltip: each of the person's other computers connected now, one per line, with how
+        // it is connected ({route} is a route label, "Nearby, on your network"); read aloud joined by "; ".
+        @"you.route.device" : @"{device} · {route}",
+        @"you.route.spoken" : @"{device}, {route}",
+        // The You row's route tooltip while none of the person's other computers is connected: they have none yet,
+        // or none is connected now.
+        @"you.route.alone" : @"No other computers yet",
+        @"you.route.none_connected" : @"Your other computers aren’t connected right now",
 
         // A file another of the person's computers holds and this one does not have yet (too large to copy by
         // itself). {device} is that computer's name.
