@@ -121,6 +121,11 @@ pub trait Adapter: Send {
     }
     /// Opens a stream to a sighted endpoint; the result arrives as [`Event::Dialed`] with this `dial`.
     fn dial(&mut self, endpoint: &str, dial: u64) -> bool;
+    /// A dial to this endpoint got no stream: what was read about it may be out of date (a peer whose helper started
+    /// again listens elsewhere now).
+    fn dial_failed(&mut self, endpoint: &str) {
+        let _ = endpoint;
+    }
     /// Looks again now.
     fn refresh(&mut self) {}
     /// Our own devices changed (a computer joined the profile or left it): what each device nearby said about itself
@@ -221,5 +226,17 @@ pub fn adapters(state_dir: &Path, test_home: bool, sink: std::sync::Arc<Sink>) -
 
 /// Connects to the first address that answers, within `timeout` each.
 pub fn connect_any(addresses: &[SocketAddr], timeout: std::time::Duration) -> Option<TcpStream> {
-    addresses.iter().find_map(|address| TcpStream::connect_timeout(address, timeout).ok())
+    connect_first(addresses, timeout).ok()
+}
+
+/// As [`connect_any`], with the last address's error when none answers.
+pub fn connect_first(addresses: &[SocketAddr], timeout: std::time::Duration) -> std::io::Result<TcpStream> {
+    let mut last = std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "no address");
+    for address in addresses {
+        match TcpStream::connect_timeout(address, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
 }

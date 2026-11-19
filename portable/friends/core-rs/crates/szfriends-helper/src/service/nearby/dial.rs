@@ -141,8 +141,16 @@ impl State {
             Relation::Removed if !deliverable => return,
             Relation::Removed | Relation::Friend => {}
         }
-        if person.static_key.is_none() || person.identity_key.is_none() || !self.may_dial(conversation) {
-            return;
+        if person.static_key.is_none() || person.identity_key.is_none() {
+            return self.trace_routes(conversation, "no keys to dial with yet".into());
+        }
+        if !self.may_dial(conversation) {
+            let wait = self.nearby.retry_after.get(conversation).map_or(0.0, |at| at - unix_now());
+            let why = match self.nearby.kept_elsewhere.contains_key(conversation) {
+                true => "they keep a session with another of our devices",
+                false => "backing off after failed or short sessions",
+            };
+            return self.trace_routes(conversation, format!("not dialing for {wait:.0} s: {why}"));
         }
         let current = live.map_or(RouteMethod::None, |id| self.sessions.map[&id].channel.initiator_route());
         let now = unix_now();
@@ -155,16 +163,37 @@ impl State {
                 self.schedule_reconsider_after(end - now);
             }
         }
+        let mut sighted: Vec<RouteMethod> = Vec::new();
+        for sighting in &candidate.sightings {
+            if !sighted.contains(&sighting.route) {
+                sighted.push(sighting.route);
+            }
+        }
+        let tried: Vec<RouteMethod> = attempts.iter().map(|a| a.sighting.route).collect();
+        let mut notes: Vec<String> = sighted
+            .iter()
+            .filter(|r| !tried.contains(r))
+            .map(|r| format!("{r:?} skipped (backing off, or not usable here)"))
+            .collect();
         let mut started = false;
         for attempt in attempts {
+            let route = attempt.sighting.route;
             if !should_start(&attempt, current) {
+                notes.push(format!("{route:?} not dialed (no better than the live {current:?})"));
                 continue;
             }
-            let options = self.ik_options(person, attempt.sighting.route);
+            let options = self.ik_options(person, route);
             let mut plan = self.plan(&attempt.sighting, Purpose::Friend, options);
             plan.conversation = Some(conversation.clone());
-            started |= self.dial(plan, attempt.delay);
+            let dialing = self.dial(plan, attempt.delay);
+            notes.push(match dialing {
+                true => format!("{route:?} dialing in {:.1} s", attempt.delay),
+                false => format!("{route:?} already being dialed"),
+            });
+            started |= dialing;
         }
+        let line = format!("seen on {sighted:?}, live {current:?}; {}", notes.join("; "));
+        self.trace_routes(conversation, line);
         if started && live.is_none() && deliverable {
             self.mark_connecting(conversation);
         }
@@ -320,6 +349,9 @@ impl State {
             let pointless =
                 live.is_some_and(|id| !is_better(plan.route, self.sessions.map[&id].channel.initiator_route()));
             if self.nearby.shut_down || pointless {
+                if pointless {
+                    self.trace_dial(&plan, None, "dropped: a session as good went live meanwhile");
+                }
                 self.nearby.dialing.remove(&plan.dial_key);
                 continue;
             }
@@ -327,8 +359,10 @@ impl State {
             let adapter = self.nearby.adapters.iter_mut().find(|a| a.method() == plan.method);
             let started = adapter.is_some_and(|a| a.dial(&plan.endpoint, dial));
             if started {
+                self.trace_dial(&plan, Some(dial), "started");
                 self.nearby.dials.insert(dial, plan);
             } else {
+                self.trace_dial(&plan, Some(dial), "could not start (adapter off, or nothing known to open)");
                 self.nearby.dialing.remove(&plan.dial_key);
                 self.dial_failed(&plan);
             }
@@ -363,11 +397,24 @@ impl State {
         let now = unix_now();
         if live_at.is_some_and(|at| now - at >= HEALTHY_SESSION_SECONDS) {
             self.nearby.failures.remove(conversation);
+            self.nearby.kept_elsewhere.remove(conversation);
         }
         let count = self.nearby.failures.entry(conversation.to_owned()).or_insert(0);
         *count += 1;
         let delay = backoff(*count);
         self.nearby.retry_after.insert(conversation.to_owned(), now + delay);
+        self.schedule_reconsider_after(delay);
+    }
+
+    /// A friend whose helper keeps one session per person (before ADR 0016) let one with another of our devices win
+    /// the race: dialing again at once would only be closed again, every few seconds. Wait instead, longer each time
+    /// in a row, while the device they kept delivers for ours (ADR 0014); a session that lasted starts afresh.
+    /// `noteSessionKeptElsewhereForConversation:` in the Mac helper.
+    pub(crate) fn note_session_kept_elsewhere(&mut self, conversation: &str) {
+        let count = self.nearby.kept_elsewhere.entry(conversation.to_owned()).or_insert(0);
+        *count += 1;
+        let delay = backoff(*count);
+        self.nearby.retry_after.insert(conversation.to_owned(), unix_now() + delay);
         self.schedule_reconsider_after(delay);
     }
 

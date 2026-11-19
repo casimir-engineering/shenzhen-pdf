@@ -27,8 +27,9 @@ impl State {
         if let Some(key) = &meta.dial_key {
             self.nearby.dialing.remove(key);
         }
-        if let (Some(error), false) = (&error, meta.probe) {
-            log_end(&meta, error);
+        if !meta.probe {
+            self.trace_transfers(id);
+            self.trace_end(id, &meta, conversation.as_deref(), error.as_ref());
         }
         if meta.purpose == Purpose::Browse {
             let fields = self.nearby.browsed.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
@@ -75,6 +76,12 @@ impl State {
                     let other = *other;
                     self.adopt(other);
                 }
+            }
+            // The friend superseded this session and nothing here replaces it: it kept one with another of our devices.
+            let superseded_by_peer =
+                matches!(&error, Some(SessionError::PeerClosed(reason)) if *reason == CloseReason::Superseded as u8);
+            if superseded_by_peer && meta.live && !meta.probe && self.sessions.live_for(conversation).is_none() {
+                self.note_session_kept_elsewhere(conversation);
             }
             self.deliver_to(conversation);
         }

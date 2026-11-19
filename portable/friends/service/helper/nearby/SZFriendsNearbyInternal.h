@@ -103,6 +103,10 @@ extern const NSTimeInterval SZFriendsNearbyConnectingTimeout;
 // What each route carried for each transfer moving (PROTOCOL.md § Fast transfers, Progress by route), counted as PARTs
 // and CHUNKs go and come (+Facts).
 @property(nonatomic, strong, nullable) SZFriendsRouteMeter *routeMeter;
+// What helper.log has said, and transfers and lanes being measured for it (+Trace).
+@property(nonatomic, strong, nullable) id traceStore;
+// Peer-to-peer Wi-Fi on demand: whether it is on, why, and each lane group's part in it (+PeerToPeer, ADR 0021).
+@property(nonatomic, strong, nullable) id peerToPeerStore;
 
 // Core.
 - (void)changed;
@@ -129,6 +133,11 @@ extern const NSTimeInterval SZFriendsNearbyConnectingTimeout;
 // A lane of `laneHead`'s group (ADR 0018 § 6), reserved in its exchange as `laneSerial` (+Blocks).
 @property(nonatomic, weak, nullable) SZFriendsPeerLink *laneHead;
 @property(nonatomic) uint64_t laneSerial;
+// A lane on another of the sighting's routes than its best (SZFriendsSighting.routes): peer-to-peer Wi-Fi beside the
+// LAN. None dials the sighting's best route.
+@property(nonatomic) SZFriendsRouteMethod laneRoute;
+// The route this attempt dials: laneRoute when set, the sighting's best otherwise.
+@property(nonatomic, readonly) SZFriendsRouteMethod dialRoute;
 @end
 
 // Explicit rank (ADR 0011 § Route rank): dialing a friend at `sighting` is pointless while a live session runs on
@@ -147,6 +156,63 @@ extern const NSTimeInterval SZFriendsRelayProbeInterval;
 - (void)relayProbeIfRelayed;
 @end
 
+// helper.log's account of reaching friends and moving files (+Trace): friends by conversation ID prefix, never a
+// name, file name, key or address; held back per key when it repeats.
+NSString *SZFriendsTraceRouteName(SZFriendsRouteMethod route);
+NSString *SZFriendsTraceBytes(uint64_t bytes);
+NSString *SZFriendsTraceRate(double bytesPerSecond);
+NSString *SZFriendsTraceShort(NSString *_Nullable hex); // a conversation or transfer ID as the log names it
+@interface SZFriendsNearbyService (Trace)
+- (void)traceKey:(NSString *)key line:(NSString *)line;
+- (NSString *)traceWhoOfLink:(SZFriendsPeerLink *)link;
+- (void)traceDial:(SZFriendsDialPlan *)plan what:(NSString *)what;
+- (void)traceUpOfLink:(SZFriendsPeerLink *)link what:(NSString *)what;
+- (void)traceEndOfLink:(SZFriendsPeerLink *)link error:(nullable NSError *)error;
+- (void)traceRaceOfLink:(SZFriendsPeerLink *)link against:(SZFriendsPeerLink *)current outcome:(NSString *)outcome;
+- (void)traceLaneWanted:(SZFriendsPeerLink *)head route:(SZFriendsRouteMethod)route what:(NSString *)what;
+// Which routes a friend or one of our devices was seen on nearby, which were dialled and why the others were not, in
+// the Rust core's words ("routes friend 1a2b3c4d: seen on [Bluetooth], live None; Bluetooth dialing in 0.5 s"): the
+// line that says whether we dial them or wait for them (a phone in the background cannot scan, so it never dials).
+- (void)traceRoutesOf:(NSString *)who key:(NSString *)key candidate:(SZFriendsCandidate *)candidate
+                 live:(SZFriendsRouteMethod)live notes:(NSArray<NSString *> *)notes;
+- (void)traceTransferStarted:(NSString *)transferID
+                      onLink:(SZFriendsPeerLink *)link
+                    outgoing:(BOOL)outgoing
+                        from:(uint64_t)from
+                         how:(NSString *)how;
+- (void)traceTransferBytes:(NSString *)transferID route:(SZFriendsRouteMethod)route bytes:(uint64_t)bytes late:(BOOL)late;
+- (void)traceTransferEnded:(NSString *)transferID;
+- (void)tracePartOnGroup:(nullable SZFriendsPeerLink *)head
+                transfer:(NSString *)transferID
+                    lane:(SZFriendsLaneID)lane
+                   route:(SZFriendsRouteMethod)route
+                   bytes:(NSUInteger)bytes
+                outgoing:(BOOL)outgoing
+                    late:(BOOL)late;
+- (void)traceGroupOfLink:(SZFriendsPeerLink *)head;
+- (void)traceGroupEnded:(SZFriendsPeerLink *)head;
+@end
+
+// Peer-to-peer Wi-Fi (AWDL) on demand (ADR 0021): off while the Mac is on a network and nothing asks for it, since
+// AWDL takes the Wi-Fi radio off the network's channel for about a fifth of the time; on without a network, and for
+// a transfer whose LAN is missing or slow, for as long as a direct Wi-Fi lane measurably helps it.
+@interface SZFriendsNearbyService (PeerToPeer)
+// At start: the network adapters' setting follows the policy, and a change of network is heard.
+- (void)startPeerToPeerPolicy;
+// The scheduler asked for a direct Wi-Fi lane beside `head` (sender): YES when one may be dialed now (on, and this
+// group has not given up on it); otherwise peer-to-peer Wi-Fi is turned on when it may help and the lane is dialed
+// once the friend is sighted there (-peerToPeerSightingsChanged).
+- (BOOL)peerToPeerLaneWantedBeside:(SZFriendsPeerLink *)head;
+// Why a direct Wi-Fi lane beside `head` is not dialled now, for the lane line of helper.log; nil when it may be.
+- (nullable NSString *)peerToPeerLaneRefusalBeside:(SZFriendsPeerLink *)head;
+// Parts arrived in `head`'s group (receiver): a slow LAN asks for peer-to-peer Wi-Fi so the sender can open a lane.
+- (void)peerToPeerNoteReceived:(NSUInteger)bytes onGroup:(SZFriendsPeerLink *)head;
+// The merger's candidates changed: a lane waiting for a friend to show up on peer-to-peer Wi-Fi is dialed now.
+- (void)peerToPeerSightingsChanged;
+// helper.log: the routes and interfaces a friend is sighted on, when they change.
+- (void)traceSightingsOfCandidate:(SZFriendsCandidate *)candidate conversationID:(NSString *)conversationID;
+@end
+
 @interface SZFriendsNearbyService (Dial)
 // Looks at every candidate and pending entry again on the next turn (coalesced).
 - (void)scheduleReconsider;
@@ -154,6 +220,12 @@ extern const NSTimeInterval SZFriendsRelayProbeInterval;
 - (void)reconsider;
 // NO when an attempt at that endpoint for that purpose is already running, or no adapter has it.
 - (BOOL)dial:(SZFriendsDialPlan *)plan;
+// Dials every attempt the racer allows at `candidate` beside a session on `current`, as `make` plans each (nil skips
+// it); `notes` gets what came of each route seen, for -traceRoutesOf:. YES when one started.
+- (BOOL)dialCandidate:(SZFriendsCandidate *)candidate
+              current:(SZFriendsRouteMethod)current
+                notes:(NSMutableArray<NSString *> *)notes
+                 make:(SZFriendsDialPlan *_Nullable (^)(SZFriendsDialAttempt *attempt))make;
 - (void)browseOfEndpointFailed:(NSString *)endpointID;
 // An NN request that did not reach its device: tried again after a while rather than the next day.
 - (void)byIDAttemptFailed:(NSString *)attemptKey;
@@ -390,6 +462,8 @@ void SZFriendsNearbyRecordEvent(SZFriendsStore *store, NSString *eventKind, NSSt
 - (void)admitLane:(SZFriendsPeerLink *)link;
 // One of our lanes went live: it joins its head's group.
 - (void)joinLane:(SZFriendsPeerLink *)link toHead:(SZFriendsPeerLink *)head;
+// The scheduler asks for a lane on `route` beside `head`: dialed when the friend is sighted there (+Blocks).
+- (void)openLaneOfLink:(SZFriendsPeerLink *)head route:(SZFriendsRouteMethod)route;
 // The head is closing while lanes live (ADR 0018 § 6: the group goes on): its lowest live lane takes the group, as the
 // link to adopt in its place; nil when none can (the caller ends the group as before).
 - (nullable SZFriendsPeerLink *)handOverGroupOfLink:(SZFriendsPeerLink *)head;
